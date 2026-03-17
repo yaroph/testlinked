@@ -9,6 +9,20 @@ export function clampFocusDepth(value) {
     return Math.max(FOCUS_DEPTH_MIN, Math.min(FOCUS_DEPTH_MAX, numeric));
 }
 
+export function buildFocusDirectSet(rootId) {
+    const root = String(rootId || '');
+    if (!root) return new Set();
+
+    const direct = new Set();
+    state.links.forEach((link) => {
+        const sourceId = String(getId(link?.source));
+        const targetId = String(getId(link?.target));
+        if (sourceId === root && targetId !== root) direct.add(targetId);
+        else if (targetId === root && sourceId !== root) direct.add(sourceId);
+    });
+    return direct;
+}
+
 export function buildFocusSet(rootId, depth = state.focusDepth) {
     const root = String(rootId || '');
     if (!root) return new Set();
@@ -53,6 +67,7 @@ export function setFocusMode(rootId, depth = state.focusDepth) {
     state.focusRootId = resolvedRoot;
     state.focusDepth = clampFocusDepth(depth);
     state.focusSet = buildFocusSet(resolvedRoot, state.focusDepth);
+    state.focusDirectSet = buildFocusDirectSet(resolvedRoot);
     return state.focusSet;
 }
 
@@ -60,6 +75,7 @@ export function clearFocusMode() {
     state.focusMode = false;
     state.focusRootId = null;
     state.focusSet = new Set();
+    state.focusDirectSet = new Set();
 }
 
 export function refreshFocusMode() {
