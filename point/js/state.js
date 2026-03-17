@@ -11,6 +11,7 @@ export const state = {
     focusRootId: null,
     focusDepth: 1,
     focusSet: new Set(),
+    focusDirectSet: new Set(),
     hvtMode: false,
     hvtTopN: 10,
     hvtTopIds: new Set(),

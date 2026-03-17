@@ -563,6 +563,11 @@ export function draw() {
             if (!sTop && !tTop && linkInfluence < 0.18) continue;
         }
 
+        const isFocusDirectLink = isFocus && state.focusRootId && (
+            (String(sId) === String(state.focusRootId) && state.focusDirectSet.has(String(tId))) ||
+            (String(tId) === String(state.focusRootId) && state.focusDirectSet.has(String(sId)))
+        );
+
         if (showTypes || isPathLink || isHVT) {
              const baseLinkColor = isPathLink ? '#00ffff' : computeLinkColor(l);
              const flatHvtColor = hvtLinkVisual?.flatColor || ((sourceInfluence > 0.18 && targetInfluence > 0.18)
@@ -584,6 +589,9 @@ export function draw() {
              if (isPathLink) {
                  ctx.shadowBlur = 15;
                  ctx.shadowColor = '#00ffff';
+             } else if (isFocusDirectLink) {
+                 ctx.shadowBlur = 14;
+                 ctx.shadowColor = baseLinkColor;
              } else if (isHVT && useHvtLinkShadows && linkInfluence > 0.22) {
                  ctx.shadowBlur = hvtDenseMode ? 0 : 12;
                  ctx.shadowColor = dominantColor;
@@ -603,8 +611,14 @@ export function draw() {
                     ctx.strokeStyle = grad;
                  } catch(e) { ctx.strokeStyle = '#999'; }
              }
-             ctx.lineWidth = (dimmed ? 1 : 1.5) * invScaleSqrt;
-             ctx.shadowBlur = 0;
+             if (isFocusDirectLink) {
+                 ctx.lineWidth = 2.5 * invScaleSqrt;
+                 ctx.shadowBlur = 14;
+                 ctx.shadowColor = sanitizeNodeColor(l.source.color);
+             } else {
+                 ctx.lineWidth = (dimmed ? 1 : 1.5) * invScaleSqrt;
+                 ctx.shadowBlur = 0;
+             }
         }
         if (topSet && (sTop ^ tTop) && !isHVT) globalAlpha = Math.min(globalAlpha, 0.25);
         ctx.globalAlpha = globalAlpha;
@@ -687,14 +701,21 @@ export function draw() {
         const isPathStart = state.pathfinding.startId === n.id;
 
         // Gestion Contour
+        const isFocusDirectNeighbor = isFocus && state.focusDirectSet.has(String(n.id));
         if (state.selection === n.id || state.hoverId === n.id || isPathfindingNode || isPathStart) {
-            ctx.shadowBlur = 20; 
+            ctx.shadowBlur = 20;
             let strokeColor = '#ffffff';
             if (isPathfindingNode) strokeColor = '#00ffff';
             if (isPathStart) strokeColor = '#ffff00';
             ctx.shadowColor = strokeColor;
             ctx.strokeStyle = strokeColor;
             ctx.lineWidth = 3 * invScaleSqrt;
+            ctx.stroke();
+        } else if (isFocusDirectNeighbor) {
+            ctx.shadowBlur = 16;
+            ctx.shadowColor = nodeColor;
+            ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+            ctx.lineWidth = 2.5 * invScaleSqrt;
             ctx.stroke();
         } else if (isBoss) {
             ctx.shadowBlur = useHvtBossGlow ? 18 : 0;
