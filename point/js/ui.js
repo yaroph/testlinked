@@ -3938,26 +3938,40 @@ function promptCloudCreateFromData(title) {
     });
 }
 
+function applyCloudMergeResult(boardId, result, merged) {
+    if (!result || !result.board) return;
+    const isActive = String(collab.activeBoardId) === String(boardId);
+    if (isActive && result.board.data) {
+        collab.activeBoardUpdatedAt = result.board.updatedAt || '';
+        withoutCloudAutosave(() => {
+            applyCloudBoardData(result.board.data, { quiet: true, projectName: collab.activeBoardTitle });
+        });
+        setCloudShadowData(result.board.data);
+        captureCloudSavedState(collab.localChangeSeq, fingerprintFromPointPayload(merged.payload));
+    } else if (isActive && result.board.updatedAt) {
+        collab.activeBoardUpdatedAt = result.board.updatedAt;
+    }
+}
+
 function promptCloudMergeFromFile(boardId, boardTitle, boardData, boardUpdatedAt = '') {
     choosePointPayloadSource({
         title: 'Fusionner des données dans le cloud',
         onBack: () => renderCloudMembers(boardId),
         onText: () => {
             openJsonTextPrompt('Fusionner depuis data brute', async (json) => {
-                const normalizedIncoming = normalizePointPayloadForLoad(json);
-                if (!normalizedIncoming) {
+                if (!json || !Array.isArray(json.nodes) || !Array.isArray(json.links)) {
                     showCustomAlert('Format de fichier invalide.');
                     return;
                 }
                 setCloudWorkspaceBusy(true, 'Fusion cloud en cours...');
                 try {
-                    const merged = mergePointPayloads(extractPlainPointPayloadFromCloud(boardData), normalizedIncoming);
-                    await collabBoardRequest('save_board', {
+                    const merged = mergePointPayloads(extractPlainPointPayloadFromCloud(boardData), json);
+                    const result = await collabBoardRequest('save_board', {
                         boardId,
                         title: boardTitle || 'Board cloud',
-                        data: merged.payload,
-                        ...(boardUpdatedAt ? { expectedUpdatedAt: boardUpdatedAt } : {})
+                        data: merged.payload
                     });
+                    applyCloudMergeResult(boardId, result, merged);
                     showCustomAlert(`Fusion cloud: ${merged.addedNodes} nouveaux éléments, ${merged.enrichedNodes} fiches enrichies, ${merged.addedLinks} nouveaux liens.`);
                     await renderCloudMembers(boardId);
                 } catch (e) {
@@ -3975,16 +3989,18 @@ function promptCloudMergeFromFile(boardId, boardTitle, boardData, boardUpdatedAt
                 const file = fileInput.files && fileInput.files[0];
                 if (!file) return;
                 try {
-                    const payload = normalizePointPayloadForLoad(JSON.parse(await file.text()));
-                    if (!payload) throw new Error('Format de fichier invalide.');
+                    const raw = JSON.parse(await file.text());
+                    if (!raw || !Array.isArray(raw.nodes) || !Array.isArray(raw.links)) {
+                        throw new Error('Format de fichier invalide.');
+                    }
                     setCloudWorkspaceBusy(true, 'Fusion cloud en cours...');
-                    const merged = mergePointPayloads(extractPlainPointPayloadFromCloud(boardData), payload);
-                    await collabBoardRequest('save_board', {
+                    const merged = mergePointPayloads(extractPlainPointPayloadFromCloud(boardData), raw);
+                    const result = await collabBoardRequest('save_board', {
                         boardId,
                         title: boardTitle || 'Board cloud',
-                        data: merged.payload,
-                        ...(boardUpdatedAt ? { expectedUpdatedAt: boardUpdatedAt } : {})
+                        data: merged.payload
                     });
+                    applyCloudMergeResult(boardId, result, merged);
                     showCustomAlert(`Fusion cloud: ${merged.addedNodes} nouveaux éléments, ${merged.enrichedNodes} fiches enrichies, ${merged.addedLinks} nouveaux liens.`);
                     await renderCloudMembers(boardId);
                 } catch (e) {
@@ -6015,6 +6031,7 @@ function updateFocusControls() {
             valueEl.textContent = String(nextDepth);
             if (state.focusMode) {
                 setFocusMode(state.selection || state.focusRootId, nextDepth);
+                restartSim();
                 renderEditor();
                 draw();
                 updateFocusControls();
@@ -6027,6 +6044,7 @@ function updateFocusControls() {
     if (!closeBtn.dataset.bound) {
         closeBtn.addEventListener('click', () => {
             clearFocusMode();
+            restartSim();
             renderEditor();
             draw();
             updateFocusControls();
@@ -6260,7 +6278,7 @@ export function addLink(a, b, kind, options = {}) {
         const sourceNode = resolveNodeForAction(a);
         const targetNode = resolveNodeForAction(b);
         logNodesConnected(sourceNode, targetNode, options.actor);
-        if (state.focusMode) refreshFocusMode();
+        if (state.focusMode) { refreshFocusMode(); restartSim(); }
         refreshLists();
         renderEditor();
         scheduleSave();
@@ -6274,6 +6292,7 @@ export function selectNode(id) {
     state.selection = id;
     if (state.focusMode) {
         setFocusMode(id, state.focusDepth);
+        restartSim();
     }
     if (state.hvtMode && String(state.hvtSelectedId || '') !== String(id || '')) {
         state.hvtSelectedId = id;
@@ -6295,6 +6314,7 @@ function zoomToNode(id) {
     state.selection = n.id;
     if (state.focusMode) {
         setFocusMode(n.id, state.focusDepth);
+        restartSim();
     }
     if (state.hvtMode) {
         state.hvtSelectedId = n.id;

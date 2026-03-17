@@ -381,18 +381,31 @@ export function restartSim() {
     // MAJ de la friction depuis les réglages
     simulation.velocityDecay(state.physicsSettings.friction);
 
-    simulation.nodes(state.nodes);
-    
+    // En mode focus, seuls les points visibles participent à la physique
+    const isFocusActive = state.focusMode && state.focusSet && state.focusSet.size > 0;
+    const simNodes = isFocusActive
+        ? state.nodes.filter(n => state.focusSet.has(String(n.id)))
+        : state.nodes;
+    const simLinks = isFocusActive
+        ? state.links.filter(l => {
+            const s = (typeof l.source === 'object') ? l.source.id : l.source;
+            const t = (typeof l.target === 'object') ? l.target.id : l.target;
+            return state.focusSet.has(String(s)) && state.focusSet.has(String(t));
+        })
+        : state.links;
+
+    simulation.nodes(simNodes);
+
     const nodeDegree = new Map();
     const connectedPairs = new Set();
     const nodeMap = new Map();
     let maxDegree = 0;
 
-    state.nodes.forEach((n) => {
+    simNodes.forEach((n) => {
         nodeDegree.set(n.id, 0);
         nodeMap.set(String(n.id), n);
     });
-    state.links.forEach(l => {
+    simLinks.forEach(l => {
         const s = (typeof l.source === 'object') ? l.source.id : l.source;
         const t = (typeof l.target === 'object') ? l.target.id : l.target;
         nodeDegree.set(s, (nodeDegree.get(s) || 0) + 1);
@@ -403,15 +416,15 @@ export function restartSim() {
     nodeDegree.forEach(v => { if (v > maxDegree) maxDegree = v; });
 
     const S = state.physicsSettings; // Raccourci pour accéder aux sliders
-    const nodeCount = state.nodes.length || 1;
-    const linkCount = state.links.filter(l => l.kind !== KINDS.ENNEMI).length;
+    const nodeCount = simNodes.length || 1;
+    const linkCount = simLinks.filter(l => l.kind !== KINDS.ENNEMI).length;
     const avgDegree = (nodeCount > 0) ? (2 * linkCount) / nodeCount : 0;
     const densityBoost = clamp((avgDegree - 3) / 8, 0, 1.5);
     const adaptiveCollision = S.collision * (1 + densityBoost);
     const adaptiveRepulsion = S.repulsion * (1 + densityBoost * 0.7);
 
     // 1. LIENS
-    simulation.force("link", d3lib.forceLink(state.links)
+    simulation.force("link", d3lib.forceLink(simLinks)
         .id(d => d.id)
         .distance(l => {
             if (l.kind === KINDS.ENNEMI) return 0; 
@@ -429,7 +442,7 @@ export function restartSim() {
 
     // 3. ENNEMIS (Utilise le NOUVEAU Slider: enemyForce)
     const enemyRepulsion = (alpha) => {
-        state.links.forEach(l => {
+        simLinks.forEach(l => {
             if (l.kind !== KINDS.ENNEMI) return;
             const s = l.source; const t = l.target;
             if (!Number.isFinite(s?.x) || !Number.isFinite(s?.y) || !Number.isFinite(t?.x) || !Number.isFinite(t?.y)) return;
@@ -489,10 +502,10 @@ export function restartSim() {
     );
 
     // 6. BARRIÈRE (Gérée par l'état Globe)
-    const worldRadius = 3800; 
+    const worldRadius = 3800;
     simulation.force("boundary", () => {
-        if (!state.globeMode) return; 
-        for (const n of state.nodes) {
+        if (!state.globeMode) return;
+        for (const n of simNodes) {
             const d = Math.sqrt(n.x * n.x + n.y * n.y);
             if (d > worldRadius) {
                 const excess = d - worldRadius;
@@ -505,12 +518,12 @@ export function restartSim() {
 
     // 7. TERRITOIRE (Utilise le NOUVEAU Slider: structureRepulsion)
     simulation.force("territory", () => {
-        const structures = state.nodes.filter(n => n.type === TYPES.COMPANY || n.type === TYPES.GROUP);
+        const structures = simNodes.filter(n => n.type === TYPES.COMPANY || n.type === TYPES.GROUP);
         for (const struct of structures) {
             const territoryRadius = (struct.type === TYPES.COMPANY)
                 ? numSetting(S.companyTerritoryRadius, 450)
                 : numSetting(S.groupTerritoryRadius, 350);
-            for (const n of state.nodes) {
+            for (const n of simNodes) {
                 if (n.id === struct.id || n.type === TYPES.COMPANY || n.type === TYPES.GROUP) continue;
                 if (n.fx != null) continue;
                 if (connectedPairs.has(`${n.id}-${struct.id}`)) continue; // Si connecté, le lien gère la distance
@@ -533,8 +546,8 @@ export function restartSim() {
 
     // 8. HUB HVT (ramener les noyaux vers le centre sans les coller)
     simulation.force("hub", (alpha) => {
-        if (!state.nodes.length) return;
-        const hubs = state.nodes
+        if (!simNodes.length) return;
+        const hubs = simNodes
             .map(n => {
                 const degree = nodeDegree.get(n.id) || 0;
                 const fallback = (maxDegree > 0) ? (degree / maxDegree) : 0;
@@ -574,7 +587,7 @@ export function restartSim() {
         }
     });
 
-    simulation.force("presetLayout", createPresetLayoutForce(state.nodes, state.links, nodeMap));
+    simulation.force("presetLayout", createPresetLayoutForce(simNodes, simLinks, nodeMap));
 
     simulation.alpha(1).restart();
 }
