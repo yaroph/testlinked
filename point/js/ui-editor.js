@@ -472,6 +472,7 @@ function setupEditorListeners(n) {
     document.getElementById('btnFocusNode').onclick = () => {
         if (state.focusMode) clearFocusMode();
         else setFocusMode(n.id, state.focusDepth);
+        restartSim();
         selectNode(n.id);
         scheduleSave();
     };
