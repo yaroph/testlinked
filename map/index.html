@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BNI LINKED // MAP TACTIQUE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700;800&family=VT323&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="labels-auto app-loading map-shell">
+
+    <div id="app-loader">
+        <div class="loader-shell">
+            <div class="loader-topline">
+                <span>BNI LINKED <strong>MAP</strong></span>
+                <span id="loaderTimer">0%</span>
+            </div>
+            <div class="loader-grid">
+                <div class="loader-main">
+                    <div class="loader-wordmark">
+                        <div class="loader-kicker">Chargement tactique</div>
+                        <div class="loader-brand">Map <span class="loader-brand-accent">Linked</span></div>
+                    </div>
+                    <div id="loaderPhase" class="loader-phase">Initialisation de la carte...</div>
+                    <div class="loader-progress">
+                        <div id="loaderProgressBar" class="loader-progress-bar"></div>
+                    </div>
+                    <div class="loader-stats">
+                        <span id="loaderStatLeft">acces shell</span>
+                        <span id="loaderStatRight">boot sequence</span>
+                    </div>
+                    <div id="loaderFeed" class="loader-feed"></div>
+                </div>
+                <div class="loader-side">
+                    <div class="loader-radar">
+                        <div class="loader-sweep"></div>
+                        <div class="loader-dot loader-dot-a"></div>
+                        <div class="loader-dot loader-dot-b"></div>
+                        <div class="loader-dot loader-dot-c"></div>
+                    </div>
+                    <div class="loader-steps">
+                        <div class="loader-step is-active">Shell interface</div>
+                        <div class="loader-step">Calques tactiques</div>
+                        <div class="loader-step">Liaisons et zones</div>
+                        <div class="loader-step">Console operateur</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
+        <div id="modal-box">
+            <button type="button" id="modal-close-x" class="ui-close-x modal-close-x" aria-label="Fermer">×</button>
+            <div id="modal-title">TITRE</div>
+            <div id="modal-content">Message...</div>
+            
+            <div id="modal-input-container" style="display:none;">
+                <input type="text" id="modal-input" class="gps-input full-width" autocomplete="off">
+            </div>
+            
+            <div id="modal-color-picker" style="display:none; padding: 0 20px 20px 20px;">
+                <div id="color-swatches" class="color-grid"></div>
+                <div class="separator-h" style="margin: 10px 0;"></div>
+                <label style="font-size:0.8rem; color:#8892b0;">Ou personnalisé :</label>
+                <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+                    <input type="color" id="modal-color-input" value="#ffffff" style="width:50px; height:30px; border:1px solid #333; background:none; padding:0;">
+                    <span id="modal-color-hex" style="font-family:monospace; color:var(--text-main);">#FFFFFF</span>
+                </div>
+            </div>
+
+            <div id="modal-actions"></div>
+        </div>
+    </div>
+
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-head">
+            <span class="context-menu-title">Actions</span>
+            <button id="ctx-cancel" type="button" class="ui-close-x context-menu-close" aria-label="Fermer">×</button>
+        </div>
+        <button id="ctx-new-point">Nouveau point</button>
+        <button id="ctx-new-zone">Nouvelle zone</button>
+        <button id="ctx-new-free-zone">Dessin libre</button>
+    </div>
+
+    <div id="top-bar">
+        <div class="logo-area">
+            <button id="btnMobileMenu" class="mobile-only">☰</button>
+            <span class="app-logo">💠</span>
+            <span class="app-title">LINKED <span style="color:var(--accent-pink)">// MAP</span></span>
+        </div>
+    </div>
+
+    <div id="app-container">
+        
+        <div id="sidebar-left">
+            <div class="panel-section shell-section shell-section-brand">
+                <img src="logo-bni-linked.png" alt="BNI LINKED" class="shell-logo">
+                
+                <button class="btn-switch shell-mode-btn" onclick="window.location.href='../point/index.html';">
+                    Basculer vers mode réseau
+                </button>
+            </div>
+
+            <div class="panel-section shell-section">
+                <span class="section-title shell-title">Données tactiques</span>
+                <input type="file" id="fileImport" accept=".json" style="display:none">
+                <input type="file" id="fileMerge" accept=".json" style="display:none">
+
+                <button id="btnDataFileToggle" class="action-btn shell-primary-btn" type="button" aria-expanded="false">Fichier</button>
+
+                <div class="data-shell-status">
+                    <div class="data-shell-card">
+                        <span class="data-shell-label">Statut</span>
+                        <strong id="cloudStatus" data-state="local">Local</strong>
+                    </div>
+                    <div class="data-shell-card">
+                        <span class="data-shell-label">Board</span>
+                        <strong id="cloudStatusMeta" data-state="local">Hors ligne</strong>
+                    </div>
+                </div>
+
+                <div id="dataActionLaunchers" hidden>
+                    <button id="btnSave" type="button">Sauvegarder</button>
+                    <button id="btnTriggerImport" type="button">Ouvrir</button>
+                    <button id="btnTriggerMerge" type="button">Fusionner</button>
+                    <button id="btnResetMap" type="button">Reset</button>
+                    <button id="btnCloudMenu" type="button">Cloud</button>
+                </div>
+            </div>
+
+            <div class="panel-section shell-section">
+                <span class="section-title shell-title">Outils</span>
+                <button id="btnToggleGpsPanel" class="action-btn full-width shell-secondary-btn">Saisie coordonnées</button>
+            </div>
+
+            <div class="panel-header panel-header-groups">
+                <div class="panel-header-row">
+                    <span>CALQUES OPÉRATIONNELS</span>
+                    <button id="btnAddGroup" class="mini-btn mini-btn-plus" title="Nouveau Groupe">＋</button>
+                </div>
+                <div class="compact-search">
+                    <span class="compact-search-icon">⌕</span>
+                    <input type="text" id="searchInput" placeholder="Filtrer cibles..." autocomplete="off">
+                </div>
+            </div>
+            <div id="groups-list" class="scrollable-content"></div>
+        </div>
+
+        <div id="sidebar-overlay"></div>
+
+        <div id="viewport">
+            <div id="map-world">
+                <img id="map-image" src="carte.jpg" alt="Carte Tactique">
+                <svg style="position:absolute; width:0; height:0; overflow:hidden;">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#ffffff" />
+                        </marker>
+                    </defs>
+                </svg>
+                <svg id="zones-layer"></svg>
+                <svg id="alert-layer"></svg>
+                <svg id="links-layer" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></svg>
+            </div>
+            <div id="markers-layer"></div>
+            <div id="map-alert-banner" hidden></div>
+            <div id="alert-picker-overlay" hidden>
+                <div class="alert-picker-card">
+                    <span class="alert-picker-kicker">Selection alerte</span>
+                    <strong>Clique sur la carte pour envoyer la position.</strong>
+                </div>
+            </div>
+            <div id="mapEmptyState" class="center-empty-state" hidden>
+                <div class="center-empty-kicker">Initialisation reseau</div>
+                <h2 class="center-empty-title">Commence le graphe ici.</h2>
+                <p class="center-empty-copy">La carte tactique est prete. Cree un premier point, lance une zone ou ouvre un fichier existant pour demarrer le suivi terrain.</p>
+                <div class="center-empty-actions">
+                    <button id="mapEmptyCreatePoint" class="center-empty-btn" type="button">Creer point</button>
+                    <button id="mapEmptyCreateZone" class="center-empty-btn" type="button">Creer zone</button>
+                    <button id="mapEmptyOpenFile" class="center-empty-btn" type="button">Ouvrir fichier</button>
+                </div>
+                <div class="center-empty-hint">Les calques, points et liaisons tactiques se pilotent ensuite depuis les panneaux lateraux ou le clic droit sur la carte.</div>
+            </div>
+            
+            <div id="hud-bottom">
+                <div id="coords-display" class="desktop-only">00.00 | 00.00</div>
+                <div class="separator desktop-only"></div>
+                <div id="zoom-display" class="zoom-display" aria-live="polite">
+                    <span class="zoom-display-label">Zoom</span>
+                    <strong id="zoom-display-value">100%</strong>
+                    <span class="zoom-display-bar"><span id="zoom-display-fill"></span></span>
+                </div>
+                <button id="btnZoomOut" class="hud-btn" title="Zoom arrière">－</button>
+                <button id="btnZoomIn" class="hud-btn" title="Zoom avant">＋</button>
+                <button id="btnToggleLight" class="hud-btn" title="Mode Lumière / Hologramme">💡</button>
+                <button id="btnResetView" class="hud-btn" title="Recentrer">🎯</button>
+                <button id="btnToggleLabels" class="hud-btn" style="min-width:100px;">
+                    NOMS: AUTO
+                </button>
+            </div>
+
+            <div id="gps-panel" class="floating-panel" style="display:none;">
+                <div class="panel-header panel-header-floating">
+                    <span>POINT GPS</span>
+                    <button class="mini-btn close-gps">×</button>
+                </div>
+                <div class="gps-panel-body">
+                    <div class="gps-row">
+                        <div class="gps-field-block gps-field-inline">
+                            <label class="gps-label" for="gpsInputX">COORDONNEE X</label>
+                            <input type="text" id="gpsInputX" placeholder="X" class="gps-input" autocomplete="off">
+                        </div>
+                        <div class="gps-field-block gps-field-inline">
+                            <label class="gps-label" for="gpsInputY">COORDONNEE Y</label>
+                            <input type="text" id="gpsInputY" placeholder="Y" class="gps-input" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="gps-field-block">
+                        <label class="gps-label" for="gpsGroupSelect">CALQUE CIBLE</label>
+                        <select id="gpsGroupSelect" class="gps-input"></select>
+                    </div>
+                    <div class="gps-field-block">
+                        <label class="gps-label" for="gpsName">NOM DU POINT</label>
+                        <input type="text" id="gpsName" placeholder="Nom du point" autocomplete="off">
+                    </div>
+                    <div class="gps-row">
+                        <div class="gps-field-block gps-field-inline">
+                            <label class="gps-label" for="gpsIconType">ICONE</label>
+                            <select id="gpsIconType"></select>
+                        </div>
+                        <div class="gps-field-block gps-field-inline">
+                            <label class="gps-label" for="gpsAffiliation">TYPE</label>
+                            <input type="text" id="gpsAffiliation" placeholder="Type" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="gps-field-block">
+                        <label class="gps-label" for="gpsNotes">NOTES</label>
+                        <textarea id="gpsNotes" placeholder="Notes..."></textarea>
+                    </div>
+                    <button id="btnAddGpsPoint" class="action-btn full-width gps-submit">
+                        Placer
+                    </button>
+                </div>
+            </div>
+
+            <div id="drawing-toolbar" class="floating-panel compact" style="display:none;">
+                <div class="toolbar-header">
+                    <span>ÉDITION ZONE</span>
+                </div>
+                <div class="toolbar-content">
+                    <div class="tool-row">
+                        <label>ÉPAISSEUR</label>
+                        <input type="range" id="drawWidth" min="1" max="10" value="2" step="1">
+                        <span id="drawWidthVal" class="draw-width-value">2px</span>
+                    </div>
+                    <div class="tool-row">
+                        <label>STYLE</label>
+                        <select id="drawStyle" class="mini-select">
+                            <option value="solid">Trait Plein</option>
+                            <option value="dashed">Tirets</option>
+                            <option value="dotted">Pointillés</option>
+                        </select>
+                    </div>
+                    
+                    <div class="tool-actions">
+                        <button id="btnDrawSmooth" class="action-btn" title="Lisser la forme" style="flex:1;">Lisser</button>
+                        <div class="separator"></div>
+                        <button id="btnDrawCancel" class="action-btn btn-red" title="Annuler">Annuler</button>
+                        <button id="btnDrawConfirm" class="action-btn btn-green" title="Valider">Valider</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div id="sidebar-right">
+            <div class="panel-header panel-header-editor">DOSSIER TACTIQUE</div>
+            <div id="editor-content">
+                <div class="empty-state">
+                    <span class="empty-state-kicker">Aucune cible</span>
+                    <strong>Sélectionnez un point ou une zone.</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+    <script type="module">
+        import { state } from './js/state.js';
+        window.state = state;
+    </script>
+    <script>
+        const btnLight = document.getElementById('btnToggleLight');
+        if (btnLight) {
+            btnLight.addEventListener('click', () => {
+                document.body.classList.toggle('high-light-mode');
+                btnLight.classList.toggle('active', document.body.classList.contains('high-light-mode'));
+            });
+        }
+
+        (() => {
+            const loader = document.getElementById('app-loader');
+            if (!loader) return;
+
+            const progressBar = document.getElementById('loaderProgressBar');
+            const phaseEl = document.getElementById('loaderPhase');
+            const feedEl = document.getElementById('loaderFeed');
+            const timerEl = document.getElementById('loaderTimer');
+            const statLeftEl = document.getElementById('loaderStatLeft');
+            const statRightEl = document.getElementById('loaderStatRight');
+            const steps = Array.from(loader.querySelectorAll('.loader-step'));
+
+            const phases = [
+                { at: 0.12, label: 'Montage du shell opérateur...', left: 'interface', right: 'online', step: 0, feed: '<strong>MAP</strong> shell prêt' },
+                { at: 0.38, label: 'Lecture des calques et points...', left: 'calques', right: 'sync local', step: 1, feed: '<strong>DATA</strong> groups indexes chargés' },
+                { at: 0.66, label: 'Activation des zones et liaisons...', left: 'links', right: 'render graph', step: 2, feed: '<strong>LINK</strong> tactical overlay actif' },
+                { at: 0.88, label: 'Ouverture de la console tactique...', left: 'editor', right: 'operator ready', step: 3, feed: '<strong>READY</strong> console engagée' }
+            ];
+
+            let ready = document.readyState === 'complete';
+            let feedIndex = -1;
+            let lastPhase = -1;
+            const minDuration = 1400;
+            const maxDuration = 2400;
+            const start = performance.now();
+
+            const addFeedLine = (html) => {
+                if (!feedEl) return;
+                const line = document.createElement('div');
+                line.className = 'loader-line';
+                line.innerHTML = html;
+                feedEl.appendChild(line);
+                while (feedEl.children.length > 4) {
+                    feedEl.removeChild(feedEl.firstChild);
+                }
+            };
+
+            const finishBoot = () => {
+                if (loader.dataset.done === '1') return;
+                loader.dataset.done = '1';
+                document.body.classList.remove('app-loading');
+                loader.classList.add('is-exiting');
+                window.setTimeout(() => loader.remove(), 380);
+            };
+
+            const renderFrame = (now) => {
+                const elapsed = now - start;
+                const progress = Math.min(elapsed / maxDuration, 1);
+                if (progressBar) progressBar.style.width = `${Math.max(progress * 100, 6)}%`;
+                if (timerEl) timerEl.textContent = `${Math.round(progress * 100)}%`;
+
+                const phaseIndex = phases.findIndex((phase, index) => {
+                    const next = phases[index + 1];
+                    return progress >= phase.at && (!next || progress < next.at);
+                });
+
+                if (phaseIndex !== -1 && phaseIndex !== lastPhase) {
+                    lastPhase = phaseIndex;
+                    const current = phases[phaseIndex];
+                    if (phaseEl) phaseEl.textContent = current.label;
+                    if (statLeftEl) statLeftEl.textContent = current.left;
+                    if (statRightEl) statRightEl.textContent = current.right;
+                    steps.forEach((stepEl, index) => {
+                        stepEl.classList.toggle('is-active', index === current.step);
+                        stepEl.classList.toggle('is-complete', index < current.step);
+                    });
+                }
+
+                if (lastPhase > feedIndex) {
+                    feedIndex = lastPhase;
+                    addFeedLine(phases[lastPhase].feed);
+                }
+
+                if ((ready && elapsed >= minDuration) || elapsed >= maxDuration) {
+                    finishBoot();
+                    return;
+                }
+
+                requestAnimationFrame(renderFrame);
+            };
+
+            addFeedLine('<strong>BOOT</strong> séquence engagée');
+
+            window.addEventListener('load', () => {
+                ready = true;
+            }, { once: true });
+
+            window.addEventListener('pageshow', (event) => {
+                if (event.persisted) finishBoot();
+            });
+
+            requestAnimationFrame(renderFrame);
+        })();
+    </script>
+    <script>
+        (() => {
+            const selector = 'input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]), textarea';
+            const lockField = (field) => {
+                if (!field || typeof field.setAttribute !== 'function') return;
+                field.setAttribute('autocomplete', 'off');
+                field.setAttribute('autocorrect', 'off');
+                field.setAttribute('autocapitalize', 'off');
+                field.setAttribute('spellcheck', 'false');
+            };
+            document.querySelectorAll(selector).forEach(lockField);
+            document.addEventListener('focusin', (event) => {
+                const field = event.target;
+                if (field && typeof field.matches === 'function' && field.matches(selector)) lockField(field);
+            });
+        })();
+    </script>
+</body>
+</html>
+
+

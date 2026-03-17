@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BNI LINKED // OS v3.5</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Rajdhani:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="app-loading">
+
+    <div id="boot-layer">
+        <div class="boot-head">
+            <div class="boot-brand">BNI-LINKED // TACTICAL TABLET 2035</div>
+            <div class="boot-phase" id="boot-phase">SECURE STARTUP PROTOCOL</div>
+        </div>
+        <div class="boot-progress-track" aria-hidden="true">
+            <div class="boot-progress-fill" id="boot-progress"></div>
+        </div>
+        <div id="boot-text"></div>
+        <div class="boot-footer">
+            <span id="boot-meter">SYS CHECK 0%</span>
+            <span class="boot-cursor"></span>
+            <button id="boot-skip" class="boot-skip" type="button">Passer</button>
+        </div>
+    </div>
+
+    <div id="bio-layer">
+        <div class="scanner-box">
+            <div class="holo-circle"></div>
+            <svg class="fingerprint-svg" viewBox="0 0 100 100" id="fingerprint-svg">
+                <path d="M50,10 C35,10 25,25 25,40 C25,50 30,60 35,70" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                <path d="M50,20 C42,20 35,30 35,40 C35,46 38,52 41,58" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                <path d="M50,30 C46,30 43,33 43,40" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                <path d="M50,10 C65,10 75,25 75,40 C75,50 70,60 65,70" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                <path d="M50,20 C58,20 65,30 65,40 C65,46 62,52 59,58" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                <path d="M50,30 C54,30 57,33 57,40" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                <path d="M35,80 Q50,95 65,80" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                <path d="M40,75 Q50,85 60,75" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+            <div class="scan-laser"></div>
+        </div>
+        <div class="bio-text">IDENTIFICATION REQUISE</div>
+        <div class="bio-status" id="bio-status">EN ATTENTE DU SUJET...</div>
+    </div>
+
+    <div id="tablet-interface">
+        
+        <div class="top-hud" id="hud">
+            <div class="hud-group hud-group-left">
+                <div>BNI-OS v3.5.0</div>
+            </div>
+            <div class="hud-group hud-group-right">
+                <div id="realtime-clock">--:--</div>
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <span>100%</span>
+                    <div class="batt-icon"><div class="batt-fill"></div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            
+            <header class="header-hero" id="hero">
+                <img src="map/logo-bni-linked.png" alt="BNI Logo" class="main-logo">
+                <div class="welcome-msg">BIENVENUE SUR LA TABLETTE BNI-LINKED</div>
+            </header>
+
+            <nav class="modules-grid" id="modules">
+                
+                <a href="./point/" class="module-card mod-net" id="module-reticule">
+                    <div class="corner top-left"></div>
+                    <div class="corner btm-right"></div>
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-5-9h10v2H7z"/></svg>
+                    </div>
+                    <div class="card-title">RÉTICULE</div>
+                    <div class="card-desc">DATABASE & RÉSEAU</div>
+                </a>
+
+                <a href="./map/" class="module-card mod-map" id="module-tactique">
+                    <div class="corner top-left"></div>
+                    <div class="corner btm-right"></div>
+                    <div class="card-icon">
+                        <svg viewBox="0 0 24 24"><path d="M20.5 3l-6 2.5-6-2.5L3 5.5v15l5.5-2.5 6 2.5 6-2.5V3zM14.5 17.5l-6-2.5v-10l6 2.5v10z"/></svg>
+                    </div>
+                    <div class="card-title">TACTIQUE</div>
+                    <div class="card-desc">GÉOLOCALISATION GPS</div>
+                </a>
+
+            </nav>
+
+            <div class="welcome-link-block">
+                <span class="welcome-link-label">Lien copiable</span>
+                <input id="welcome-link-input" class="welcome-link-input" type="text" readonly value="https://bni-linked.netlify.app/">
+                <button id="welcome-link-copy" class="welcome-link-copy" type="button">Copier</button>
+            </div>
+
+        </div>
+
+        <div class="footer-info" id="footer">
+            LOGICIEL DE LA BNI // DEV : DUTCH COLEMAN 555-86999
+        </div>
+    </div>
+
+    <div class="crt-overlay"></div>
+    <div class="vignette"></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const bootLayer = document.getElementById('boot-layer');
+            const bootText = document.getElementById('boot-text');
+            const bootPhase = document.getElementById('boot-phase');
+            const bootProgress = document.getElementById('boot-progress');
+            const bootMeter = document.getElementById('boot-meter');
+            const bootSkip = document.getElementById('boot-skip');
+            const bioLayer = document.getElementById('bio-layer');
+            const bioStatus = document.getElementById('bio-status');
+            const fingerprintSvg = document.getElementById('fingerprint-svg');
+            const tabletInterface = document.getElementById('tablet-interface');
+            const welcomeLinkInput = document.getElementById('welcome-link-input');
+            const welcomeLinkCopy = document.getElementById('welcome-link-copy');
+            const moduleCards = Array.from(document.querySelectorAll('.module-card[href]'));
+            const COLLAB_AUTH_ENDPOINT = '/.netlify/functions/collab-auth';
+            const COLLAB_SESSION_STORAGE_KEY = 'bniLinkedCollabSession_v1';
+            const MODULE_GUEST_STORAGE_KEY = 'bniLinkedGuestMode_v1';
+            const DAILY_BOOT_STORAGE_KEY = 'bniLinkedBootSeenDay_v1';
+            const moduleGate = {
+                token: '',
+                user: null,
+                guestMode: false,
+                pendingHref: '',
+                overlay: null
+            };
+
+            function loadModuleSession() {
+                try {
+                    const raw = localStorage.getItem(COLLAB_SESSION_STORAGE_KEY);
+                    if (!raw) return;
+                    const parsed = JSON.parse(raw);
+                    moduleGate.token = String(parsed.token || '');
+                    moduleGate.user = parsed.user && typeof parsed.user === 'object' ? parsed.user : null;
+                } catch (e) {
+                    moduleGate.token = '';
+                    moduleGate.user = null;
+                }
+                try {
+                    moduleGate.guestMode = sessionStorage.getItem(MODULE_GUEST_STORAGE_KEY) === '1';
+                } catch (e) {
+                    moduleGate.guestMode = false;
+                }
+            }
+
+            function saveModuleSession() {
+                try {
+                    localStorage.setItem(COLLAB_SESSION_STORAGE_KEY, JSON.stringify({
+                        token: moduleGate.token || '',
+                        user: moduleGate.user || null
+                    }));
+                } catch (e) {}
+            }
+
+            function clearModuleSession() {
+                moduleGate.token = '';
+                moduleGate.user = null;
+                try { localStorage.removeItem(COLLAB_SESSION_STORAGE_KEY); } catch (e) {}
+            }
+
+            function setGuestMode(enabled) {
+                moduleGate.guestMode = Boolean(enabled);
+                try {
+                    if (moduleGate.guestMode) sessionStorage.setItem(MODULE_GUEST_STORAGE_KEY, '1');
+                    else sessionStorage.removeItem(MODULE_GUEST_STORAGE_KEY);
+                } catch (e) {}
+            }
+
+            async function collabAuthRequest(action, payload = {}) {
+                let response = await fetch(COLLAB_AUTH_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(moduleGate.token ? { 'x-collab-token': moduleGate.token } : {})
+                    },
+                    body: JSON.stringify({ action, ...payload })
+                });
+
+                // Compat fallback: certains environnements répondent 405 en POST.
+                if (response.status === 405 && (action === 'me' || action === 'logout')) {
+                    const qs = new URLSearchParams({ action });
+                    if (moduleGate.token) qs.set('token', moduleGate.token);
+                    response = await fetch(`${COLLAB_AUTH_ENDPOINT}?${qs.toString()}`, {
+                        method: 'GET',
+                        headers: {
+                            ...(moduleGate.token ? { 'x-collab-token': moduleGate.token } : {})
+                        }
+                    });
+                }
+
+                let data = {};
+                try { data = await response.json(); } catch (e) {}
+                if (!response.ok || !data.ok) {
+                    if (response.status === 405) {
+                        throw new Error("Auth indisponible (405). Vérifie que les fonctions Netlify sont actives.");
+                    }
+                    throw new Error(data.error || `Erreur auth (${response.status})`);
+                }
+                return data;
+            }
+
+            function ensureModuleAuthStyles() {
+                if (document.getElementById('module-auth-style')) return;
+                const style = document.createElement('style');
+                style.id = 'module-auth-style';
+                style.textContent = `
+                    #module-auth-overlay {
+                        position: fixed;
+                        inset: 0;
+                        z-index: 15000;
+                        display: none;
+                        align-items: center;
+                        justify-content: center;
+                        padding: 16px;
+                        background:
+                            radial-gradient(circle at 20% 10%, rgba(115, 251, 247, 0.18), transparent 40%),
+                            rgba(2, 6, 12, 0.78);
+                        backdrop-filter: blur(4px);
+                    }
+                    .module-auth-card {
+                        width: min(520px, 96vw);
+                        border-radius: 16px;
+                        border: 1px solid rgba(115, 251, 247, 0.44);
+                        background:
+                            linear-gradient(155deg, rgba(7, 18, 31, 0.98), rgba(10, 29, 44, 0.95)),
+                            radial-gradient(circle at top right, rgba(115, 251, 247, 0.12), transparent 60%);
+                        box-shadow: 0 24px 68px rgba(0,0,0,0.64), 0 0 18px rgba(115, 251, 247, 0.2);
+                        padding: 16px;
+                    }
+                    .module-auth-head {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        gap: 10px;
+                        margin-bottom: 12px;
+                    }
+                    .module-auth-title-wrap {
+                        display: flex;
+                        align-items: center;
+                        gap: 10px;
+                    }
+                    .module-auth-badge {
+                        padding: 4px 8px;
+                        border-radius: 999px;
+                        border: 1px solid rgba(115, 251, 247, 0.45);
+                        color: #bff6ff;
+                        background: rgba(7, 22, 34, 0.9);
+                        font-size: 0.62rem;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                        font-weight: 700;
+                    }
+                    .module-auth-title {
+                        font-size: 0.98rem;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                        color: #e7fdff;
+                        font-weight: 700;
+                    }
+                    .module-auth-close {
+                        width: 34px;
+                        height: 34px;
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        padding: 0;
+                        background: linear-gradient(180deg, rgba(8, 18, 42, 0.96), rgba(4, 10, 22, 0.92));
+                        border: 1px solid rgba(115, 251, 247, 0.24);
+                        border-radius: 999px;
+                        color: #e6f8ff;
+                        font-size: 1rem;
+                        font-weight: 700;
+                        line-height: 1;
+                        cursor: pointer;
+                        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+                    }
+                    .module-auth-close:hover {
+                        transform: translateY(-1px);
+                        border-color: rgba(115, 251, 247, 0.5);
+                        background: linear-gradient(180deg, rgba(15, 33, 62, 0.98), rgba(6, 16, 30, 0.96));
+                        color: #ffffff;
+                    }
+                    .module-auth-desc {
+                        margin: 0 0 12px;
+                        font-size: 0.84rem;
+                        color: #9bb0c7;
+                    }
+                    .module-auth-grid {
+                        display: grid;
+                        gap: 8px;
+                    }
+                    .module-auth-field {
+                        display: grid;
+                        gap: 6px;
+                    }
+                    .module-auth-label {
+                        color: #8fb4c8;
+                        font-size: 0.7rem;
+                        letter-spacing: 1.4px;
+                        text-transform: uppercase;
+                        font-weight: 700;
+                    }
+                    .module-auth-input {
+                        width: 100%;
+                        background: rgba(0,0,0,0.45);
+                        border: 1px solid rgba(115,251,247,0.26);
+                        color: #fff;
+                        padding: 10px 11px;
+                        border-radius: 8px;
+                        outline: none;
+                    }
+                    .module-auth-input:focus {
+                        border-color: rgba(115,251,247,0.72);
+                        box-shadow: 0 0 0 3px rgba(115,251,247,0.12);
+                    }
+                    .module-auth-error {
+                        min-height: 18px;
+                        font-size: 0.78rem;
+                        color: #ff9fb6;
+                    }
+                    .module-auth-actions {
+                        display: flex;
+                        gap: 8px;
+                        justify-content: flex-end;
+                    }
+                    .module-auth-btn {
+                        border-radius: 999px;
+                        cursor: pointer;
+                        text-transform: uppercase;
+                        font-size: 0.72rem;
+                        letter-spacing: 1px;
+                        padding: 9px 13px;
+                        border: 1px solid rgba(115,251,247,0.42);
+                        background: rgba(115,251,247,0.08);
+                        color: #c7f7ff;
+                        font-weight: 700;
+                    }
+                    .module-auth-btn.primary {
+                        border-color: rgba(115,251,247,0.8);
+                        background: rgba(115,251,247,0.9);
+                        color: #03121a;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
+            async function ensureModuleSession() {
+                if (!moduleGate.token) return false;
+                try {
+                    const me = await collabAuthRequest('me');
+                    moduleGate.user = me.user || moduleGate.user;
+                    saveModuleSession();
+                    return true;
+                } catch (e) {
+                    clearModuleSession();
+                    return false;
+                }
+            }
+
+            function getAuthOverlay() {
+                if (moduleGate.overlay) return moduleGate.overlay;
+                ensureModuleAuthStyles();
+
+                const overlay = document.createElement('div');
+                overlay.id = 'module-auth-overlay';
+                overlay.innerHTML = `
+                    <div class="module-auth-card" role="dialog" aria-modal="true" aria-labelledby="module-auth-title">
+                        <div class="module-auth-head">
+                            <div class="module-auth-title-wrap">
+                                <span class="module-auth-badge">Cloud</span>
+                                <div class="module-auth-title" id="module-auth-title">Compte Requis</div>
+                            </div>
+                            <button id="module-auth-close" type="button" class="module-auth-close" aria-label="Fermer">×</button>
+                        </div>
+                        <p class="module-auth-desc">Connecte-toi pour activer le cloud et les boards partages. Tu peux aussi continuer en mode invite (local uniquement).</p>
+                        <div class="module-auth-grid">
+                            <div class="module-auth-field">
+                                <label class="module-auth-label" for="module-auth-user">Username</label>
+                                <input id="module-auth-user" class="module-auth-input" type="text" placeholder="username">
+                            </div>
+                            <div class="module-auth-field">
+                                <label class="module-auth-label" for="module-auth-pass">Mot de passe</label>
+                                <input id="module-auth-pass" class="module-auth-input" type="password" placeholder="mot de passe">
+                            </div>
+                        </div>
+                        <div id="module-auth-error" class="module-auth-error"></div>
+                        <div class="module-auth-actions">
+                            <button id="module-auth-register" type="button" class="module-auth-btn">Creer compte</button>
+                            <button id="module-auth-login" type="button" class="module-auth-btn primary">Connexion</button>
+                            <button id="module-auth-guest" type="button" class="module-auth-btn">Continuer invite</button>
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(overlay);
+                moduleGate.overlay = overlay;
+
+                const closeBtn = overlay.querySelector('#module-auth-close');
+                const onClose = () => {
+                    overlay.style.display = 'none';
+                    moduleGate.pendingHref = '';
+                };
+                if (closeBtn) closeBtn.addEventListener('click', onClose);
+                overlay.addEventListener('click', (event) => {
+                    if (event.target === overlay) onClose();
+                });
+                overlay.addEventListener('keydown', (event) => {
+                    if (event.key === 'Escape') onClose();
+                });
+
+                const runAuth = async (action) => {
+                    const usernameInput = overlay.querySelector('#module-auth-user');
+                    const passwordInput = overlay.querySelector('#module-auth-pass');
+                    const errorEl = overlay.querySelector('#module-auth-error');
+                    const username = usernameInput ? usernameInput.value.trim() : '';
+                    const password = passwordInput ? passwordInput.value : '';
+
+                    if (errorEl) errorEl.textContent = '';
+                    if (!username || !password) {
+                        if (errorEl) errorEl.textContent = 'Renseigne username + mot de passe.';
+                        return;
+                    }
+
+                    try {
+                        const result = await collabAuthRequest(action, { username, password });
+                        moduleGate.token = String(result.token || '');
+                        moduleGate.user = result.user || null;
+                        setGuestMode(false);
+                        saveModuleSession();
+                        overlay.style.display = 'none';
+                        const target = moduleGate.pendingHref;
+                        moduleGate.pendingHref = '';
+                        if (target) window.location.href = target;
+                    } catch (e) {
+                        if (errorEl) errorEl.textContent = e.message || 'Erreur connexion.';
+                    }
+                };
+
+                const registerBtn = overlay.querySelector('#module-auth-register');
+                const loginBtn = overlay.querySelector('#module-auth-login');
+                const guestBtn = overlay.querySelector('#module-auth-guest');
+                if (registerBtn) registerBtn.addEventListener('click', () => runAuth('register'));
+                if (loginBtn) loginBtn.addEventListener('click', () => runAuth('login'));
+                const usernameInput = overlay.querySelector('#module-auth-user');
+                const passwordInput = overlay.querySelector('#module-auth-pass');
+                const onSubmitKey = (event) => {
+                    if (event.key === 'Enter') runAuth('login');
+                };
+                if (usernameInput) usernameInput.addEventListener('keydown', onSubmitKey);
+                if (passwordInput) passwordInput.addEventListener('keydown', onSubmitKey);
+                if (guestBtn) {
+                    guestBtn.addEventListener('click', () => {
+                        setGuestMode(true);
+                        overlay.style.display = 'none';
+                        const target = moduleGate.pendingHref;
+                        moduleGate.pendingHref = '';
+                        if (target) window.location.href = target;
+                    });
+                }
+
+                return overlay;
+            }
+
+            function showAuthOverlay(targetHref) {
+                moduleGate.pendingHref = targetHref;
+                const overlay = getAuthOverlay();
+                overlay.style.display = 'flex';
+                const input = overlay.querySelector('#module-auth-user');
+                if (input) input.focus();
+            }
+
+            function setupModuleAccessGate() {
+                loadModuleSession();
+                moduleCards.forEach((card) => {
+                    card.addEventListener('click', () => {
+                        moduleGate.pendingHref = '';
+                    });
+                });
+            }
+
+            function setupWelcomeLinkCopy() {
+                if (!welcomeLinkInput || !welcomeLinkCopy) return;
+                try {
+                    welcomeLinkInput.value = new URL('./', window.location.href).href;
+                } catch (e) {}
+                welcomeLinkCopy.addEventListener('click', async () => {
+                    const target = welcomeLinkInput.value || '';
+                    if (!target) return;
+                    try {
+                        await navigator.clipboard.writeText(target);
+                        welcomeLinkCopy.textContent = 'Copie';
+                        setTimeout(() => { welcomeLinkCopy.textContent = 'Copier'; }, 1200);
+                    } catch (e) {
+                        welcomeLinkInput.focus();
+                        welcomeLinkInput.select();
+                    }
+                });
+            }
+
+            function getBootDayStamp() {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+
+            function hasSeenBootToday() {
+                try {
+                    return localStorage.getItem(DAILY_BOOT_STORAGE_KEY) === getBootDayStamp();
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            function markBootSeenToday() {
+                try {
+                    localStorage.setItem(DAILY_BOOT_STORAGE_KEY, getBootDayStamp());
+                } catch (e) {}
+            }
+
+            setupModuleAccessGate();
+            setupWelcomeLinkCopy();
+
+            // Horloge Temps Réel
+            function updateRealtimeClock() {
+                const now = new Date();
+                document.getElementById('realtime-clock').innerText = now.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+            }
+
+            updateRealtimeClock();
+            setInterval(updateRealtimeClock, 1000);
+
+            // --- SEQUENCE DE BOOT (CINEMATIQUE TABLETTE 2035) ---
+            const bootConfig = {
+                startDelay: 110,
+                minLineDelay: 45,
+                maxLineDelay: 95,
+                pauseBeforeBio: 240,
+                bootFadeOut: 150,
+                bioStep1: 130,
+                bioStep2: 460,
+                bioStep3: 860,
+                bioStep4: 1240,
+                unlockAfterAuth: 280,
+                bioFadeOut: 140
+            };
+
+            const lines = [
+                { text: "INITIALIZING TRUSTED STARTUP BUS...", phase: "SECURE BOOTSTRAP", progress: 6 },
+                { text: "NEGOTIATING ENCRYPTED BACKPLANE...", phase: "SECURE BOOTSTRAP", progress: 14, warn: true },
+                { text: "LOADING KERNEL v5.14.2 // TACTICAL BRANCH", phase: "CORE SYSTEM", progress: 24 },
+                { text: "[OK] CPU MATRIX ONLINE: 128 CORES", phase: "CORE SYSTEM", progress: 34, ok: true, major: true },
+                { text: "[OK] MEMORY INTEGRITY: 100%", phase: "CORE SYSTEM", progress: 42, ok: true },
+                { text: "SYNCING GEO-TIME SATELLITE GRID...", phase: "NETWORK HANDSHAKE", progress: 53, warn: true },
+                { text: "ESTABLISHING QUANTUM-LINK TUNNEL...", phase: "NETWORK HANDSHAKE", progress: 66, warn: true },
+                { text: "[OK] COMMAND RELAY AUTHENTICATED", phase: "NETWORK HANDSHAKE", progress: 76, ok: true },
+                { text: "MOUNTING FIELD MODULES: RETICULE / TACTIQUE", phase: "MISSION STACK", progress: 87 },
+                { text: "LOADING BIOMETRIC SENTINEL...", phase: "MISSION STACK", progress: 94 },
+                { text: "SYSTEM READY // WAITING FOR OPERATOR", phase: "MISSION STACK", progress: 100, major: true }
+            ];
+
+            let lineIndex = 0;
+
+            function randomBetween(min, max) {
+                return Math.floor(Math.random() * (max - min + 1)) + min;
+            }
+
+            function nowStamp() {
+                const now = new Date();
+                return now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            }
+
+            function updateBootHUD(phase, progress) {
+                if (bootPhase) bootPhase.innerText = phase;
+                if (bootProgress) bootProgress.style.width = `${progress}%`;
+                if (bootMeter) bootMeter.innerText = `SYS CHECK ${progress}%`;
+            }
+
+            function appendBootLine(entry) {
+                const div = document.createElement('div');
+                div.className = 'boot-line';
+                if (entry.ok) div.classList.add('ok');
+                if (entry.warn) div.classList.add('warn');
+                if (entry.major) div.classList.add('major');
+                div.innerText = `[${nowStamp()}] > ${entry.text}`;
+                bootText.appendChild(div);
+
+                const maxLines = 13;
+                while (bootText.children.length > maxLines) {
+                    bootText.removeChild(bootText.firstChild);
+                }
+                bootText.scrollTop = bootText.scrollHeight;
+            }
+
+            function typeNextLine() {
+                if (lineIndex >= lines.length) {
+                    setTimeout(startBioScan, bootConfig.pauseBeforeBio);
+                    return;
+                }
+
+                const entry = lines[lineIndex];
+                updateBootHUD(entry.phase, entry.progress);
+                appendBootLine(entry);
+                lineIndex++;
+
+                let delay = randomBetween(bootConfig.minLineDelay, bootConfig.maxLineDelay);
+                if (entry.ok) delay -= 20;
+                if (entry.major) delay += 130;
+                setTimeout(typeNextLine, Math.max(28, delay));
+            }
+
+            function setBioStatus(text, color, glow = color) {
+                bioStatus.innerText = text;
+                bioStatus.style.color = color;
+                bioStatus.style.textShadow = `0 0 16px ${glow}`;
+            }
+
+            // --- SCAN BIOMETRIQUE ---
+            function startBioScan() {
+                updateBootHUD("BIOMETRIC VERIFICATION", 100);
+                if (bootMeter) bootMeter.innerText = "AUTH PIPELINE READY";
+                bootLayer.style.opacity = '0';
+
+                setTimeout(() => {
+                    bootLayer.style.display = 'none';
+                    bioLayer.style.display = 'flex';
+                    requestAnimationFrame(() => bioLayer.classList.add('active'));
+
+                    setBioStatus("SYNCHRONISATION CAPTEURS MULTI-SPECTRAUX...", "#ff922b", "#ff922b");
+
+                    setTimeout(() => {
+                        setBioStatus("LECTURE BIOMETRIQUE: EMPREINTE + CADENCE CARDIAQUE...", "#ffb86a", "#ffb86a");
+                    }, bootConfig.bioStep1);
+
+                    setTimeout(() => {
+                        setBioStatus("CROISEMENT IDENTITE / BASE NATIONALE...", "#ffd166", "#ffd166");
+                        fingerprintSvg.classList.add('active');
+                    }, bootConfig.bioStep2);
+
+                    setTimeout(() => {
+                        setBioStatus("MATCH CONFIRME: SCORE DE CONFIANCE 99.7%", "#73fbf7", "#73fbf7");
+                    }, bootConfig.bioStep3);
+
+                    setTimeout(() => {
+                        setBioStatus("ACCES TABLETTE 2035 AUTORISE.", "#73fbf7", "#73fbf7");
+                        setTimeout(unlockTablet, bootConfig.unlockAfterAuth);
+                    }, bootConfig.bioStep4);
+                }, bootConfig.bootFadeOut);
+            }
+
+            // --- DEVERROUILLAGE FINAL ---
+            function unlockTablet() {
+                bioLayer.classList.remove('active');
+                setTimeout(() => {
+                    bioLayer.style.display = 'none';
+                    tabletInterface.style.opacity = '1';
+                    document.body.classList.remove('app-loading');
+                }, bootConfig.bioFadeOut);
+            }
+
+            function skipBootSequence() {
+                if (bootLayer) {
+                    bootLayer.style.opacity = '0';
+                    bootLayer.style.display = 'none';
+                }
+                if (bioLayer) {
+                    bioLayer.classList.remove('active');
+                    bioLayer.style.opacity = '0';
+                    bioLayer.style.display = 'none';
+                }
+                if (fingerprintSvg) fingerprintSvg.classList.remove('active');
+                if (tabletInterface) tabletInterface.style.opacity = '1';
+                document.body.classList.remove('app-loading');
+            }
+
+            function dismissBootSequence() {
+                markBootSeenToday();
+                skipBootSequence();
+            }
+
+            if (bootSkip) {
+                bootSkip.addEventListener('click', dismissBootSequence);
+            }
+            document.addEventListener('keydown', (event) => {
+                if (event.key !== 'Escape') return;
+                if (!document.body.classList.contains('app-loading')) return;
+                dismissBootSequence();
+            });
+
+            // Démarrage
+            if (hasSeenBootToday()) {
+                skipBootSequence();
+            } else {
+                markBootSeenToday();
+                setTimeout(typeNextLine, bootConfig.startDelay);
+            }
+        });
+    </script>
+    <script>
+        (() => {
+            const selector = 'input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]), textarea';
+            const lockField = (field) => {
+                if (!field || typeof field.setAttribute !== 'function') return;
+                field.setAttribute('autocomplete', 'off');
+                field.setAttribute('autocorrect', 'off');
+                field.setAttribute('autocapitalize', 'off');
+                field.setAttribute('spellcheck', 'false');
+            };
+            document.querySelectorAll(selector).forEach(lockField);
+            document.addEventListener('focusin', (event) => {
+                const field = event.target;
+                if (field && typeof field.matches === 'function' && field.matches(selector)) lockField(field);
+            });
+        })();
+    </script>
+    <script type="module" src="./home-alerts.js"></script>
+</body>
+</html>
+
+
+

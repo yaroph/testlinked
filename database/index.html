@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BNI LINKED // DATABASE</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+  <div class="bg-grid"></div>
+
+  <div class="app-container">
+    
+    <header class="top-bar">
+      <div class="logo-area">
+        <img src="../point/logo-bni-linked.png" alt="BNI Linked" class="app-logo">
+        <div class="titles">
+          <h1 class="main-title">SYSTEM DATABASE</h1>
+          <span class="sub-title">ARCHIVES CLOUD SÉCURISÉES</span>
+        </div>
+      </div>
+      
+      <nav class="main-nav">
+        <a href="../point/" class="nav-btn">🕸️ RÉTICULE</a>
+        <a href="../map/" class="nav-btn">🗺️ CARTE TACTIQUE</a>
+      </nav>
+    </header>
+
+    <main class="content-panel">
+      
+      <div class="tabs-container">
+        <button class="tab-btn active" data-tab="point">📂 BACKUPS RÉSEAU (POINT)</button>
+        <button class="tab-btn" data-tab="map">📂 BACKUPS TACTIQUES (MAP)</button>
+      </div>
+
+      <div class="status-bar">
+        <span class="status-indicator"></span>
+        <span id="global-status">Système prêt. En attente de sélection...</span>
+      </div>
+
+      <div id="panel-point" class="panel active">
+        <div class="panel-header-row">
+          <h3>ARCHIVES RÉSEAU</h3>
+          <div class="status-text" id="status-point">Chargement...</div>
+        </div>
+        <div class="cards-grid" id="cards-point"></div>
+        <div class="panel-footer">
+          <button id="load-more-point" class="btn-cyber btn-load-more" type="button" hidden>CHARGER PLUS</button>
+        </div>
+      </div>
+
+      <div id="panel-map" class="panel">
+        <div class="panel-header-row">
+          <h3>ARCHIVES TACTIQUES</h3>
+          <div class="status-text" id="status-map">Chargement...</div>
+        </div>
+        <div class="cards-grid" id="cards-map"></div>
+        <div class="panel-footer">
+          <button id="load-more-map" class="btn-cyber btn-load-more" type="button" hidden>CHARGER PLUS</button>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <div id="custom-modal" class="modal-overlay">
+    <div class="modal-box">
+      <button id="modal-close-x" type="button" class="ui-close-x modal-close-x" aria-label="Fermer">×</button>
+      <div class="modal-header" id="modal-title">TITRE</div>
+      <div class="modal-body" id="modal-text">Texte de la modale...</div>
+      <div class="modal-footer" id="modal-footer">
+        </div>
+    </div>
+  </div>
+
+<script>
+  // --- GESTION DES MODALES ---
+  const modal = document.getElementById('custom-modal');
+  const modalTitle = document.getElementById('modal-title');
+  const modalText = document.getElementById('modal-text');
+  const modalFooter = document.getElementById('modal-footer');
+  const modalCloseX = document.getElementById('modal-close-x');
+  let activeModalResolve = null;
+  let activeModalDismissValue = null;
+
+  function finishModal(value) {
+    modal.classList.remove('visible');
+    const resolver = activeModalResolve;
+    activeModalResolve = null;
+    activeModalDismissValue = null;
+    if (typeof resolver === 'function') resolver(value);
+  }
+
+  function showModal(title, text, type = 'alert') {
+    return new Promise((resolve) => {
+      activeModalResolve = resolve;
+      activeModalDismissValue = type === 'confirm' ? false : true;
+      modalTitle.textContent = title;
+      modalText.textContent = text;
+      modalFooter.innerHTML = '';
+
+      if (type === 'confirm') {
+        // Bouton Annuler
+        const btnCancel = document.createElement('button');
+        btnCancel.className = 'modal-btn';
+        btnCancel.textContent = 'ANNULER';
+        btnCancel.onclick = () => finishModal(false);
+        
+        // Bouton Confirmer (Danger)
+        const btnConfirm = document.createElement('button');
+        btnConfirm.className = 'modal-btn danger';
+        btnConfirm.textContent = 'CONFIRMER';
+        btnConfirm.onclick = () => finishModal(true);
+
+        modalFooter.appendChild(btnCancel);
+        modalFooter.appendChild(btnConfirm);
+      } else {
+        // Mode Alert (OK seulement)
+        const btnOk = document.createElement('button');
+        btnOk.className = 'modal-btn confirm';
+        btnOk.textContent = 'OK';
+        btnOk.onclick = () => finishModal(true);
+        modalFooter.appendChild(btnOk);
+      }
+
+      modal.classList.add('visible');
+    });
+  }
+
+  function closeModal() {
+    finishModal(activeModalDismissValue);
+  }
+
+  modalCloseX?.addEventListener('click', closeModal);
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal.classList.contains('visible')) {
+      closeModal();
+    }
+  });
+
+  async function customAlert(text) {
+    await showModal('INFORMATION', text, 'alert');
+  }
+
+  async function customConfirm(text) {
+    return await showModal('CONFIRMATION REQUISE', text, 'confirm');
+  }
+
+
+  // --- LOGIQUE JAVASCRIPT PRINCIPALE ---
+  const tabs = document.querySelectorAll('.tab-btn');
+  const panels = {
+    point: document.getElementById('panel-point'),
+    map: document.getElementById('panel-map')
+  };
+  const globalStatus = document.getElementById('global-status');
+  const API_KEY_STORAGE_KEY = 'bniLinkedApiKey';
+  const COLLAB_SESSION_STORAGE_KEY = 'bniLinkedCollabSession_v1';
+  const PAGE_SIZE = 50;
+  const archiveState = {
+    point: createArchiveState(),
+    map: createArchiveState()
+  };
+
+  function createArchiveState() {
+    return {
+      entries: [],
+      loaded: false,
+      loading: false,
+      hasMore: false,
+      nextOffset: 0,
+      totalFound: 0
+    };
+  }
+
+  function formatArchiveError(page, error) {
+    const label = page === 'map' ? 'archives tactiques' : 'archives reseau';
+    const rawMessage = String(error?.message || '').trim();
+    const normalized = rawMessage.toLowerCase();
+
+    if (!rawMessage || normalized === 'not_found') {
+      return {
+        status: `SOURCE ${label.toUpperCase()} INDISPONIBLE`,
+        title: 'Flux archive indisponible',
+        copy: `Le service des ${label} ne repond pas dans cet environnement.`,
+        hint: 'Recharge la page ou relance la fonction Netlify concernee.'
+      };
+    }
+
+    if (normalized.includes('failed to fetch') || normalized.includes('networkerror') || normalized.includes('load failed')) {
+      return {
+        status: `LIAISON ${label.toUpperCase()} INTERROMPUE`,
+        title: 'Connexion interrompue',
+        copy: `Impossible de joindre le service des ${label} pour le moment.`,
+        hint: 'Verifie la connexion ou reessaie dans quelques secondes.'
+      };
+    }
+
+    return {
+      status: `ERREUR SUR ${label.toUpperCase()}`,
+      title: 'Chargement impossible',
+      copy: `Les ${label} ne peuvent pas etre charges actuellement.`,
+      hint: 'Reessaie dans un instant.'
+    };
+  }
+
+  function renderArchiveErrorState(page, details) {
+    const cardsEl = document.getElementById(`cards-${page}`);
+    if (!cardsEl || !details) return;
+    cardsEl.innerHTML = `
+      <div class="error-state">
+        <div class="error-state-title">${escapeHtml(details.title || 'Chargement impossible')}</div>
+        <div class="error-state-copy">${escapeHtml(details.copy || 'Le service ne repond pas actuellement.')}</div>
+        <div class="error-state-hint">${escapeHtml(details.hint || 'Reessaie dans un instant.')}</div>
+        <div class="error-state-actions">
+          <button class="btn-cyber btn-error-retry" type="button" data-retry-page="${escapeHtml(page)}">REESSAYER</button>
+        </div>
+      </div>
+    `;
+    const retryBtn = cardsEl.querySelector('[data-retry-page]');
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => {
+        refreshPage(page).catch(() => {});
+      });
+    }
+  }
+
+  function getApiKey() {
+    const fromWindow = (typeof window.BNI_LINKED_KEY === 'string') ? window.BNI_LINKED_KEY.trim() : '';
+    if (fromWindow) return fromWindow;
+    try {
+      const fromStorage = localStorage.getItem(API_KEY_STORAGE_KEY);
+      if (fromStorage && fromStorage.trim()) return fromStorage.trim();
+    } catch (e) {}
+    return '';
+  }
+
+  function readViewerSession() {
+    try {
+      const raw = localStorage.getItem(COLLAB_SESSION_STORAGE_KEY);
+      if (!raw) return { token: '', user: null };
+      const parsed = JSON.parse(raw);
+      return {
+        token: String(parsed?.token || ''),
+        user: parsed?.user && typeof parsed.user === 'object' ? parsed.user : null
+      };
+    } catch (e) {
+      return { token: '', user: null };
+    }
+  }
+
+  function withViewerAuth(headers = {}) {
+    const merged = { ...headers };
+    const key = getApiKey();
+    if (key) merged['x-api-key'] = key;
+    const session = readViewerSession();
+    if (session.token) merged['x-collab-token'] = session.token;
+    return merged;
+  }
+
+  function activateTab(tab) {
+    tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    Object.entries(panels).forEach(([key, panel]) => {
+      panel.classList.toggle('active', key === tab);
+    });
+    globalStatus.textContent = `Affichage des archives : ${tab.toUpperCase()}`;
+
+    if (!archiveState[tab].loaded && !archiveState[tab].loading) {
+      refreshPage(tab).catch(() => {});
+    }
+  }
+
+  tabs.forEach(btn => {
+    btn.addEventListener('click', () => {
+      activateTab(btn.dataset.tab);
+    });
+  });
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleString('fr-FR'); } catch(e) { return iso; }
+  }
+
+  function escapeHtml(text) {
+    return String(text ?? '')
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function makeFilename(entry) {
+    const safeDate = (entry.createdAt || '').replace(/[:.]/g, '-');
+    return `${entry.page}_${entry.action}_${safeDate || entry.ts}.json`;
+  }
+
+  // --- API CLIENT ---
+
+  async function apiList(page, options = {}) {
+    const params = new URLSearchParams({
+      page: String(page || ''),
+      limit: String(Number(options.limit || PAGE_SIZE)),
+      offset: String(Number(options.offset || 0))
+    });
+    const res = await fetch(
+      `/.netlify/functions/db-list?${params.toString()}`,
+      { headers: withViewerAuth() }
+    );
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || !out.ok) throw new Error(out.error || `Erreur API (${res.status})`);
+    return out; 
+  }
+
+  async function apiGet(key) {
+    const res = await fetch(
+      `/.netlify/functions/db-get?key=${encodeURIComponent(key)}`,
+      { headers: withViewerAuth() }
+    );
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || out?.ok === false) throw new Error(out.error || `Erreur récupération (${res.status})`);
+    return out;
+  }
+
+  async function apiDelete(key) {
+    const res = await fetch(`/.netlify/functions/db-delete`, {
+      method: 'POST',
+      headers: withViewerAuth({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ key })
+    });
+    const out = await res.json().catch(()=>({ok:false}));
+    if (!res.ok || !out.ok) throw new Error(out.error || 'Erreur suppression');
+  }
+
+  // --- RENDU ---
+
+  function updateLoadMoreButton(page) {
+    const pageState = archiveState[page];
+    const btn = document.getElementById(`load-more-${page}`);
+    if (!btn) return;
+
+    const remaining = Math.max(0, Number(pageState.totalFound || 0) - pageState.entries.length);
+    btn.hidden = !pageState.hasMore;
+    btn.disabled = pageState.loading;
+    btn.textContent = pageState.loading
+      ? 'CHARGEMENT...'
+      : `CHARGER ${Math.min(PAGE_SIZE, remaining || PAGE_SIZE)} DE PLUS`;
+  }
+
+  function render(page) {
+    const statusEl = document.getElementById(`status-${page}`);
+    const cardsEl = document.getElementById(`cards-${page}`);
+    const pageState = archiveState[page];
+    const entries = pageState.entries;
+    const totalFound = pageState.totalFound;
+    cardsEl.innerHTML = '';
+
+    if (!entries || !entries.length) {
+      statusEl.textContent = 'Aucune donnée.';
+      cardsEl.innerHTML = '<div class="empty-state">AUCUNE ARCHIVE TROUVÉE DANS LE CLOUD</div>';
+      updateLoadMoreButton(page);
+      return;
+    }
+
+    const count = entries.length;
+    const total = totalFound || count;
+    
+    if (total > count) {
+        statusEl.textContent = `${count} AFFICHÉS SUR ${total} TOTAL`;
+    } else {
+        statusEl.textContent = `${count} FICHIERS SYNCHRONISÉS`;
+    }
+
+    for (const entry of entries) {
+      const card = document.createElement('div');
+      card.className = 'data-card';
+
+      let actionType = 'UNK';
+      let customName = '';
+
+      if (entry.action.startsWith('import')) {
+          actionType = '📥 IMPORT';
+          customName = entry.action.substring(7); 
+      } else if (entry.action.startsWith('export')) {
+          actionType = '💾 EXPORT';
+          customName = entry.action.substring(7); 
+      } else {
+          actionType = entry.action.toUpperCase();
+      }
+      
+      if (customName.startsWith('-')) customName = customName.substring(1);
+      if (!customName) customName = "Standard";
+
+      const badgeClass = entry.action.includes('import') ? 'badge-import' : 'badge-export';
+
+      card.innerHTML = `
+        <div class="card-top">
+          <span class="badge ${badgeClass}">${actionType}</span>
+          <span class="card-date">${fmtDate(entry.createdAt)}</span>
+        </div>
+        <div class="card-title">${escapeHtml(customName.toUpperCase())}</div>
+        <div class="card-key" style="opacity:0.3; font-size:0.7em;">ID: ${entry.ts}</div>
+        <div class="card-actions">
+          <button class="btn-cyber btn-dl">TÉLÉCHARGER</button>
+          <button class="btn-cyber btn-del">SUPPRIMER</button>
+        </div>
+      `;
+
+      const btnDl = card.querySelector('.btn-dl');
+      const btnDel = card.querySelector('.btn-del');
+
+      // TÉLÉCHARGER
+      btnDl.addEventListener('click', async () => {
+        btnDl.disabled = true;
+        btnDl.textContent = '...';
+        try {
+          const data = await apiGet(entry.key);
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = makeFilename(entry);
+          document.body.appendChild(a);
+          a.click();
+          URL.revokeObjectURL(a.href);
+          a.remove();
+          btnDl.textContent = 'OK';
+        } catch (e) {
+          await customAlert('Erreur lors du téléchargement du fichier.');
+          btnDl.textContent = 'ERR';
+        } finally {
+          setTimeout(() => { btnDl.disabled = false; btnDl.textContent = 'TÉLÉCHARGER'; }, 2000);
+        }
+      });
+
+      // SUPPRIMER (FIX AMÉLIORÉ)
+      btnDel.addEventListener('click', async () => {
+        // 1. Modale de confirmation
+        const confirmed = await customConfirm('Voulez-vous vraiment supprimer définitivement ce fichier du Cloud ?');
+        if (!confirmed) return;
+
+        btnDel.disabled = true;
+        btnDel.textContent = '...';
+        
+        try {
+          // 2. Appel API
+          await apiDelete(entry.key);
+          
+          // 3. Suppression VISUELLE immédiate (Feedback instantané)
+          // On fait disparaître la carte pour que l'utilisateur voit que ça a marché
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.9)';
+          
+          setTimeout(async () => {
+             archiveState[page].loaded = false;
+             await refreshPage(page);
+          }, 300);
+
+        } catch (e) {
+          console.error(e);
+          await customAlert('Erreur lors de la suppression. Vérifiez votre connexion.');
+          btnDel.textContent = 'ERR';
+          btnDel.disabled = false;
+        }
+      });
+
+      cardsEl.appendChild(card);
+    }
+
+    updateLoadMoreButton(page);
+  }
+
+  async function refreshPage(page, options = {}) {
+    const pageState = archiveState[page];
+    if (!pageState || pageState.loading) return;
+
+    const statusEl = document.getElementById(`status-${page}`);
+    const append = Boolean(options.append);
+    const nextOffset = append ? pageState.nextOffset : 0;
+
+    pageState.loading = true;
+    statusEl.textContent = append ? 'CHARGEMENT DES ARCHIVES...' : 'CONNEXION NEURAL LINK...';
+    updateLoadMoreButton(page);
+
+    try {
+      const data = await apiList(page, { offset: nextOffset, limit: PAGE_SIZE });
+      const nextEntries = Array.isArray(data.entries) ? data.entries : [];
+
+      pageState.entries = append ? pageState.entries.concat(nextEntries) : nextEntries;
+      pageState.totalFound = Number(data.totalFound || pageState.entries.length);
+      pageState.hasMore = Boolean(data.hasMore);
+      pageState.nextOffset = Number(data.nextOffset || pageState.entries.length);
+      pageState.loaded = true;
+
+      render(page);
+    } catch (e) {
+      const errorDetails = formatArchiveError(page, e);
+      statusEl.textContent = errorDetails.status;
+      console.warn("Erreur DB:", e);
+      renderArchiveErrorState(page, errorDetails);
+      const btn = document.getElementById(`load-more-${page}`);
+      if (btn) btn.hidden = true;
+    } finally {
+      pageState.loading = false;
+      updateLoadMoreButton(page);
+    }
+  }
+
+  ['point', 'map'].forEach((page) => {
+    const btn = document.getElementById(`load-more-${page}`);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      refreshPage(page, { append: true }).catch(() => {});
+    });
+  });
+
+  // Init
+  activateTab('point');
+</script>
+<script>
+  (() => {
+    const selector = 'input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]), textarea';
+    const lockField = (field) => {
+      if (!field || typeof field.setAttribute !== 'function') return;
+      field.setAttribute('autocomplete', 'off');
+      field.setAttribute('autocorrect', 'off');
+      field.setAttribute('autocapitalize', 'off');
+      field.setAttribute('spellcheck', 'false');
+    };
+    document.querySelectorAll(selector).forEach(lockField);
+    document.addEventListener('focusin', (event) => {
+      const field = event.target;
+      if (field && typeof field.matches === 'function' && field.matches(selector)) lockField(field);
+    });
+  })();
+</script>
+</body>
+</html>

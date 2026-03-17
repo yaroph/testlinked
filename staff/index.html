@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BNI LINKED // STAFF ALERTES</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700;800&family=VT323&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../map/style.css">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body class="map-shell staff-shell">
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-head">
+            <span class="context-menu-title">Actions</span>
+            <button id="ctx-cancel" type="button" class="ui-close-x context-menu-close" aria-label="Fermer">×</button>
+        </div>
+        <button id="ctx-new-zone">Nouveau cercle</button>
+        <button id="ctx-new-free-zone">Nouvelle zone</button>
+    </div>
+
+    <div id="staff-access-overlay">
+        <div class="staff-access-card">
+            <div class="staff-access-kicker">Acces staff</div>
+            <div class="staff-access-title">Console alertes BNI</div>
+            <p class="staff-access-copy">Entre le code staff pour acceder au panneau d’alerte.</p>
+            <input id="staff-access-input" type="password" class="staff-access-input" placeholder="Code d'acces">
+            <div id="staff-access-error" class="staff-access-error"></div>
+            <button id="staff-access-submit" type="button" class="staff-access-btn">Entrer</button>
+        </div>
+    </div>
+
+    <div id="app-container">
+        <div id="sidebar-left">
+            <div class="panel-section shell-section shell-section-brand">
+                <img src="../map/logo-bni-linked.png" alt="BNI LINKED" class="shell-logo">
+            </div>
+
+            <div class="panel-section shell-section staff-summary-panel">
+                <div class="staff-panel-head">
+                    <span class="section-title shell-title">Etat</span>
+                    <span id="staffAlertMode" class="editor-pill staff-mini-pill">Brouillon</span>
+                </div>
+                <div class="staff-status-grid">
+                    <div class="data-shell-card">
+                        <span class="data-shell-label">Etat</span>
+                        <strong id="staffAlertState">Verrouille</strong>
+                    </div>
+                    <div class="data-shell-card">
+                        <span class="data-shell-label">Forme</span>
+                        <strong id="staffSelectionMode">Aucune</strong>
+                    </div>
+                </div>
+                <div id="staffDrawStatus" class="staff-draw-status">Utilise Tracer cercle ou Tracer zone pour commencer.</div>
+                <div class="staff-position-meta">Position: <strong id="staffAlertCoords">--</strong></div>
+                <div id="staffStatusMessage" class="staff-status-message">Console verrouillee.</div>
+            </div>
+
+            <div class="panel-section shell-section staff-help-panel">
+                <span class="section-title shell-title">Creation</span>
+                <div class="staff-helper-copy">
+                    1. Choisis Cercle ou Zone.<br>
+                    2. Trace sur la carte puis ajuste les reglages utiles.<br>
+                    3. Termine puis remplis la fenetre d’alerte.
+                </div>
+                <div class="staff-draw-actions">
+                    <button id="btnNewAlert" class="action-btn" type="button">Tracer cercle</button>
+                    <button id="btnStartFreeDraw" class="action-btn" type="button">Tracer zone</button>
+                    <button id="btnCancelDrawMode" class="btn-close-editor staff-draw-cancel" type="button" disabled>Annuler trace</button>
+                </div>
+                <div class="staff-draw-controls">
+                    <div class="staff-draw-control">
+                        <label class="staff-control-label" for="alertRadius">
+                            Rayon du cercle actif
+                            <span id="alertRadiusValue">2.6</span>
+                        </label>
+                        <input id="alertRadius" class="staff-slider" type="range" min="0.8" max="12" step="0.1" value="2.6">
+                    </div>
+                    <div class="staff-draw-control">
+                        <label class="staff-control-label" for="alertStrokeWidth">
+                            Epaisseur du trait
+                            <span id="alertStrokeWidthValue">0.06</span>
+                        </label>
+                        <input id="alertStrokeWidth" class="staff-slider" type="range" min="0.02" max="0.5" step="0.01" value="0.06">
+                    </div>
+                    <div class="staff-control-hint">Le rayon agit sur le cercle actif. Le trait s applique a toute l alerte.</div>
+                    <div id="staffCircleTools" class="staff-circle-tools" hidden>
+                        <div class="staff-circle-tools-head">
+                            <span class="staff-circle-tools-title">Cercle actif</span>
+                            <span id="staffCircleCount" class="staff-circle-count">0</span>
+                        </div>
+                        <div id="staffCircleToolsHint" class="staff-circle-tools-hint">Selectionne un cercle pour regler son rayon.</div>
+                        <div id="staffCirclePicker" class="staff-circle-picker"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="viewport">
+            <div id="map-world">
+                <img id="map-image" src="../map/carte.jpg" alt="Carte Staff BNI">
+                <svg id="staff-alert-layer" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+            </div>
+
+            <div id="staff-map-banner" hidden></div>
+
+            <div id="hud-bottom">
+                <div id="coords-display" class="desktop-only">GPS: -- | --</div>
+                <div class="separator desktop-only"></div>
+                <button id="btnResetView" class="hud-btn" type="button">Recentrer</button>
+            </div>
+        </div>
+
+        <div id="sidebar-right" class="active">
+            <div class="panel-header panel-header-editor">CALQUES ALERTES</div>
+            <div id="editor-content">
+                <div class="staff-alerts-shell">
+                    <div class="staff-alerts-head">
+                        <div class="staff-alerts-copy">Retrouve une alerte, modifie-la ou recentre la carte dessus.</div>
+                    </div>
+                    <div id="staffAlertsList" class="staff-alerts-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="staff-alert-modal" class="staff-alert-modal" hidden>
+        <div class="staff-alert-modal-card">
+            <button id="btnAlertModalClose" type="button" class="ui-close-x staff-modal-close" aria-label="Fermer">×</button>
+            <div class="staff-alert-modal-head">
+                <div>
+                    <div class="staff-alert-modal-kicker">Finaliser</div>
+                    <div id="staffAlertModalTitle" class="staff-alert-modal-title">Nouvelle alerte</div>
+                </div>
+            </div>
+
+            <div class="staff-alert-modal-grid">
+                <div class="editor-col">
+                    <label for="alertTitle">Titre</label>
+                    <input id="alertTitle" class="cyber-input" type="text" maxlength="120" placeholder="Ex: Intervention BNI secteur nord">
+                </div>
+                <div class="editor-col">
+                    <div class="staff-date-head">
+                        <label for="alertStartAt">Date d affichage</label>
+                        <div id="staffStartVisibilitySwitch" class="staff-start-visibility-switch" role="group" aria-label="Visibilite avant la date" hidden>
+                            <button id="btnAlertStartWait" class="staff-start-visibility-btn" type="button">Attendre</button>
+                            <button id="btnAlertStartShowNow" class="staff-start-visibility-btn" type="button">Afficher deja</button>
+                        </div>
+                    </div>
+                    <input id="alertStartAt" class="cyber-input" type="datetime-local">
+                    <div id="staffStartVisibilityHint" class="staff-helper-copy">Laisse vide pour afficher tout de suite.</div>
+                </div>
+                <div class="editor-col staff-modal-grid-wide">
+                    <label for="alertDescription">Description</label>
+                    <textarea id="alertDescription" class="cyber-input" rows="5" placeholder="Message affiche sur la home et sur la carte"></textarea>
+                </div>
+                <div class="editor-col staff-modal-grid-wide">
+                    <div class="staff-modal-inline-note">
+                        Reglages dessin: utilise Rayon cercle et Epaisseur trait dans la colonne gauche.
+                        Positionne l alerte directement sur la carte, puis finalise ici.
+                    </div>
+                </div>
+            </div>
+
+            <div class="staff-modal-section staff-audience-section">
+                <div class="staff-modal-section-head staff-audience-head">
+                    <span>Audience</span>
+                </div>
+                <div id="staffAudienceMode" class="staff-audience-copy">Tout le monde voit cette alerte.</div>
+                <div class="staff-audience-switch" role="group" aria-label="Audience de l alerte">
+                    <button id="btnAudienceAll" class="staff-audience-toggle" type="button">Tous</button>
+                    <button id="btnAudienceWhitelist" class="staff-audience-toggle" type="button">Whitelist</button>
+                </div>
+                <div id="staffWhitelistPanel" class="staff-whitelist-panel" hidden>
+                    <div class="staff-whitelist-card">
+                        <div class="staff-whitelist-row">
+                            <div class="staff-whitelist-search">
+                                <input id="staffWhitelistInput" class="cyber-input" type="text" placeholder="Tape un username cloud">
+                                <div id="staffWhitelistSuggestions" class="staff-whitelist-suggestions" hidden></div>
+                            </div>
+                            <button id="btnAddWhitelistUser" class="action-btn" type="button">Ajouter</button>
+                        </div>
+                        <div class="staff-helper-copy staff-whitelist-hint">Active ce mode seulement si l alerte doit etre reservee a certains comptes.</div>
+                    </div>
+                    <div class="staff-whitelist-summary">
+                        <span class="staff-whitelist-summary-label">Utilisateurs autorises</span>
+                        <span id="staffWhitelistCount" class="staff-whitelist-count">0</span>
+                    </div>
+                    <div id="staffWhitelistList" class="staff-whitelist-list"></div>
+                </div>
+            </div>
+
+            <input id="alertActive" type="checkbox" checked hidden>
+            <input id="alertShowBeforeStart" type="checkbox" hidden>
+
+            <div class="staff-alert-modal-actions">
+                <button id="btnAlertModalCancel" class="btn-close-editor" type="button">Annuler</button>
+                <button id="btnPublishAlert" class="action-btn" type="button">Enregistrer</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="staff-confirm-modal" class="staff-confirm-modal" hidden>
+        <div class="staff-confirm-card" role="dialog" aria-modal="true" aria-labelledby="staffConfirmTitle">
+            <button id="btnStaffConfirmClose" type="button" class="ui-close-x staff-modal-close" aria-label="Fermer">×</button>
+            <div class="staff-confirm-kicker">Confirmation</div>
+            <div id="staffConfirmTitle" class="staff-confirm-title">Supprimer l alerte ?</div>
+            <div id="staffConfirmMessage" class="staff-confirm-copy">Cette action est definitive.</div>
+            <div class="staff-confirm-actions">
+                <button id="btnStaffConfirmCancel" class="btn-close-editor" type="button">Annuler</button>
+                <button id="btnStaffConfirmOk" class="action-btn staff-confirm-danger" type="button">Supprimer</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+    <script>
+        (() => {
+            const selector = 'input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]), textarea';
+            const lockField = (field) => {
+                if (!field || typeof field.setAttribute !== 'function') return;
+                field.setAttribute('autocomplete', 'off');
+                field.setAttribute('autocorrect', 'off');
+                field.setAttribute('autocapitalize', 'off');
+                field.setAttribute('spellcheck', 'false');
+            };
+            document.querySelectorAll(selector).forEach(lockField);
+            document.addEventListener('focusin', (event) => {
+                const field = event.target;
+                if (field && typeof field.matches === 'function' && field.matches(selector)) lockField(field);
+            });
+        })();
+    </script>
+</body>
+</html>
