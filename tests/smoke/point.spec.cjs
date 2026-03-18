@@ -196,6 +196,8 @@ test('point editor docks to the right on ultra-wide screens', async ({ page }) =
     const editorBox = await page.locator('#editor').boundingBox();
     if (!editorBox) throw new Error('Editor box unavailable');
     expect(2560 - (editorBox.x + editorBox.width)).toBeLessThanOrEqual(90);
+    expect(editorBox.y).toBeLessThanOrEqual(80);
+    expect(editorBox.height).toBeLessThanOrEqual(920);
 });
 
 test('point file merge keeps person and company separate when they only share a phone number', async ({ page }) => {

@@ -254,7 +254,7 @@ function applyDefaultEditorPosition(editorPanel, rightPanel = document.getElemen
     const maxX = Math.max(24, containerRect.width - editorPanel.offsetWidth - 24);
     const maxY = Math.max(24, containerRect.height - editorPanel.offsetHeight - 24);
     const desiredLeft = Math.max(24, containerRect.width - editorPanel.offsetWidth - 36);
-    const desiredTop = clamp((containerRect.height - editorPanel.offsetHeight) / 2, 24, maxY);
+    const desiredTop = clamp(28, 24, maxY);
 
     editorPanel.style.left = `${Math.min(desiredLeft, maxX)}px`;
     editorPanel.style.top = `${desiredTop}px`;
@@ -394,9 +394,34 @@ function ensureEditorDrag() {
 function syncEditorRailHeight(editorBody = ui.editorBody) {
     if (!editorBody) return;
     const panelLayout = editorBody.querySelector('.editor-panel-layout');
-    if (!panelLayout) return;
-    const visibleHeight = Math.max(Math.round(editorBody.clientHeight || 0), 260);
-    panelLayout.style.setProperty('--editor-rail-height', `${visibleHeight}px`);
+    const mainCard = panelLayout?.querySelector('.editor-main-card');
+    const sheet = panelLayout?.querySelector('.editor-sheet');
+    if (!panelLayout || !mainCard || !sheet) return;
+
+    const rightPanel = document.getElementById('right');
+    const viewportHeight = Math.max(
+        Math.round(rightPanel?.clientHeight || 0),
+        Math.round(window.innerHeight || 0),
+        320
+    );
+    const minHeight = isUltraWideEditorLayout() ? 440 : 360;
+    const maxHeightRatio = isUltraWideEditorLayout() ? 0.74 : 0.84;
+    const chromeClearance = isUltraWideEditorLayout() ? 72 : 34;
+    const maxHeight = Math.max(
+        minHeight,
+        Math.min(viewportHeight - chromeClearance, Math.round(viewportHeight * maxHeightRatio))
+    );
+
+    const cardStyles = window.getComputedStyle(mainCard);
+    const cardVerticalPadding = ['paddingTop', 'paddingBottom']
+        .map((property) => Number.parseFloat(cardStyles[property]) || 0)
+        .reduce((sum, value) => sum + value, 0);
+    const sideRailMinHeight = Array.from(panelLayout.querySelectorAll('.editor-side-group'))
+        .reduce((sum, group) => sum + Math.ceil(group.getBoundingClientRect().height || 0), 0) + 28;
+    const naturalHeight = Math.ceil(sheet.scrollHeight || 0) + Math.ceil(cardVerticalPadding);
+    const nextHeight = clamp(Math.max(naturalHeight, sideRailMinHeight, minHeight), minHeight, maxHeight);
+
+    panelLayout.style.setProperty('--editor-rail-height', `${nextHeight}px`);
 }
 
 function getEditorScrollContainer(editorBody = ui.editorBody) {
@@ -531,6 +556,8 @@ function setupEditorListeners(n) {
         headName.classList.toggle('is-multiline', nextHeight > 42);
         const sheetEl = headName.closest('.editor-sheet');
         if (sheetEl) sheetEl.classList.toggle('editor-sheet-name-expanded', nextHeight > 42);
+        syncEditorRailHeight(ui.editorBody);
+        requestAnimationFrame(() => clampEditorInViewport(document.getElementById('editor')));
     };
 
     const syncEditorNameDisplays = (nextName) => {
