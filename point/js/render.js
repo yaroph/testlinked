@@ -73,11 +73,41 @@ function getLabelMetrics(label, fontSize) {
 
 function getPersonStatusVisual(node) {
     const status = normalizePersonStatus(node?.personStatus, node?.type);
+    if (status === PERSON_STATUS.INACTIVE) {
+        return {
+            status,
+            accent: '#647384',
+            badge: 'I',
+            label: 'INACTIF',
+            ringAlpha: 0.34,
+            badgeFill: 'rgba(7, 12, 20, 0.88)',
+            badgeText: '#c4d0db',
+            lineWidth: 1.45
+        };
+    }
     if (status === PERSON_STATUS.MISSING) {
-        return { status, accent: '#f4c35a', badge: '?', label: 'DISPARU' };
+        return {
+            status,
+            accent: '#a88c55',
+            badge: '?',
+            label: 'DISPARU',
+            ringAlpha: 0.4,
+            badgeFill: 'rgba(10, 12, 18, 0.86)',
+            badgeText: '#d8bf86',
+            lineWidth: 1.5
+        };
     }
     if (status === PERSON_STATUS.DECEASED) {
-        return { status, accent: '#ff6b81', badge: 'X', label: 'MORT' };
+        return {
+            status,
+            accent: '#8f6973',
+            badge: 'X',
+            label: 'MORT',
+            ringAlpha: 0.34,
+            badgeFill: 'rgba(9, 11, 18, 0.88)',
+            badgeText: '#d8bcc3',
+            lineWidth: 1.45
+        };
     }
     return null;
 }
@@ -802,26 +832,29 @@ export function draw() {
 
         if (statusVisual && n.type === TYPES.PERSON && (!isHVT || !hvtDenseMode || isBoss || (hvtNodeVisual?.influence || 0) > 0.56)) {
             ctx.save();
-            ctx.globalAlpha = Math.max(0.92, alpha);
+            ctx.globalAlpha = Math.min(Math.max(statusVisual.ringAlpha ?? 0.38, alpha * 0.62), 0.56);
             ctx.beginPath();
             ctx.setLineDash(statusVisual.status === PERSON_STATUS.MISSING ? [6 * invScaleSqrt, 5 * invScaleSqrt] : []);
             ctx.arc(n.x, n.y, rad + (5 * invScaleSqrt), 0, Math.PI * 2);
             ctx.strokeStyle = statusVisual.accent;
-            ctx.lineWidth = 2 * invScaleSqrt;
+            ctx.lineWidth = (statusVisual.lineWidth || 1.45) * invScaleSqrt;
             ctx.stroke();
             ctx.setLineDash([]);
 
             const badgeX = n.x + (rad * 0.72);
             const badgeY = n.y - (rad * 0.72);
-            const badgeR = Math.max(6, rad * 0.26);
+            const badgeR = Math.max(5.5, rad * 0.24);
             ctx.beginPath();
-            ctx.fillStyle = 'rgba(3, 8, 18, 0.96)';
+            ctx.globalAlpha = Math.min(0.78, Math.max(0.56, alpha * 0.72));
+            ctx.fillStyle = statusVisual.badgeFill || 'rgba(3, 8, 18, 0.92)';
             ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
             ctx.fill();
+            ctx.globalAlpha = Math.min(0.7, Math.max(0.46, alpha * 0.65));
             ctx.strokeStyle = statusVisual.accent;
-            ctx.lineWidth = 1.6 * invScaleSqrt;
+            ctx.lineWidth = 1.2 * invScaleSqrt;
             ctx.stroke();
-            ctx.fillStyle = '#ffffff';
+            ctx.globalAlpha = Math.min(0.86, Math.max(0.62, alpha * 0.78));
+            ctx.fillStyle = statusVisual.badgeText || '#ffffff';
             ctx.font = `700 ${Math.max(10, badgeR * 1.25)}px "Rajdhani", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';

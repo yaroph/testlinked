@@ -10,7 +10,8 @@ import {
 } from '../../shared/js/hvt-graph.mjs';
 
 function personStatusPriority(status) {
-    if (status === PERSON_STATUS.DECEASED) return 2;
+    if (status === PERSON_STATUS.DECEASED) return 3;
+    if (status === PERSON_STATUS.INACTIVE) return 2;
     if (status === PERSON_STATUS.MISSING) return 1;
     return 0;
 }

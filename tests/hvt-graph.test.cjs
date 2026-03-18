@@ -17,7 +17,7 @@ test('calculateHvtScores ranks the densest active node first', async () => {
   const { calculateHvtScores, selectHvtTopIds } = await import('../shared/js/hvt-graph.mjs');
 
   const TYPES = { PERSON: 'person', COMPANY: 'company', GROUP: 'group' };
-  const PERSON_STATUS = { ACTIVE: 'active', MISSING: 'missing', DECEASED: 'deceased' };
+  const PERSON_STATUS = { ACTIVE: 'active', INACTIVE: 'inactive', MISSING: 'missing', DECEASED: 'deceased' };
   const nodes = [
     { id: 'seed', type: TYPES.PERSON, personStatus: PERSON_STATUS.ACTIVE },
     { id: 'bridge', type: TYPES.COMPANY, personStatus: PERSON_STATUS.ACTIVE },
@@ -37,6 +37,35 @@ test('calculateHvtScores ranks the densest active node first', async () => {
   const topIds = selectHvtTopIds(nodes, scores, 1);
   assert.deepEqual(topIds, ['seed']);
   assert.ok(scores.find((entry) => entry.id === 'seed').score > scores.find((entry) => entry.id === 'cold').score);
+});
+
+test('calculateHvtScores penalizes inactive nodes like deceased nodes', async () => {
+  const { calculateHvtScores } = await import('../shared/js/hvt-graph.mjs');
+
+  const TYPES = { PERSON: 'person', COMPANY: 'company', GROUP: 'group' };
+  const PERSON_STATUS = { ACTIVE: 'active', INACTIVE: 'inactive', MISSING: 'missing', DECEASED: 'deceased' };
+  const nodes = [
+    { id: 'active', type: TYPES.PERSON, personStatus: PERSON_STATUS.ACTIVE },
+    { id: 'inactive', type: TYPES.PERSON, personStatus: PERSON_STATUS.INACTIVE },
+    { id: 'deceased', type: TYPES.PERSON, personStatus: PERSON_STATUS.DECEASED },
+  ];
+  const links = [
+    { source: 'active', target: 'inactive', kind: 'relation' },
+    { source: 'active', target: 'deceased', kind: 'relation' },
+  ];
+
+  const scores = calculateHvtScores(nodes, links, {
+    types: TYPES,
+    personStatus: PERSON_STATUS,
+    normalizePersonStatus: (status) => status,
+  });
+
+  const activeScore = scores.find((entry) => entry.id === 'active').score;
+  const inactiveScore = scores.find((entry) => entry.id === 'inactive').score;
+  const deceasedScore = scores.find((entry) => entry.id === 'deceased').score;
+
+  assert.ok(activeScore > inactiveScore);
+  assert.ok(Math.abs(inactiveScore - deceasedScore) < 1e-9);
 });
 
 test('calculateHvtInfluence propagates important color through the graph', async () => {

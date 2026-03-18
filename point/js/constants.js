@@ -6,12 +6,14 @@ export const TYPES = {
 
 export const PERSON_STATUS = {
     ACTIVE: 'active',
+    INACTIVE: 'inactive',
     MISSING: 'missing',
     DECEASED: 'deceased'
 };
 
 export const PERSON_STATUS_LABELS = {
     [PERSON_STATUS.ACTIVE]: 'Actif',
+    [PERSON_STATUS.INACTIVE]: 'Inactif',
     [PERSON_STATUS.MISSING]: 'Disparu',
     [PERSON_STATUS.DECEASED]: 'Mort'
 };

@@ -5237,8 +5237,8 @@ function mergeImportedNodeIntoExisting(existingNode, incomingNode) {
     if (existingNode.type === TYPES.PERSON && incomingNode.type === TYPES.PERSON) {
         const currentStatus = normalizePersonStatus(existingNode.personStatus, existingNode.type);
         const incomingStatus = normalizePersonStatus(incomingNode.personStatus, incomingNode.type);
-        const currentPriority = currentStatus === PERSON_STATUS.DECEASED ? 2 : (currentStatus === PERSON_STATUS.MISSING ? 1 : 0);
-        const incomingPriority = incomingStatus === PERSON_STATUS.DECEASED ? 2 : (incomingStatus === PERSON_STATUS.MISSING ? 1 : 0);
+        const currentPriority = currentStatus === PERSON_STATUS.DECEASED ? 3 : (currentStatus === PERSON_STATUS.INACTIVE ? 2 : (currentStatus === PERSON_STATUS.MISSING ? 1 : 0));
+        const incomingPriority = incomingStatus === PERSON_STATUS.DECEASED ? 3 : (incomingStatus === PERSON_STATUS.INACTIVE ? 2 : (incomingStatus === PERSON_STATUS.MISSING ? 1 : 0));
         if (incomingPriority > currentPriority) {
             existingNode.personStatus = incomingStatus;
             changed = true;
@@ -6428,9 +6428,11 @@ function updateIntelPanel(force = false) {
         const isSurprise = s.surprise >= 0.6 ? `<span class="intel-badge">Surprise</span>` : '';
         const isAlias = s.alias ? `<span class="intel-badge">Alias?</span>` : '';
         const isGeo = s.geoScore && s.geoScore > 0.55 ? `<span class="intel-badge">Geo</span>` : '';
+        const hasInactive = s.aStatus === PERSON_STATUS.INACTIVE || s.bStatus === PERSON_STATUS.INACTIVE;
         const hasMissing = s.aStatus === PERSON_STATUS.MISSING || s.bStatus === PERSON_STATUS.MISSING;
         const hasDeceased = s.aStatus === PERSON_STATUS.DECEASED || s.bStatus === PERSON_STATUS.DECEASED;
         const statusBadges = [
+            hasInactive ? `<span class="intel-badge">Inactif</span>` : '',
             hasMissing ? `<span class="intel-badge">Disparu</span>` : '',
             hasDeceased ? `<span class="intel-badge">Mort</span>` : ''
         ].join('');
@@ -6536,6 +6538,7 @@ export function refreshIntelPanel() {
 
 function getNodeSearchStatus(node) {
     const status = normalizePersonStatus(node?.personStatus, node?.type);
+    if (status === PERSON_STATUS.INACTIVE) return 'inactif';
     if (status === PERSON_STATUS.MISSING) return 'disparu';
     if (status === PERSON_STATUS.DECEASED) return 'mort';
     return 'actif';

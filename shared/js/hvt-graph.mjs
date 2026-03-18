@@ -112,6 +112,7 @@ export function calculateHvtScores(nodes, links, options = {}) {
         let score = (degreeNorm * 0.6) + (weightNorm * 0.4);
         const normalizedStatus = normalizeStatus(node?.personStatus, node?.type);
         if (normalizedStatus === personStatus.MISSING) score *= 0.85;
+        if (normalizedStatus === personStatus.INACTIVE) score *= 0.35;
         if (normalizedStatus === personStatus.DECEASED) score *= 0.35;
         return { id: nodeId, score };
     });

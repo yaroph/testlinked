@@ -487,11 +487,17 @@ function getNodePersonStatus(node) {
     return normalizePersonStatus(node?.personStatus, node?.type);
 }
 
+function isArchivedStatus(status) {
+    return status === PERSON_STATUS.DECEASED || status === PERSON_STATUS.INACTIVE;
+}
+
 function computeStatusModifiers(a, b, context = {}) {
     const aStatus = getNodePersonStatus(a);
     const bStatus = getNodePersonStatus(b);
     const hasMissing = aStatus === PERSON_STATUS.MISSING || bStatus === PERSON_STATUS.MISSING;
+    const hasInactive = aStatus === PERSON_STATUS.INACTIVE || bStatus === PERSON_STATUS.INACTIVE;
     const hasDeceased = aStatus === PERSON_STATUS.DECEASED || bStatus === PERSON_STATUS.DECEASED;
+    const hasArchived = hasDeceased || hasInactive;
     const investigativeLead = Boolean(
         context.orgMention ||
         context.bridgeScore ||
@@ -514,13 +520,13 @@ function computeStatusModifiers(a, b, context = {}) {
         reasons.push('Statut disparu pris en compte');
     }
 
-    if (hasDeceased) {
+    if (hasArchived) {
         scoreFactor *= archivalLead ? 0.68 : 0.52;
         confidenceFactor *= archivalLead ? 0.8 : 0.68;
-        reasons.push('Statut mort pris en compte');
+        reasons.push(hasDeceased ? 'Statut mort pris en compte' : 'Statut inactif pris en compte');
     }
 
-    if (aStatus === PERSON_STATUS.DECEASED && bStatus === PERSON_STATUS.DECEASED) {
+    if (isArchivedStatus(aStatus) && isArchivedStatus(bStatus)) {
         scoreFactor *= 0.85;
         confidenceFactor *= 0.92;
     }
@@ -558,10 +564,10 @@ export function getAllowedKinds(sourceType, targetType) {
 export function suggestKind(a, b, score = 0.5, mode = 'decouverte', hint = {}) {
     const aStatus = hint.aStatus || getNodePersonStatus(a);
     const bStatus = hint.bStatus || getNodePersonStatus(b);
-    const hasDeceased = aStatus === PERSON_STATUS.DECEASED || bStatus === PERSON_STATUS.DECEASED;
+    const hasArchived = isArchivedStatus(aStatus) || isArchivedStatus(bStatus);
 
     if (mode === 'creatif') return KINDS.RELATION;
-    if (hasDeceased) {
+    if (hasArchived) {
         if (a.type === TYPES.PERSON && b.type === TYPES.PERSON) {
             if (hint.family || hint.surname) return KINDS.FAMILLE;
             if (hint.alias) return KINDS.RELATION;
@@ -644,7 +650,7 @@ export function computeLinkSuggestions(options = {}) {
 
     const blockedTransitIds = new Set(
         nodes
-            .filter((node) => getNodePersonStatus(node) === PERSON_STATUS.DECEASED)
+            .filter((node) => isArchivedStatus(getNodePersonStatus(node)))
             .map((node) => String(node.id))
     );
     const nodeMap = new Map(nodes.map(n => [String(n.id), n]));

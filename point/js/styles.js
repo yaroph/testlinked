@@ -3261,14 +3261,19 @@ export function injectStyles() {
             white-space: nowrap;
         }
         .editor-sheet-status.is-missing {
-            border-color: rgba(244, 195, 90, 0.34);
-            background: rgba(244, 195, 90, 0.12);
-            color: #ffd777;
+            border-color: rgba(168, 140, 85, 0.28);
+            background: rgba(168, 140, 85, 0.08);
+            color: #d8bf86;
+        }
+        .editor-sheet-status.is-inactive {
+            border-color: rgba(100, 115, 132, 0.28);
+            background: rgba(100, 115, 132, 0.08);
+            color: #c4d0db;
         }
         .editor-sheet-status.is-deceased {
-            border-color: rgba(255, 120, 150, 0.34);
-            background: rgba(255, 120, 150, 0.12);
-            color: #ff9ab2;
+            border-color: rgba(143, 105, 115, 0.28);
+            background: rgba(143, 105, 115, 0.08);
+            color: #d8bcc3;
         }
         .editor-priority-grid {
             display: grid;
@@ -3371,14 +3376,19 @@ export function injectStyles() {
             color: var(--accent-cyan);
         }
         .editor-status-btn.active.is-missing {
-            border-color: rgba(244, 195, 90, 0.36);
-            background: rgba(244, 195, 90, 0.14);
-            color: #ffd777;
+            border-color: rgba(168, 140, 85, 0.32);
+            background: rgba(168, 140, 85, 0.1);
+            color: #d8bf86;
+        }
+        .editor-status-btn.active.is-inactive {
+            border-color: rgba(100, 115, 132, 0.34);
+            background: rgba(100, 115, 132, 0.1);
+            color: #c4d0db;
         }
         .editor-status-btn.active.is-deceased {
-            border-color: rgba(255, 120, 150, 0.36);
-            background: rgba(255, 120, 150, 0.14);
-            color: #ff9ab2;
+            border-color: rgba(143, 105, 115, 0.32);
+            background: rgba(143, 105, 115, 0.1);
+            color: #d8bcc3;
         }
         .editor-quick-field {
             display: flex;

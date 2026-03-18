@@ -112,6 +112,7 @@ export function sanitizeNodeColor(color) {
 
 export function normalizePersonStatus(value, type = TYPES.PERSON) {
     const raw = String(value || '').trim().toLowerCase();
+    if (raw === PERSON_STATUS.INACTIVE) return PERSON_STATUS.INACTIVE;
     if (raw === PERSON_STATUS.MISSING) return PERSON_STATUS.MISSING;
     if (raw === PERSON_STATUS.DECEASED) return PERSON_STATUS.DECEASED;
     return PERSON_STATUS.ACTIVE;
