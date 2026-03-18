@@ -4,6 +4,7 @@ import { handleLinkClick, handleLinkHover, handleLinkOut, moveTooltip, selectIte
 import { startMarkerDrag } from './engine.js';
 import { handleZoneMouseDown } from './zone-editor.js';
 import { escapeHtml } from './utils.js';
+import { renderMapRemoteCursors } from './collab-cursors.js';
 
 const markersLayer = document.getElementById('markers-layer');
 const zonesLayer = document.getElementById('zones-layer');
@@ -318,6 +319,7 @@ export function renderAll(options = {}) {
     }
     renderTacticalLinks();
     renderMarkersAndClusters();
+    renderMapRemoteCursors();
     renderMeasureTool();
     syncInteractionModeHud();
     syncMapEmptyState();

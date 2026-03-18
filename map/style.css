@@ -246,6 +246,62 @@ body.high-light-mode #map-image {
 
 #zones-layer, #alert-layer, #links-layer, #markers-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
 
+.map-collab-cursor {
+    position: absolute;
+    z-index: 180;
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 8px;
+    transform: translate(-4px, -6px);
+    pointer-events: none;
+    filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.42));
+}
+
+.map-collab-cursor-pointer {
+    width: 18px;
+    height: 24px;
+    background: linear-gradient(180deg, #ffffff 0%, var(--cursor-color, #73fbf7) 100%);
+    border: 1px solid rgba(3, 8, 18, 0.7);
+    clip-path: polygon(0 0, 0 100%, 28% 74%, 52% 100%, 66% 92%, 44% 65%, 100% 65%);
+    transform: rotate(-10deg);
+    transform-origin: top left;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 0 16px color-mix(in srgb, var(--cursor-color, #73fbf7) 48%, transparent);
+}
+
+.map-collab-cursor-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 28px;
+    padding: 5px 10px 5px 6px;
+    border: 1px solid color-mix(in srgb, var(--cursor-color, #73fbf7) 52%, rgba(255, 255, 255, 0.18));
+    background: linear-gradient(180deg, rgba(6, 14, 31, 0.96), rgba(3, 8, 20, 0.94));
+    color: #eefaff;
+    white-space: nowrap;
+}
+
+.map-collab-cursor-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid color-mix(in srgb, var(--cursor-color, #73fbf7) 68%, white 12%);
+    background: color-mix(in srgb, var(--cursor-color, #73fbf7) 28%, rgba(255, 255, 255, 0.06));
+    color: #06101c;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+}
+
+.map-collab-cursor-name {
+    color: #f4fbff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
 
 /* --- 4. MARQUEURS TACTIQUES & CORRECTIFS COULEURS --- */
 .marker.status-danger { animation: pulse-danger 2s infinite; --marker-color: #ff4444 !important; }

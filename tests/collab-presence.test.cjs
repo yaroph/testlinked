@@ -49,6 +49,9 @@ test('listBoardPresence garde une presence active si le meme user a plusieurs cl
     activeNodeId: 'node-a',
     activeNodeName: 'Alpha',
     mode: 'editing',
+    cursorVisible: true,
+    cursorWorldX: 12,
+    cursorWorldY: 18,
     lastAt: older,
   });
   await store.setJSON(`presence/${boardId}/user-1/client-b`, {
@@ -59,6 +62,9 @@ test('listBoardPresence garde une presence active si le meme user a plusieurs cl
     activeNodeId: 'node-b',
     activeNodeName: 'Bravo',
     mode: 'editing',
+    cursorVisible: true,
+    cursorWorldX: 240.5,
+    cursorWorldY: -18.25,
     lastAt: latest,
   });
   await store.setJSON(`presence/${boardId}/user-2`, {
@@ -81,6 +87,9 @@ test('listBoardPresence garde une presence active si le meme user a plusieurs cl
       username: entry.username,
       activeNodeId: entry.activeNodeId,
       activeNodeName: entry.activeNodeName,
+      cursorVisible: entry.cursorVisible,
+      cursorWorldX: entry.cursorWorldX,
+      cursorWorldY: entry.cursorWorldY,
     })),
     [
       {
@@ -88,13 +97,42 @@ test('listBoardPresence garde une presence active si le meme user a plusieurs cl
         username: 'alice',
         activeNodeId: 'node-b',
         activeNodeName: 'Bravo',
+        cursorVisible: true,
+        cursorWorldX: 240.5,
+        cursorWorldY: -18.25,
       },
       {
         userId: 'user-2',
         username: 'bob',
         activeNodeId: '',
         activeNodeName: '',
+        cursorVisible: false,
+        cursorWorldX: 0,
+        cursorWorldY: 0,
       },
     ]
   );
+});
+
+test('touchBoardPresence conserve les coordonnees de curseur partagees', async () => {
+  const store = new MemoryStore();
+  const board = { id: 'board_cursor' };
+  const user = { id: 'user-9', username: 'charlie' };
+
+  const presence = await __test.touchBoardPresence(store, board, user, 'editor', {
+    activeNodeId: 'node-9',
+    activeNodeName: 'Delta',
+    cursorVisible: true,
+    cursorWorldX: 88.5,
+    cursorWorldY: -42.25,
+    cursorMapX: 61.2,
+    cursorMapY: 24.4,
+  });
+
+  assert.equal(presence.length, 1);
+  assert.equal(presence[0].cursorVisible, true);
+  assert.equal(presence[0].cursorWorldX, 88.5);
+  assert.equal(presence[0].cursorWorldY, -42.25);
+  assert.equal(presence[0].cursorMapX, 61.2);
+  assert.equal(presence[0].cursorMapY, 24.4);
 });

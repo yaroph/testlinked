@@ -1,6 +1,7 @@
 import { state, isGroup, isCompany, nodeById } from './state.js';
 import { NODE_BASE_SIZE, DEG_SCALE, R_MIN, R_MAX, LINK_KIND_EMOJI, TYPES, KINDS, FILTERS, FILTER_RULES, PERSON_STATUS } from './constants.js';
 import { computeLinkColor, sanitizeNodeColor, normalizePersonStatus, hexToRgb, rgbToHex } from './utils.js';
+import { getPointRemoteCursors } from './collab-cursors.js';
 
 const canvas = document.getElementById('graph');
 const ctx = canvas.getContext('2d');
@@ -989,6 +990,75 @@ export function draw() {
             }
             ctx.fillText(c.label, c.n.x, c.boxY + (c.boxH / 2));
         }
+    }
+    const remoteCursors = getPointRemoteCursors();
+    if (remoteCursors.length) {
+        const cursorScale = 1 / Math.max(0.18, p.scale);
+        remoteCursors.forEach((entry) => {
+            const cursorX = Number(entry?.cursorWorldX);
+            const cursorY = Number(entry?.cursorWorldY);
+            if (!Number.isFinite(cursorX) || !Number.isFinite(cursorY)) return;
+
+            ctx.save();
+            ctx.translate(cursorX, cursorY);
+            ctx.scale(cursorScale, cursorScale);
+            ctx.globalAlpha = 0.98;
+
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, 24);
+            ctx.lineTo(6, 18);
+            ctx.lineTo(11, 31);
+            ctx.lineTo(15, 28);
+            ctx.lineTo(10, 16);
+            ctx.lineTo(21, 16);
+            ctx.closePath();
+            ctx.fillStyle = '#f7fcff';
+            ctx.strokeStyle = entry.color || '#73fbf7';
+            ctx.lineWidth = 1.3;
+            ctx.shadowBlur = 16;
+            ctx.shadowColor = entry.color || '#73fbf7';
+            ctx.fill();
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            const label = String(entry.username || 'operateur').slice(0, 24);
+            ctx.font = '700 12px "Rajdhani", sans-serif';
+            const textWidth = ctx.measureText(label).width;
+            const badgeWidth = Math.max(44, textWidth + 32);
+            const badgeHeight = 24;
+            const badgeX = 18;
+            const badgeY = -8;
+
+            ctx.fillStyle = 'rgba(3, 8, 20, 0.94)';
+            if (ctx.roundRect) {
+                ctx.beginPath();
+                ctx.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 10);
+                ctx.fill();
+            } else {
+                ctx.fillRect(badgeX, badgeY, badgeWidth, badgeHeight);
+            }
+            ctx.strokeStyle = entry.color || '#73fbf7';
+            ctx.lineWidth = 1.1;
+            if (ctx.roundRect) {
+                ctx.beginPath();
+                ctx.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 10);
+                ctx.stroke();
+            } else {
+                ctx.strokeRect(badgeX, badgeY, badgeWidth, badgeHeight);
+            }
+
+            ctx.fillStyle = entry.color || '#73fbf7';
+            ctx.beginPath();
+            ctx.arc(badgeX + 11, badgeY + (badgeHeight / 2), 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#f4fbff';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label, badgeX + 20, badgeY + (badgeHeight / 2) + 0.5);
+            ctx.restore();
+        });
     }
     ctx.restore();
 }

@@ -124,6 +124,17 @@ function clampFiniteNumber(value, fallback, min = null, max = null) {
   return num;
 }
 
+function readPresenceFlag(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "string") {
+    const clean = value.trim().toLowerCase();
+    if (!clean) return false;
+    if (["0", "false", "off", "no"].includes(clean)) return false;
+    return true;
+  }
+  return Boolean(value);
+}
+
 function normalizeLegacyKey(value, fallback = "") {
   return String(value || fallback)
     .toLowerCase()
@@ -1080,6 +1091,19 @@ async function listBoardPresence(store, boardId) {
       activeTextKey: String(row.activeTextKey || ""),
       activeTextLabel: String(row.activeTextLabel || ""),
       mode: String(row.mode || "editing"),
+      cursorVisible: readPresenceFlag(row.cursorVisible, false),
+      cursorWorldX: readPresenceFlag(row.cursorVisible, false)
+        ? clampFiniteNumber(row.cursorWorldX, 0, -250000, 250000)
+        : 0,
+      cursorWorldY: readPresenceFlag(row.cursorVisible, false)
+        ? clampFiniteNumber(row.cursorWorldY, 0, -250000, 250000)
+        : 0,
+      cursorMapX: readPresenceFlag(row.cursorVisible, false)
+        ? clampFiniteNumber(row.cursorMapX, 50, 0, 100)
+        : 50,
+      cursorMapY: readPresenceFlag(row.cursorVisible, false)
+        ? clampFiniteNumber(row.cursorMapY, 50, 0, 100)
+        : 50,
       lastAt: String(row.lastAt || ""),
     };
     const previous = latestByUser.get(entry.userId);
@@ -1097,6 +1121,7 @@ async function touchBoardPresence(store, board, user, role, payload = {}) {
   const boardId = String(board?.id || "");
   if (!boardId || !user?.id) return [];
   const now = nowIso();
+  const cursorVisible = readPresenceFlag(payload.cursorVisible, false);
   await store.setJSON(presenceKey(boardId, user.id), {
     boardId,
     userId: user.id,
@@ -1107,6 +1132,19 @@ async function touchBoardPresence(store, board, user, role, payload = {}) {
     activeTextKey: String(payload.activeTextKey || ""),
     activeTextLabel: String(payload.activeTextLabel || "").slice(0, 80),
     mode: String(payload.mode || "editing"),
+    cursorVisible,
+    cursorWorldX: cursorVisible
+      ? clampFiniteNumber(payload.cursorWorldX, 0, -250000, 250000)
+      : 0,
+    cursorWorldY: cursorVisible
+      ? clampFiniteNumber(payload.cursorWorldY, 0, -250000, 250000)
+      : 0,
+    cursorMapX: cursorVisible
+      ? clampFiniteNumber(payload.cursorMapX, 50, 0, 100)
+      : 50,
+    cursorMapY: cursorVisible
+      ? clampFiniteNumber(payload.cursorMapY, 50, 0, 100)
+      : 50,
     lastAt: now,
   });
   return listBoardPresence(store, boardId);
@@ -1693,4 +1731,5 @@ exports.__test = {
   mergeBoardPayload,
   sanitizeShareRole,
   listBoardPresence,
+  touchBoardPresence,
 };

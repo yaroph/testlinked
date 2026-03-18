@@ -79,6 +79,26 @@ function valuesEqual(leftValue, rightValue) {
     }
 }
 
+function clampPresenceNumber(value, fallback = 0, min = null, max = null) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    let next = num;
+    if (Number.isFinite(min) && next < min) next = min;
+    if (Number.isFinite(max) && next > max) next = max;
+    return next;
+}
+
+function readPresenceFlag(value, fallback = false) {
+    if (value === undefined || value === null) return fallback;
+    if (typeof value === 'string') {
+        const clean = value.trim().toLowerCase();
+        if (!clean) return false;
+        if (['0', 'false', 'off', 'no'].includes(clean)) return false;
+        return true;
+    }
+    return Boolean(value);
+}
+
 class BoardRoom {
     constructor(store, board, roleResolver) {
         this.store = store;
@@ -135,6 +155,7 @@ class BoardRoom {
 
     async persistPresenceEntry(clientState, presence = {}) {
         const now = nowIso();
+        const cursorVisible = readPresenceFlag(presence.cursorVisible, false);
         const row = {
             boardId: this.boardId,
             userId: clientState.userId,
@@ -145,6 +166,11 @@ class BoardRoom {
             activeTextKey: String(presence.activeTextKey || ''),
             activeTextLabel: String(presence.activeTextLabel || '').slice(0, 80),
             mode: String(presence.mode || (canEditBoard(clientState.role) ? 'editing' : 'viewing')),
+            cursorVisible,
+            cursorWorldX: cursorVisible ? clampPresenceNumber(presence.cursorWorldX, 0, -250000, 250000) : 0,
+            cursorWorldY: cursorVisible ? clampPresenceNumber(presence.cursorWorldY, 0, -250000, 250000) : 0,
+            cursorMapX: cursorVisible ? clampPresenceNumber(presence.cursorMapX, 50, 0, 100) : 50,
+            cursorMapY: cursorVisible ? clampPresenceNumber(presence.cursorMapY, 50, 0, 100) : 50,
             lastAt: now
         };
         this.presence.set(clientState.clientId, row);

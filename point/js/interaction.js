@@ -2,7 +2,7 @@ import { state, saveState } from './state.js';
 import { getSimulation } from './physics.js';
 import { draw } from './render.js';
 import { screenToWorld, clamp } from './utils.js';
-import { selectNode, renderEditor, updatePathfindingPanel, addLink, clearIntelPairPreview } from './ui.js';
+import { selectNode, renderEditor, updatePathfindingPanel, addLink, clearIntelPairPreview, updatePointLiveCursor, clearPointLiveCursor } from './ui.js';
 
 function getD3() {
     if (typeof globalThis !== 'undefined' && globalThis.d3) return globalThis.d3;
@@ -47,6 +47,15 @@ function getCanvasEventPosition(event, canvas) {
 function getWorldPositionFromEvent(event, canvas) {
     const point = getCanvasEventPosition(event, canvas);
     return screenToWorld(point.x, point.y, canvas, state.view);
+}
+
+function isClientInsideCanvas(clientX, clientY, canvas) {
+    const rect = canvas?.getBoundingClientRect?.();
+    if (!rect) return false;
+    return clientX >= rect.left
+        && clientX <= rect.right
+        && clientY >= rect.top
+        && clientY <= rect.bottom;
 }
 
 export function setupCanvasEvents(canvas) {
@@ -123,6 +132,7 @@ export function setupCanvasEvents(canvas) {
     canvas.addEventListener('mousedown', (e) => {
         // Calcul précis de la position monde
         const p = getWorldPositionFromEvent(e, canvas);
+        updatePointLiveCursor(p.x, p.y);
         
         // On cherche un nœud sous la souris (Rayon 40px)
         const hit = findNodeAtPosition(p.x, p.y, 40); 
@@ -148,6 +158,13 @@ export function setupCanvasEvents(canvas) {
     });
 
     const handleGlobalPointerMove = (e) => {
+        if (isClientInsideCanvas(e.clientX, e.clientY, canvas)) {
+            const cursorPoint = getWorldPositionFromEvent(e, canvas);
+            updatePointLiveCursor(cursorPoint.x, cursorPoint.y);
+        } else {
+            clearPointLiveCursor();
+        }
+
         if (dragLinkSource) {
             const p = getWorldPositionFromEvent(e, canvas);
             state.tempLink.x2 = p.x;
@@ -203,6 +220,7 @@ export function setupCanvasEvents(canvas) {
         if (pendingPan || isPanning || dragLinkSource) return;
 
         const p = getWorldPositionFromEvent(e, canvas);
+        updatePointLiveCursor(p.x, p.y);
         const hit = findNodeAtPosition(p.x, p.y, 40);
         if (hit) {
             if (state.hoverId !== hit.id) { state.hoverId = hit.id; canvas.style.cursor = 'pointer'; draw(); }
@@ -237,12 +255,14 @@ export function setupCanvasEvents(canvas) {
     
     canvas.addEventListener('mouseleave', () => {
         if (pendingPan || isPanning || dragLinkSource) return;
+        clearPointLiveCursor();
         state.hoverId = null;
         canvas.style.cursor = 'default';
         draw();
     });
 
     window.addEventListener('blur', () => {
+        clearPointLiveCursor({ broadcast: true, resetPosition: true });
         pendingPan = false;
         isPanning = false;
         dragLinkSource = null;

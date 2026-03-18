@@ -3,12 +3,22 @@ import { renderAll, getMapPercentCoords } from './render.js';
 import { handlePointClick } from './ui.js';
 import { percentageToGps } from './utils.js';
 import { handleMapMouseDown, handleMapMouseMove, handleMapMouseUp } from './zone-editor.js';
+import { updateMapLiveCursor, clearMapLiveCursor } from './cloud.js';
 
 const viewport = document.getElementById('viewport');
 const mapWorld = document.getElementById('map-world');
 const mapImage = document.getElementById('map-image');
 const hudCoords = document.getElementById('coords-display');
 const markersLayer = document.getElementById('markers-layer');
+
+function isClientInsideViewport(clientX, clientY) {
+    const rect = viewport?.getBoundingClientRect?.();
+    if (!rect) return false;
+    return clientX >= rect.left
+        && clientX <= rect.right
+        && clientY >= rect.top
+        && clientY <= rect.bottom;
+}
 
 function updateZoomDisplay() {
     const zoomValue = document.getElementById('zoom-display-value');
@@ -206,6 +216,12 @@ export function initEngine() {
         }
 
         const e = mouseEvent;
+        if (isClientInsideViewport(e.clientX, e.clientY)) {
+            const coords = getMapPercentCoords(e.clientX, e.clientY);
+            updateMapLiveCursor(coords.x, coords.y);
+        } else {
+            clearMapLiveCursor();
+        }
         
         // 1. Mise à jour HUD (optimisée)
         updateHUDCoords(e);
@@ -275,6 +291,14 @@ export function initEngine() {
         if(!state.drawingMode && !state.measuringMode) {
              viewport.style.cursor = ''; // Laisse le CSS gérer (crosshair)
         }
+    });
+
+    viewport.addEventListener('mouseleave', () => {
+        clearMapLiveCursor();
+    });
+
+    window.addEventListener('blur', () => {
+        clearMapLiveCursor({ broadcast: true, resetPosition: true });
     });
 }
 

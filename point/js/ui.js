@@ -2,7 +2,7 @@ import { state, saveState, scheduleSave, ensureLinkIds, nodeById, isPerson, isCo
 import { ensureNode, addLink as logicAddLink, calculatePath, clearPath, calculateHVT, mergeNodes, updatePersonColors } from './logic.js';
 import { renderPathfindingSidebar } from './templates.js';
 import { restartSim } from './physics.js';
-import { draw, updateDegreeCache, resizeCanvas } from './render.js';
+import { draw, updateDegreeCache, resizeCanvas, scheduleDraw } from './render.js';
 import { escapeHtml, linkKindEmoji, kindToLabel, clamp, uid, sanitizeNodeColor, normalizePersonStatus } from './utils.js';
 import { TYPES, FILTERS, FILTER_RULES, KINDS, PERSON_STATUS } from './constants.js';
 import { injectStyles } from './styles.js';
@@ -36,6 +36,8 @@ import { canUseRealtimeTransport } from '../../shared/realtime/config.mjs';
 import { canonicalizePointPayload, diffPointOps, applyPointOps } from '../../shared/realtime/point-doc.mjs';
 import { findPointSearchMatches } from '../../shared/js/point-search.mjs';
 import { bindAsyncActionButton } from '../../shared/js/ui-async.mjs';
+import { clampPointCursorCoord, normalizePointCursorPresence } from '../../shared/js/collab-cursor-visuals.mjs';
+import { clearPointRemoteCursors, setPointRemoteCursors } from './collab-cursors.js';
 
 const ui = {
     listCompanies: document.getElementById('listCompanies'),
@@ -111,7 +113,12 @@ const collab = {
     realtimeTextBindings: new Map(),
     activeTextKey: '',
     activeTextLabel: '',
-    homeRenderSeq: 0
+    homeRenderSeq: 0,
+    cursorVisible: false,
+    cursorWorldX: 0,
+    cursorWorldY: 0,
+    cursorSyncTimer: null,
+    cursorLastSentAt: 0
 };
 
 const COLLAB_AUTOSAVE_DEBOUNCE_MS = 1600;
@@ -119,6 +126,8 @@ const COLLAB_AUTOSAVE_RETRY_MS = 700;
 const COLLAB_WATCH_TIMEOUT_MS = 7000;
 const COLLAB_WATCH_RETRY_MIN_MS = 300;
 const COLLAB_WATCH_RETRY_MAX_MS = 4000;
+const COLLAB_CURSOR_REALTIME_MS = 80;
+const COLLAB_CURSOR_LEGACY_MS = 180;
 const collabStorage = createStoredCollabStateBridge({
     sessionStorageKey: COLLAB_SESSION_STORAGE_KEY,
     boardStorageKey: COLLAB_ACTIVE_BOARD_STORAGE_KEY
@@ -183,6 +192,10 @@ const POINT_REALTIME_TEXT_FIELDS = {
         awarenessId: 'awDescription'
     }
 };
+
+function hasOwnField(source, key) {
+    return Boolean(source) && Object.prototype.hasOwnProperty.call(source, key);
+}
 
 function getModalOverlay() {
     return modalOverlay;
@@ -1080,6 +1093,124 @@ function setCloudSyncState(nextState, label = '') {
     syncCloudStatus();
 }
 
+function clearPointCursorSyncTimer() {
+    stopNamedTimer(collab, 'cursorSyncTimer');
+}
+
+function buildPointPresencePayload(extra = {}) {
+    const selectedId = String(extra.activeNodeId || state.selection || '');
+    const selected = nodeById(selectedId);
+    const cursorVisible = hasOwnField(extra, 'cursorVisible')
+        ? Boolean(extra.cursorVisible)
+        : Boolean(collab.cursorVisible);
+    const cursorWorldX = hasOwnField(extra, 'cursorWorldX')
+        ? clampPointCursorCoord(extra.cursorWorldX, collab.cursorWorldX || 0)
+        : clampPointCursorCoord(collab.cursorWorldX, 0);
+    const cursorWorldY = hasOwnField(extra, 'cursorWorldY')
+        ? clampPointCursorCoord(extra.cursorWorldY, collab.cursorWorldY || 0)
+        : clampPointCursorCoord(collab.cursorWorldY, 0);
+
+    return {
+        activeNodeId: selectedId,
+        activeNodeName: String(extra.activeNodeName || selected?.name || ''),
+        activeTextKey: String(extra.activeTextKey || collab.activeTextKey || ''),
+        activeTextLabel: String(extra.activeTextLabel || collab.activeTextLabel || ''),
+        mode: String(extra.mode || (canEditCloudBoard() ? 'editing' : 'viewing')),
+        cursorVisible,
+        cursorWorldX,
+        cursorWorldY
+    };
+}
+
+async function updatePointCloudPresence(extra = {}) {
+    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    const payload = buildPointPresencePayload(extra);
+
+    if (isRealtimeCloudActive()) {
+        return collab.realtimeSession?.updatePresence(payload) || false;
+    }
+
+    if (collab.presenceInFlight) return false;
+
+    collab.presenceInFlight = true;
+    try {
+        const response = await collabBoardRequest('touch_presence', {
+            boardId: collab.activeBoardId,
+            ...payload
+        });
+        updateCollabPresence(response?.presence || []);
+        return true;
+    } catch (e) {
+        return false;
+    } finally {
+        collab.presenceInFlight = false;
+    }
+}
+
+async function flushPointCursorPresence() {
+    clearPointCursorSyncTimer();
+    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+
+    const realtimeActive = isRealtimeCloudActive();
+    const sent = await updatePointCloudPresence();
+    if (realtimeActive) {
+        collab.cursorLastSentAt = Date.now();
+        return sent;
+    }
+    if (sent) {
+        collab.cursorLastSentAt = Date.now();
+        return true;
+    }
+    if (isCloudBoardActive() && collab.user && collab.token) {
+        schedulePointCursorPresenceSync(COLLAB_CURSOR_LEGACY_MS);
+    }
+    return false;
+}
+
+function schedulePointCursorPresenceSync(delayMs = null) {
+    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    const interval = isRealtimeCloudActive() ? COLLAB_CURSOR_REALTIME_MS : COLLAB_CURSOR_LEGACY_MS;
+    const now = Date.now();
+    const elapsed = Math.max(0, now - Number(collab.cursorLastSentAt || 0));
+    const hasExplicitDelay = delayMs !== null && delayMs !== undefined;
+    const waitMs = hasExplicitDelay
+        ? Math.max(0, Number(delayMs) || 0)
+        : Math.max(0, interval - elapsed);
+
+    queueNamedTimer(collab, 'cursorSyncTimer', () => {
+        flushPointCursorPresence().catch(() => {});
+    }, waitMs);
+    return true;
+}
+
+export function updatePointLiveCursor(worldX, worldY) {
+    const nextX = clampPointCursorCoord(worldX, collab.cursorWorldX || 0);
+    const nextY = clampPointCursorCoord(worldY, collab.cursorWorldY || 0);
+    const changed = !collab.cursorVisible
+        || Math.abs(nextX - Number(collab.cursorWorldX || 0)) > 0.01
+        || Math.abs(nextY - Number(collab.cursorWorldY || 0)) > 0.01;
+
+    collab.cursorVisible = true;
+    collab.cursorWorldX = nextX;
+    collab.cursorWorldY = nextY;
+
+    if (changed) {
+        schedulePointCursorPresenceSync();
+    }
+}
+
+export function clearPointLiveCursor(options = {}) {
+    const hadVisible = Boolean(collab.cursorVisible);
+    collab.cursorVisible = false;
+    if (options.resetPosition) {
+        collab.cursorWorldX = 0;
+        collab.cursorWorldY = 0;
+    }
+    if (hadVisible && options.broadcast !== false) {
+        schedulePointCursorPresenceSync(0);
+    }
+}
+
 function presenceListsEqual(left = [], right = []) {
     if (left.length !== right.length) return false;
     for (let index = 0; index < left.length; index += 1) {
@@ -1095,6 +1226,9 @@ function presenceListsEqual(left = [], right = []) {
             String(a.activeTextKey || '') !== String(b.activeTextKey || '') ||
             String(a.activeTextLabel || '') !== String(b.activeTextLabel || '') ||
             String(a.mode || '') !== String(b.mode || '') ||
+            Boolean(a.cursorVisible) !== Boolean(b.cursorVisible) ||
+            Number(a.cursorWorldX || 0) !== Number(b.cursorWorldX || 0) ||
+            Number(a.cursorWorldY || 0) !== Number(b.cursorWorldY || 0) ||
             Boolean(a.isSelf) !== Boolean(b.isSelf)
         ) {
             return false;
@@ -1108,6 +1242,7 @@ function updateCollabPresence(rawPresence = []) {
     (Array.isArray(rawPresence) ? rawPresence : []).forEach((row) => {
         const userId = String(row?.userId || '').trim();
         if (!userId) return;
+        const cursor = normalizePointCursorPresence(row);
         deduped.set(userId, {
             userId,
             username: String(row?.username || 'operateur'),
@@ -1117,6 +1252,9 @@ function updateCollabPresence(rawPresence = []) {
             activeTextKey: String(row?.activeTextKey || ''),
             activeTextLabel: String(row?.activeTextLabel || ''),
             mode: String(row?.mode || 'editing'),
+            cursorVisible: cursor.cursorVisible,
+            cursorWorldX: cursor.cursorWorldX,
+            cursorWorldY: cursor.cursorWorldY,
             lastAt: String(row?.lastAt || ''),
             isSelf: userId === String(collab.user?.id || '')
         });
@@ -1128,8 +1266,10 @@ function updateCollabPresence(rawPresence = []) {
     });
     if (presenceListsEqual(collab.presence, nextPresence)) return;
     collab.presence = nextPresence;
+    setPointRemoteCursors(nextPresence);
     syncCloudStatus();
     syncPointRealtimeAwarenessDecorations();
+    scheduleDraw();
 }
 
 function renderCloudPresenceChips(entries = [], options = {}) {
@@ -1263,6 +1403,7 @@ function hasLocalCloudChanges() {
 
 function stopCollabRealtime() {
     stopCollabRealtimeText();
+    clearPointCursorSyncTimer();
     if (!collab.realtimeSession) return;
     try {
         collab.realtimeSession.stop('switch-sync-mode');
@@ -1494,17 +1635,7 @@ async function startCollabRealtime() {
             setCloudSyncState('live', 'Temps reel actif');
         },
         localFlushMs: 120,
-        buildPresence: (extra = {}) => {
-            const selectedId = String(extra.activeNodeId || state.selection || '');
-            const selected = nodeById(selectedId);
-            return {
-                activeNodeId: selectedId,
-                activeNodeName: String(extra.activeNodeName || selected?.name || ''),
-                activeTextKey: String(extra.activeTextKey || collab.activeTextKey || ''),
-                activeTextLabel: String(extra.activeTextLabel || collab.activeTextLabel || ''),
-                mode: String(extra.mode || (canEditCloudBoard() ? 'editing' : 'viewing'))
-            };
-        }
+        buildPresence: (extra = {}) => buildPointPresencePayload(extra)
     });
 
     collab.realtimeSession = session;
@@ -1598,6 +1729,7 @@ function stopCollabLiveSync() {
 }
 
 function stopCollabPresence() {
+    clearPointCursorSyncTimer();
     stopRetriableLoop(collab, {
         timerKey: 'presenceTimer',
         tokenKey: 'presenceLoopToken',
@@ -1679,35 +1811,10 @@ async function clearCollabPresence(boardId = collab.activeBoardId) {
 async function touchCollabPresence(loopToken = collab.presenceLoopToken, options = {}) {
     if (collab.presenceLoopToken !== loopToken && !options.force) return;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return;
-    const selected = nodeById(state.selection);
-    if (isRealtimeCloudActive()) {
-        return collab.realtimeSession.updatePresence({
-            activeNodeId: state.selection || '',
-            activeNodeName: selected?.name || '',
-            activeTextKey: String(collab.activeTextKey || ''),
-            activeTextLabel: String(collab.activeTextLabel || ''),
-            mode: canEditCloudBoard() ? 'editing' : 'viewing'
-        });
-    }
-    if (collab.presenceInFlight && !options.force) return;
-
-    collab.presenceInFlight = true;
-    try {
-        const response = await collabBoardRequest('touch_presence', {
-            boardId: collab.activeBoardId,
-            activeNodeId: state.selection || '',
-            activeNodeName: selected?.name || '',
-            activeTextKey: String(collab.activeTextKey || ''),
-            activeTextLabel: String(collab.activeTextLabel || ''),
-            mode: canEditCloudBoard() ? 'editing' : 'viewing'
-        });
-        updateCollabPresence(response?.presence || []);
-        scheduleNextPresenceTick(loopToken, COLLAB_PRESENCE_HEARTBEAT_MS);
-    } catch (e) {
-        scheduleNextPresenceTick(loopToken, COLLAB_PRESENCE_RETRY_MS);
-    } finally {
-        collab.presenceInFlight = false;
-    }
+    const sent = await updatePointCloudPresence(options.extra || {});
+    if (isRealtimeCloudActive()) return sent;
+    scheduleNextPresenceTick(loopToken, sent ? COLLAB_PRESENCE_HEARTBEAT_MS : COLLAB_PRESENCE_RETRY_MS);
+    return sent;
 }
 
 function startCollabPresence() {
@@ -1864,6 +1971,8 @@ function setActiveCloudBoardFromSummary(summary = null) {
     const nextBoardId = summary && summary.id ? String(summary.id || '') : '';
     const boardChanged = previousBoardId !== nextBoardId;
     if (boardChanged || !nextBoardId) {
+        clearPointCursorSyncTimer();
+        clearPointLiveCursor({ broadcast: false, resetPosition: true });
         stopCollabRealtime();
         stopCollabAutosave();
         stopCollabLiveSync();
@@ -1879,6 +1988,7 @@ function setActiveCloudBoardFromSummary(summary = null) {
         collab.localChangeSeq = 0;
         collab.lastSavedChangeSeq = 0;
         collab.shadowData = null;
+        clearPointRemoteCursors();
         updateCollabPresence([]);
     } else {
         collab.activeBoardId = String(summary.id || '');

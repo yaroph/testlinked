@@ -53,6 +53,8 @@ import {
     isRealtimeCloudActive as isSharedRealtimeCloudActive
 } from '../../shared/js/collab-state.mjs';
 import { bindAsyncActionButton } from '../../shared/js/ui-async.mjs';
+import { clampMapCursorCoord, normalizeMapCursorPresence } from '../../shared/js/collab-cursor-visuals.mjs';
+import { clearMapRemoteCursors, syncMapRemoteCursors } from './collab-cursors.js';
 
 const COLLAB_AUTH_ENDPOINT = '/.netlify/functions/collab-auth';
 const COLLAB_BOARD_ENDPOINT = '/.netlify/functions/collab-board';
@@ -92,7 +94,12 @@ const collab = {
     realtimeTextBindings: new Map(),
     activeTextKey: '',
     activeTextLabel: '',
-    suppressAutosave: 0
+    suppressAutosave: 0,
+    cursorVisible: false,
+    cursorMapX: 50,
+    cursorMapY: 50,
+    cursorSyncTimer: null,
+    cursorLastSentAt: 0
 };
 
 const COLLAB_AUTOSAVE_DEBOUNCE_MS = 700;
@@ -102,6 +109,8 @@ const COLLAB_WATCH_RETRY_MIN_MS = 500;
 const COLLAB_WATCH_RETRY_MAX_MS = 4000;
 const COLLAB_PRESENCE_HEARTBEAT_MS = 6500;
 const COLLAB_PRESENCE_RETRY_MS = 3200;
+const COLLAB_CURSOR_REALTIME_MS = 80;
+const COLLAB_CURSOR_LEGACY_MS = 180;
 const collabStorage = createStoredCollabStateBridge({
     sessionStorageKey: COLLAB_SESSION_STORAGE_KEY,
     boardStorageKey: COLLAB_ACTIVE_BOARD_STORAGE_KEY,
@@ -127,6 +136,10 @@ const MAP_REALTIME_TEXT_FIELDS = {
         name: { label: 'Nom zone', awarenessId: 'mapAwZoneName' }
     }
 };
+
+function hasOwnField(source, key) {
+    return Boolean(source) && Object.prototype.hasOwnProperty.call(source, key);
+}
 
 let realtimeTextTools = null;
 let realtimeTextToolsPromise = null;
@@ -265,11 +278,16 @@ function setMapRealtimeFieldPresence(textKey, textLabel) {
     updateMapCloudPresence().catch(() => {});
 }
 
+function clearMapCursorSyncTimer() {
+    stopNamedTimer(collab, 'cursorSyncTimer');
+}
+
 function updateMapPresence(entries = []) {
     const deduped = new Map();
     (Array.isArray(entries) ? entries : []).forEach((row) => {
         const userId = String(row?.userId || '').trim();
         if (!userId) return;
+        const cursor = normalizeMapCursorPresence(row);
         deduped.set(userId, {
             userId,
             username: String(row?.username || 'operateur'),
@@ -279,6 +297,9 @@ function updateMapPresence(entries = []) {
             activeTextKey: String(row?.activeTextKey || ''),
             activeTextLabel: String(row?.activeTextLabel || ''),
             mode: String(row?.mode || 'editing'),
+            cursorVisible: cursor.cursorVisible,
+            cursorMapX: cursor.cursorMapX,
+            cursorMapY: cursor.cursorMapY,
             isSelf: userId === String(collab.user?.id || '')
         });
     });
@@ -287,17 +308,30 @@ function updateMapPresence(entries = []) {
         if (!a.isSelf && b.isSelf) return 1;
         return String(a.username || '').localeCompare(String(b.username || ''));
     });
+    syncMapRemoteCursors(collab.presence);
     syncMapRealtimeAwarenessDecorations();
 }
 
 function buildMapPresencePayload(extra = {}) {
     const selected = getMapSelectedEntity();
+    const cursorVisible = hasOwnField(extra, 'cursorVisible')
+        ? Boolean(extra.cursorVisible)
+        : Boolean(collab.cursorVisible);
+    const cursorMapX = hasOwnField(extra, 'cursorMapX')
+        ? clampMapCursorCoord(extra.cursorMapX, collab.cursorMapX || 50)
+        : clampMapCursorCoord(collab.cursorMapX, 50);
+    const cursorMapY = hasOwnField(extra, 'cursorMapY')
+        ? clampMapCursorCoord(extra.cursorMapY, collab.cursorMapY || 50)
+        : clampMapCursorCoord(collab.cursorMapY, 50);
     return {
         activeNodeId: String(extra.activeNodeId || extra.activePointId || selected?.entity?.id || ''),
         activeNodeName: String(extra.activeNodeName || extra.activeLabel || selected?.label || ''),
         activeTextKey: String(extra.activeTextKey || collab.activeTextKey || ''),
         activeTextLabel: String(extra.activeTextLabel || collab.activeTextLabel || ''),
-        mode: String(extra.mode || (canEditCloudBoard() ? 'editing' : 'viewing'))
+        mode: String(extra.mode || (canEditCloudBoard() ? 'editing' : 'viewing')),
+        cursorVisible,
+        cursorMapX,
+        cursorMapY
     };
 }
 
@@ -483,6 +517,7 @@ function withoutCloudAutosave(fn) {
 
 function stopCollabRealtime() {
     stopMapRealtimeText();
+    clearMapCursorSyncTimer();
     if (!collab.realtimeSession) return;
     try {
         collab.realtimeSession.stop('switch-sync-mode');
@@ -601,7 +636,7 @@ export async function updateMapCloudPresence(extra = {}) {
     const payload = buildMapPresencePayload(extra);
 
     if (isRealtimeCloudActive()) {
-        return collab.realtimeSession.updatePresence(payload);
+        return collab.realtimeSession?.updatePresence(payload) || false;
     }
 
     try {
@@ -613,6 +648,70 @@ export async function updateMapCloudPresence(extra = {}) {
         return true;
     } catch (e) {
         return false;
+    }
+}
+
+async function flushMapCursorPresence() {
+    clearMapCursorSyncTimer();
+    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+
+    const realtimeActive = isRealtimeCloudActive();
+    const sent = await updateMapCloudPresence();
+    if (realtimeActive) {
+        collab.cursorLastSentAt = Date.now();
+        return sent;
+    }
+    if (sent) {
+        collab.cursorLastSentAt = Date.now();
+        return true;
+    }
+    if (isCloudBoardActive() && collab.user && collab.token) {
+        scheduleMapCursorPresenceSync(COLLAB_CURSOR_LEGACY_MS);
+    }
+    return false;
+}
+
+function scheduleMapCursorPresenceSync(delayMs = null) {
+    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    const interval = isRealtimeCloudActive() ? COLLAB_CURSOR_REALTIME_MS : COLLAB_CURSOR_LEGACY_MS;
+    const now = Date.now();
+    const elapsed = Math.max(0, now - Number(collab.cursorLastSentAt || 0));
+    const hasExplicitDelay = delayMs !== null && delayMs !== undefined;
+    const waitMs = hasExplicitDelay
+        ? Math.max(0, Number(delayMs) || 0)
+        : Math.max(0, interval - elapsed);
+
+    queueNamedTimer(collab, 'cursorSyncTimer', () => {
+        flushMapCursorPresence().catch(() => {});
+    }, waitMs);
+    return true;
+}
+
+export function updateMapLiveCursor(mapX, mapY) {
+    const nextX = clampMapCursorCoord(mapX, collab.cursorMapX || 50);
+    const nextY = clampMapCursorCoord(mapY, collab.cursorMapY || 50);
+    const changed = !collab.cursorVisible
+        || Math.abs(nextX - Number(collab.cursorMapX || 50)) > 0.01
+        || Math.abs(nextY - Number(collab.cursorMapY || 50)) > 0.01;
+
+    collab.cursorVisible = true;
+    collab.cursorMapX = nextX;
+    collab.cursorMapY = nextY;
+
+    if (changed) {
+        scheduleMapCursorPresenceSync();
+    }
+}
+
+export function clearMapLiveCursor(options = {}) {
+    const hadVisible = Boolean(collab.cursorVisible);
+    collab.cursorVisible = false;
+    if (options.resetPosition) {
+        collab.cursorMapX = 50;
+        collab.cursorMapY = 50;
+    }
+    if (hadVisible && options.broadcast !== false) {
+        scheduleMapCursorPresenceSync(0);
     }
 }
 
@@ -783,6 +882,7 @@ function stopCollabLiveSync() {
 }
 
 function stopCollabPresence() {
+    clearMapCursorSyncTimer();
     stopRetriableLoop(collab, {
         timerKey: 'presenceTimer',
         tokenKey: 'presenceLoopToken',
@@ -1010,6 +1110,8 @@ function setActiveCloudBoardFromSummary(summary = null) {
     const nextBoardId = summary && summary.id ? String(summary.id || '') : '';
     const boardChanged = previousBoardId !== nextBoardId;
     if (boardChanged || !nextBoardId) {
+        clearMapCursorSyncTimer();
+        clearMapLiveCursor({ broadcast: false, resetPosition: true });
         stopCollabRealtime();
         stopCollabAutosave();
         stopCollabLiveSync();
@@ -1024,6 +1126,7 @@ function setActiveCloudBoardFromSummary(summary = null) {
         collab.lastSavedFingerprint = '';
         collab.shadowData = null;
         collab.presence = [];
+        clearMapRemoteCursors();
         clearMapRealtimeFieldPresence({ notify: false });
         syncSharedMapSnapshot(null);
     } else {
