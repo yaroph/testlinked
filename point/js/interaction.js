@@ -52,11 +52,37 @@ function getWorldPositionFromEvent(event, canvas) {
 export function setupCanvasEvents(canvas) {
     if (!canvas) return;
     const NODE_DRAG_THRESHOLD_PX = 6;
-    const releaseSuppressedClickSoon = () => {
-        if (typeof window === 'undefined' || typeof window.setTimeout !== 'function') return;
-        window.setTimeout(() => {
-            suppressNextClick = false;
-        }, 0);
+    const SUPPRESSED_CLICK_TTL_MS = 260;
+    const nowMs = () => {
+        if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+            return performance.now();
+        }
+        return Date.now();
+    };
+    const clearSuppressedClick = () => {
+        suppressedClick = null;
+    };
+    const markSuppressedClick = (clientX, clientY) => {
+        suppressedClick = {
+            x: Number(clientX || 0),
+            y: Number(clientY || 0),
+            until: nowMs() + SUPPRESSED_CLICK_TTL_MS
+        };
+    };
+    const shouldSuppressClick = (event) => {
+        if (!suppressedClick) return false;
+        const currentTime = Number.isFinite(event?.timeStamp) ? Number(event.timeStamp) : nowMs();
+        if (currentTime > suppressedClick.until) {
+            clearSuppressedClick();
+            return false;
+        }
+        const dx = Math.abs(Number(event?.clientX || 0) - suppressedClick.x);
+        const dy = Math.abs(Number(event?.clientY || 0) - suppressedClick.y);
+        if (dx <= NODE_DRAG_THRESHOLD_PX && dy <= NODE_DRAG_THRESHOLD_PX) {
+            clearSuppressedClick();
+            return true;
+        }
+        return false;
     };
     
     // 1. ZOOM (CORRIGÉ ET SYNCHRONISÉ)
@@ -92,7 +118,7 @@ export function setupCanvasEvents(canvas) {
     let panStart = { x: 0, y: 0 };
     let lastPan = { x: 0, y: 0 };
     let dragLinkSource = null;
-    let suppressNextClick = false;
+    let suppressedClick = null;
 
     canvas.addEventListener('mousedown', (e) => {
         // Calcul précis de la position monde
@@ -138,7 +164,6 @@ export function setupCanvasEvents(canvas) {
                     return;
                 }
                 isPanning = true;
-                suppressNextClick = true;
                 canvas.style.cursor = 'grabbing';
             }
             const dx = e.clientX - lastPan.x;
@@ -154,7 +179,7 @@ export function setupCanvasEvents(canvas) {
         if (dragLinkSource) {
             const p = getWorldPositionFromEvent(e, canvas);
             const hit = findNodeAtPosition(p.x, p.y, 40);
-            suppressNextClick = true;
+            markSuppressedClick(e.clientX, e.clientY);
 
             if (hit && hit.id !== dragLinkSource.id) {
                 const success = addLink(dragLinkSource, hit, null);
@@ -162,7 +187,6 @@ export function setupCanvasEvents(canvas) {
             }
             dragLinkSource = null;
             state.tempLink = null;
-            releaseSuppressedClickSoon();
             draw();
             return;
         }
@@ -170,8 +194,8 @@ export function setupCanvasEvents(canvas) {
         pendingPan = false;
         if (isPanning) {
             isPanning = false;
+            markSuppressedClick(e.clientX, e.clientY);
             canvas.style.cursor = 'default';
-            releaseSuppressedClickSoon();
         }
     };
 
@@ -191,8 +215,7 @@ export function setupCanvasEvents(canvas) {
     window.addEventListener('mouseup', handleGlobalPointerUp);
 
     canvas.addEventListener('click', (e) => {
-        if (suppressNextClick) {
-            suppressNextClick = false;
+        if (shouldSuppressClick(e)) {
             return;
         }
         if (e.shiftKey || e.button !== 0) return;
@@ -222,7 +245,7 @@ export function setupCanvasEvents(canvas) {
         dragLinkSource = null;
         state.tempLink = null;
         state.hoverId = null;
-        suppressNextClick = false;
+        clearSuppressedClick();
         canvas.style.cursor = 'default';
         draw();
     });
@@ -261,7 +284,6 @@ export function setupCanvasEvents(canvas) {
                     return;
                 }
                 e.subject.__dragMoved = true;
-                suppressNextClick = true;
 
                 // Conversion continue pendant le mouvement
                 const p = getWorldPositionFromEvent(e, canvas);
@@ -282,7 +304,7 @@ export function setupCanvasEvents(canvas) {
                 delete e.subject.__dragStartClientY;
 
                 if (moved) {
-                    releaseSuppressedClickSoon();
+                    markSuppressedClick(e.sourceEvent?.clientX, e.sourceEvent?.clientY);
                     saveState();
                 }
             }

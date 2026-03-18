@@ -556,12 +556,12 @@ function syncCloudStatus() {
         return;
     }
 
-    statusEl.dataset.syncState = 'local';
+    statusEl.dataset.syncState = 'session';
     statusEl.dataset.disconnectable = '0';
     statusEl.dataset.hoverDisconnect = '0';
     statusEl.classList.remove('is-clickable');
     statusEl.title = '';
-    renderStatus('session', 'Local', collab.user.username);
+    renderStatus('session', 'Session cloud', collab.user.username || 'Connecte');
     syncCloudLivePanels();
 }
 

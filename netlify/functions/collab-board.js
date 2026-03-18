@@ -1118,7 +1118,8 @@ async function clearBoardPresence(store, boardId, userId) {
 }
 
 function sanitizeShareRole(inputRole) {
-  return sanitizeRole(inputRole, ROLE_EDITOR);
+  const role = sanitizeRole(inputRole, ROLE_EDITOR);
+  return role === ROLE_OWNER ? ROLE_EDITOR : role;
 }
 
 function sleep(ms) {
