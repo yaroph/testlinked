@@ -17,6 +17,19 @@ test('map can create a point from GPS input and select it', async ({ page }) => 
     await expect(page.locator('#edName')).toHaveValue('Smoke Point');
 });
 
+test('map file modal closes on the first close click', async ({ page }) => {
+    await installNetlifyMocks(page);
+
+    await page.goto('/map/');
+    await waitForMapReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await expect(page.locator('#cloud-home-tab-local')).toBeVisible();
+
+    await page.click('#modal-close-x');
+    await expect(page.locator('#modal-overlay')).toBeHidden();
+});
+
 test('map keeps a single interaction controller for draw mode and exposes the mode hud', async ({ page }) => {
     await installNetlifyMocks(page);
 
@@ -122,13 +135,14 @@ test('map local tab does not relaunch board listing', async ({ page }) => {
     await waitForMapReady(page);
 
     await page.click('#btnDataFileToggle');
-    await page.click('[data-action="cloud"]');
-    await expect(page.locator('.cloud-open-board')).toBeVisible();
+    await expect(page.locator('#cloud-home-tab-local')).toBeVisible();
+    await page.click('#cloud-home-tab-local');
+    await expect(page.locator('[data-local-action="save-file"]')).toBeVisible({ timeout: 700 });
 
     const listBefore = api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'list_boards').length;
 
-    await page.click('#cloud-home-tab-local');
-    await expect(page.locator('[data-local-action="save-file"]')).toBeVisible({ timeout: 700 });
+    await page.waitForTimeout(1700);
+    await expect(page.locator('[data-local-action="save-file"]')).toBeVisible();
 
     const listAfter = api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'list_boards').length;
     expect(listAfter).toBe(listBefore);

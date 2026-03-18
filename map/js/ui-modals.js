@@ -68,6 +68,29 @@ function showModalOverlay(overlay) {
     requestAnimationFrame(() => overlay.focus());
 }
 
+export function openModalOverlay() {
+    const overlay = document.getElementById('modal-overlay');
+    if (!overlay) return null;
+
+    if (activeTimeout) {
+        clearTimeout(activeTimeout);
+        activeTimeout = null;
+    }
+
+    showModalOverlay(overlay);
+    return overlay;
+}
+
+export function closeModalOverlay(options = {}) {
+    const overlay = document.getElementById('modal-overlay');
+    if (!overlay) return;
+    hideModalOverlay(overlay, options);
+}
+
+export function setModalOverlayDismissHandler(handler) {
+    activeDismissHandler = typeof handler === 'function' ? handler : null;
+}
+
 function escapeMarkup(value) {
     return String(value ?? '')
         .replace(/&/g, '&amp;')

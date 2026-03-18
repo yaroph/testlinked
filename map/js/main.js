@@ -1,7 +1,7 @@
 import { state, applyMapBoardData, generateID, loadLocalState, saveLocalState, pushHistory, undo, getMapData } from './state.js';
 import { initEngine, updateTransform, centerMap, stepMapZoom } from './engine.js'; 
 import { renderGroupsList, initUI, selectItem } from './ui.js';
-import { customAlert, customConfirm, openSaveOptionsModal, openMapDataHubModal } from './ui-modals.js';
+import { customAlert, customConfirm, openSaveOptionsModal } from './ui-modals.js';
 import { gpsToPercentage } from './utils.js';
 import { renderAll, getMapPercentCoords } from './render.js';
 import { ICONS } from './constants.js';
@@ -376,7 +376,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const fileImport = document.getElementById('fileImport');
     const fileMerge = document.getElementById('fileMerge');
     const btnDataFileToggle = document.getElementById('btnDataFileToggle');
-    const dataActionLaunchers = document.getElementById('dataActionLaunchers');
     const btnZoomOut = document.getElementById('btnZoomOut');
     const btnZoomIn = document.getElementById('btnZoomIn');
     const btnResetView = document.getElementById('btnResetView');
@@ -390,17 +389,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnResetView) {
         btnResetView.onclick = () => centerMap();
     }
-
-    const syncDataActionsUi = () => {
-        if (!btnDataFileToggle) return;
-        btnDataFileToggle.setAttribute('aria-expanded', 'false');
-    };
-
-    const closeDataActions = () => {
-        if (!dataActionLaunchers) return;
-        dataActionLaunchers.hidden = true;
-        syncDataActionsUi();
-    };
 
     const archiveMapBackup = async (snapshotName) => {
         const mapData = getMapData();
@@ -420,6 +408,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     const openFileHub = () => {
+        openCloudMenu();
+        return;
         const saveOptions = getCloudSaveModalOptions();
         const cloudLabel = (() => {
             const status = document.getElementById('cloudStatus')?.textContent?.trim() || 'Cloud hors ligne';
@@ -446,20 +436,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btnCloudMenu = document.getElementById('btnCloudMenu');
     if (btnCloudMenu) {
         btnCloudMenu.onclick = () => {
-            openCloudMenu();
+            openCloudMenu('cloud');
         };
     }
 
     if (btnDataFileToggle) {
-        syncDataActionsUi();
         btnDataFileToggle.onclick = (event) => {
             event.stopPropagation();
             openFileHub();
         };
-    }
-
-    if (dataActionLaunchers) {
-        dataActionLaunchers.hidden = true;
     }
 
     const btnMapEmptyCreatePoint = document.getElementById('mapEmptyCreatePoint');
@@ -476,8 +461,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnMapEmptyOpenFile) {
         btnMapEmptyOpenFile.onclick = () => openFileHub();
     }
-
-    window.addEventListener('click', closeDataActions);
 
     // --- IMPORT ---
     const btnTriggerImport = document.getElementById('btnTriggerImport');

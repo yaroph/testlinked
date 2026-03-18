@@ -3,6 +3,7 @@ export function bindAsyncActionButton(button, handler, options = {}) {
 
     const busyOpacity = String(options.busyOpacity || '0.62');
     const onError = typeof options.onError === 'function' ? options.onError : null;
+    const usePointerDown = options.usePointerDown !== false;
     let pointerHandled = false;
     let inFlight = false;
 
@@ -47,11 +48,21 @@ export function bindAsyncActionButton(button, handler, options = {}) {
         runHandler(event).catch(() => {});
     };
 
-    button.onpointerdown = handlePointerDown;
-    button.onclick = handleClick;
+    const handleClickOnly = (event) => {
+        runHandler(event).catch(() => {});
+    };
+
+    if (usePointerDown) {
+        button.onpointerdown = handlePointerDown;
+        button.onclick = handleClick;
+    } else {
+        button.onpointerdown = null;
+        button.onclick = handleClickOnly;
+    }
 
     return () => {
         if (button.onpointerdown === handlePointerDown) button.onpointerdown = null;
         if (button.onclick === handleClick) button.onclick = null;
+        if (button.onclick === handleClickOnly) button.onclick = null;
     };
 }

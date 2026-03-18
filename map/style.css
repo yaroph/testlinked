@@ -2275,6 +2275,555 @@ body.map-shell .modal-tool-title {
     text-transform: uppercase;
 }
 
+body.map-shell .modal-tool {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+body.map-shell .modal-note {
+    color: #9bb0c7;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+body.map-shell .modal-empty-state {
+    padding: 12px;
+    text-align: center;
+    color: #89a0bb;
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+body.map-shell .modal-input-standalone {
+    width: 100%;
+    min-height: 42px;
+    padding: 9px 11px;
+    border: 1px solid rgba(102, 243, 255, 0.18);
+    border-radius: 10px;
+    background: rgba(2, 8, 20, 0.92);
+    color: #e6f4ff;
+    box-shadow: inset 0 0 0 1px rgba(102, 243, 255, 0.04);
+}
+
+body.map-shell .modal-input-standalone::placeholder {
+    color: #637996;
+}
+
+body.map-shell .compact-select {
+    min-width: 110px;
+    font-size: 0.75rem;
+}
+
+body.map-shell .cloud-inline-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 120px auto;
+    gap: 8px;
+    align-items: center;
+}
+
+body.map-shell .cloud-inline-select {
+    min-width: 110px;
+}
+
+body.map-shell .cloud-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+body.map-shell .cloud-manage-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+body.map-shell .cloud-manage-loading {
+    min-height: 280px;
+}
+
+body.map-shell .cloud-board-manage-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 2px;
+    padding-right: 52px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(102, 243, 255, 0.14);
+}
+
+body.map-shell .cloud-share-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: #8faac8;
+    font-size: 0.74rem;
+    line-height: 1.5;
+}
+
+body.map-shell .cloud-share-link {
+    color: var(--accent-cyan);
+    word-break: break-all;
+}
+
+body.map-shell .cloud-scroll,
+body.map-shell .cloud-column {
+    max-height: 360px;
+    overflow: auto;
+    padding-right: 4px;
+}
+
+body.map-shell .cloud-panel-shell {
+    min-height: 320px;
+    padding: 14px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    border-radius: 16px;
+    background:
+        linear-gradient(180deg, rgba(6, 14, 30, 0.9), rgba(4, 10, 22, 0.92)),
+        radial-gradient(circle at top right, rgba(102, 243, 255, 0.05), transparent 30%);
+    box-shadow: inset 0 0 0 1px rgba(102, 243, 255, 0.03);
+}
+
+body.map-shell .cloud-panel-shell-guest {
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+}
+
+body.map-shell .cloud-scroll {
+    max-height: 270px;
+    padding-right: 6px;
+}
+
+body.map-shell .cloud-member-row,
+body.map-shell .cloud-board-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin: 0 0 10px;
+    padding: 14px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(7, 16, 35, 0.94), rgba(4, 10, 22, 0.9));
+    transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+body.map-shell .cloud-member-row:hover,
+body.map-shell .cloud-board-row:hover {
+    transform: translateY(-1px);
+    border-color: rgba(102, 243, 255, 0.28);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+}
+
+body.map-shell .cloud-board-row.is-active {
+    border-color: rgba(102, 243, 255, 0.34);
+    background: linear-gradient(180deg, rgba(12, 26, 50, 0.96), rgba(5, 13, 28, 0.94));
+}
+
+body.map-shell .cloud-board-row-local {
+    background: linear-gradient(180deg, rgba(8, 18, 38, 0.92), rgba(4, 10, 22, 0.9));
+}
+
+body.map-shell .cloud-local-badge {
+    align-self: center;
+    padding: 7px 11px;
+    border: 1px solid rgba(102, 243, 255, 0.18);
+    border-radius: 999px;
+    background: rgba(102, 243, 255, 0.08);
+    color: var(--accent-cyan);
+    font-size: 0.66rem;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+body.map-shell .cloud-local-disconnect-btn {
+    cursor: pointer;
+}
+
+body.map-shell .cloud-row-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1 1 auto;
+}
+
+body.map-shell .cloud-row-title {
+    color: #effbff;
+    font-size: 1.02rem;
+    font-weight: 700;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+body.map-shell .cloud-row-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+body.map-shell .cloud-connected-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 5px 10px;
+    border: 1px solid rgba(102, 243, 255, 0.26);
+    border-radius: 999px;
+    background: rgba(102, 243, 255, 0.08);
+    color: var(--accent-cyan);
+    font-size: 0.62rem;
+    letter-spacing: 1.1px;
+    text-transform: uppercase;
+    transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+body.map-shell .cloud-connected-pill-hover {
+    display: none;
+}
+
+body.map-shell .cloud-connected-pill:hover {
+    border-color: rgba(255, 154, 167, 0.34);
+    background: rgba(255, 154, 167, 0.1);
+    color: #ffb4bf;
+}
+
+body.map-shell .cloud-connected-pill:hover .cloud-connected-pill-label {
+    display: none;
+}
+
+body.map-shell .cloud-connected-pill:hover .cloud-connected-pill-hover {
+    display: inline;
+}
+
+body.map-shell .cloud-local-connected-note {
+    margin-bottom: 12px;
+    color: #8faac8;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+body.map-shell .cloud-local-session-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+body.map-shell .cloud-row-sub {
+    color: #8b9bb4;
+    font-size: 0.68rem;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-member-status {
+    margin-top: 2px;
+    color: #7e95b0;
+    font-size: 0.72rem;
+    line-height: 1.35;
+}
+
+body.map-shell .cloud-member-status.is-online {
+    color: #9df5b8;
+}
+
+body.map-shell .cloud-member-status.is-offline {
+    color: #ff9aa7;
+}
+
+body.map-shell .cloud-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+body.map-shell .cloud-home-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-right: 42px;
+    padding-bottom: 6px;
+}
+
+body.map-shell .cloud-home-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+body.map-shell .cloud-home-kicker {
+    color: #7ec8d5;
+    font-size: 0.68rem;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-home-title {
+    color: #effbff;
+    font-size: 1.34rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-home-tab-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 5px;
+    border: 1px solid rgba(102, 243, 255, 0.16);
+    border-radius: 999px;
+    background: rgba(4, 11, 26, 0.8);
+    box-shadow: inset 0 0 0 1px rgba(102, 243, 255, 0.04);
+}
+
+body.map-shell .cloud-home-tab {
+    min-width: 96px;
+    min-height: 38px;
+    padding: 0 14px;
+    cursor: pointer;
+    opacity: 0.72;
+    transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    clip-path: none;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #8fb6c7;
+    font-size: 0.82rem;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-home-tab:hover {
+    opacity: 0.96;
+    transform: translateY(-1px);
+}
+
+body.map-shell .cloud-home-tab.is-active {
+    opacity: 1;
+    color: #031018;
+    background: linear-gradient(90deg, rgba(97, 247, 255, 0.94), rgba(72, 207, 226, 0.92));
+    border-color: rgba(102, 243, 255, 0.4);
+    box-shadow: 0 0 18px rgba(102, 243, 255, 0.12);
+}
+
+body.map-shell .cloud-home-tab.cloud-home-tab-alt.is-active {
+    background: linear-gradient(90deg, rgba(120, 226, 231, 0.92), rgba(86, 187, 194, 0.9));
+}
+
+body.map-shell .cloud-status-bar {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: #9bb0c7;
+    font-size: 0.72rem;
+    flex-wrap: wrap;
+}
+
+body.map-shell .cloud-status-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 7px 11px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(4, 11, 26, 0.78);
+}
+
+body.map-shell .cloud-status-active {
+    color: var(--accent-cyan);
+    border-color: rgba(102, 243, 255, 0.24);
+}
+
+body.map-shell .cloud-local-note {
+    margin-top: 0;
+    margin-bottom: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px dashed rgba(255, 204, 138, 0.18);
+    background: rgba(3, 10, 24, 0.6);
+    color: #ffd8a4;
+    font-size: 0.74rem;
+    line-height: 1.45;
+}
+
+body.map-shell .cloud-local-panel {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+body.map-shell .cloud-local-action-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+body.map-shell .cloud-local-action-card {
+    width: 100%;
+    min-height: 92px;
+    align-items: flex-start;
+    justify-content: center;
+    text-align: left;
+    padding: 16px 18px;
+    gap: 8px;
+}
+
+body.map-shell .cloud-local-action-card .data-hub-card-meta {
+    max-width: 32ch;
+    text-align: left;
+    line-height: 1.45;
+}
+
+body.map-shell .data-hub-card-meta {
+    color: #89a0bb;
+    font-size: 0.68rem;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-local-action-grid > .data-hub-card-danger {
+    min-height: 92px;
+}
+
+body.map-shell .cloud-guest-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+body.map-shell .cloud-guest-layout {
+    display: grid;
+    grid-template-columns: minmax(250px, 0.9fr) minmax(320px, 1.1fr);
+    gap: 12px;
+    align-items: stretch;
+}
+
+body.map-shell .cloud-guest-hero {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 18px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    border-radius: 16px;
+    background:
+        linear-gradient(180deg, rgba(7, 16, 35, 0.94), rgba(4, 10, 22, 0.9)),
+        radial-gradient(circle at top left, rgba(102, 243, 255, 0.08), transparent 54%);
+}
+
+body.map-shell .cloud-guest-kicker {
+    color: #7ec8d5;
+    font-size: 0.66rem;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-guest-title {
+    color: #effbff;
+    font-size: 1.18rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-guest-copy {
+    color: #9fb8d2;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+body.map-shell .cloud-guest-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: auto;
+}
+
+body.map-shell .cloud-guest-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 6px 10px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(4, 11, 26, 0.72);
+    color: #9fd8e1;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+body.map-shell .cloud-board-row .mini-btn,
+body.map-shell .cloud-member-row .mini-btn,
+body.map-shell .cloud-manage-shell .mini-btn {
+    min-height: 34px;
+    padding: 7px 11px;
+    border-radius: 10px;
+    clip-path: none;
+    font-size: 0.74rem;
+    letter-spacing: 1.1px;
+}
+
+body.map-shell .cloud-open-board {
+    border-color: rgba(102, 243, 255, 0.28);
+    background: rgba(102, 243, 255, 0.12);
+    color: #bdf7ff;
+}
+
+body.map-shell .cloud-open-board:hover {
+    border-color: rgba(102, 243, 255, 0.42);
+    background: rgba(102, 243, 255, 0.18);
+    color: #dbfbff;
+}
+
+body.map-shell .cloud-manage-board {
+    border-color: rgba(255, 204, 138, 0.22);
+    background: rgba(255, 204, 138, 0.1);
+    color: #ffd8a4;
+}
+
+body.map-shell .cloud-manage-board:hover {
+    border-color: rgba(255, 204, 138, 0.36);
+    background: rgba(255, 204, 138, 0.16);
+    color: #ffe5bf;
+}
+
+body.map-shell .mini-btn.danger,
+body.map-shell .cloud-leave-board,
+body.map-shell .cloud-delete-board-inline,
+body.map-shell #cloud-delete-board {
+    border-color: rgba(255, 120, 150, 0.22);
+    background: rgba(255, 120, 150, 0.1);
+    color: #ffb0c3;
+}
+
+body.map-shell .mini-btn.danger:hover,
+body.map-shell .cloud-leave-board:hover,
+body.map-shell .cloud-delete-board-inline:hover,
+body.map-shell #cloud-delete-board:hover {
+    border-color: rgba(255, 120, 150, 0.34);
+    background: rgba(255, 120, 150, 0.18);
+    color: #ffd1da;
+}
+
 body.map-shell .data-hub-section {
     display: flex;
     flex-direction: column;
@@ -2433,7 +2982,8 @@ body.map-shell .cloud-manage-loading-note {
     line-height: 1.5;
 }
 
-body.map-shell .cloud-home-loading-stack {
+body.map-shell .cloud-home-loading-stack,
+body.map-shell .cloud-loading-stack {
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -2487,6 +3037,19 @@ body.map-shell .cloud-auth-shell {
     padding: 2px 0;
 }
 
+body.map-shell .cloud-auth-shell-inline {
+    max-width: none;
+    padding: 18px;
+    border: 1px solid rgba(102, 243, 255, 0.1);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(5, 12, 28, 0.76), rgba(4, 10, 22, 0.82));
+}
+
+body.map-shell .cloud-auth-shell-guest {
+    justify-content: center;
+    min-height: 100%;
+}
+
 body.map-shell .cloud-auth-badge {
     align-self: flex-start;
     padding: 5px 9px;
@@ -2519,6 +3082,11 @@ body.map-shell .cloud-auth-grid {
     display: grid;
     grid-template-columns: 1fr;
     gap: 8px;
+}
+
+body.map-shell .cloud-auth-shell-guest .cloud-auth-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
 }
 
 body.map-shell .cloud-auth-field {
@@ -3601,6 +4169,27 @@ body.map-shell .alert-picker-kicker {
 
     .center-empty-btn {
         width: 100%;
+    }
+
+    body.map-shell .cloud-inline-form,
+    body.map-shell .cloud-local-action-grid,
+    body.map-shell .cloud-local-session-grid,
+    body.map-shell .cloud-guest-layout,
+    body.map-shell .cloud-auth-shell-guest .cloud-auth-grid {
+        grid-template-columns: 1fr;
+    }
+
+    body.map-shell .cloud-home-head,
+    body.map-shell .cloud-board-manage-head,
+    body.map-shell .cloud-status-bar,
+    body.map-shell .cloud-member-row,
+    body.map-shell .cloud-board-row {
+        flex-direction: column;
+    }
+
+    body.map-shell .cloud-row-actions {
+        width: 100%;
+        justify-content: flex-start;
     }
 }
 
