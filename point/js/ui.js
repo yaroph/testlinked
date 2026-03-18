@@ -38,6 +38,7 @@ import { findPointSearchMatches } from '../../shared/js/point-search.mjs';
 import { bindAsyncActionButton } from '../../shared/js/ui-async.mjs';
 import { clampPointCursorCoord, normalizePointCursorPresence } from '../../shared/js/collab-cursor-visuals.mjs';
 import { clearPointRemoteCursors, setPointRemoteCursors } from './collab-cursors.js';
+import { attachAsyncAutocomplete } from '../../shared/js/async-autocomplete.mjs';
 
 const ui = {
     listCompanies: document.getElementById('listCompanies'),
@@ -2270,7 +2271,10 @@ async function renderCloudMembers(boardId) {
                 </div>
             </div>
             <div class="cloud-inline-form">
-                <input id="cloud-share-username" type="text" placeholder="username" class="modal-input-standalone" />
+                <div class="editor-autocomplete-field cloud-inline-autocomplete-field">
+                    <input id="cloud-share-username" type="text" placeholder="username" class="modal-input-standalone" autocomplete="off" spellcheck="false" />
+                    <div id="cloud-share-username-results" class="editor-autocomplete-results" hidden></div>
+                </div>
                 <select id="cloud-share-role" class="compact-select cloud-inline-select">
                     <option value="owner">Owner</option>
                     <option value="editor">Editor</option>
@@ -2356,6 +2360,7 @@ async function renderCloudMembers(boardId) {
             showCustomAlert(`Erreur partage: ${escapeHtml(e.message || 'inconnue')}`);
         }
     };
+    bindCloudMemberAutocomplete(boardId, members);
 
 
     const exportBtn = document.getElementById('cloud-manage-export');
@@ -2661,6 +2666,45 @@ function bindCloudHomeTabs() {
             renderCloudHome().catch(() => {});
         };
     }
+}
+
+function bindCloudMemberAutocomplete(boardId, members = []) {
+    const input = document.getElementById('cloud-share-username');
+    const resultsEl = document.getElementById('cloud-share-username-results');
+    const addBtn = document.getElementById('cloud-share-add');
+    if (!(input instanceof HTMLInputElement) || !(resultsEl instanceof HTMLElement)) return;
+
+    const memberUserIds = new Set(
+        (Array.isArray(members) ? members : [])
+            .map((member) => String(member?.userId || '').trim())
+            .filter(Boolean)
+    );
+
+    attachAsyncAutocomplete({
+        input,
+        resultsEl,
+        minChars: 1,
+        fetchSuggestions: async (query) => {
+            const result = await collabBoardRequest('search_users', {
+                boardId,
+                query,
+                limit: 7
+            });
+            return (Array.isArray(result?.users) ? result.users : [])
+                .filter((entry) => !memberUserIds.has(String(entry?.userId || '')));
+        },
+        renderSuggestion: (entry) => `
+            <span class="editor-autocomplete-name">${escapeHtml(String(entry?.username || ''))}</span>
+            <span class="editor-autocomplete-type">Utilisateur cloud</span>
+        `,
+        getSuggestionKey: (entry, index) => String(entry?.userId || entry?.username || index),
+        onPick: (entry) => {
+            input.value = String(entry?.username || '').trim();
+        },
+        onSubmit: () => {
+            addBtn?.click();
+        }
+    });
 }
 
 async function runCloudAuth(action) {

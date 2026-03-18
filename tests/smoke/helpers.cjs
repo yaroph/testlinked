@@ -32,6 +32,13 @@ async function installNetlifyMocks(page, options = {}) {
     const boardsStore = {
         boards: Array.isArray(options.boards) ? clone(options.boards) : [],
     };
+    const collabUsers = Array.isArray(options.collabUsers)
+        ? clone(options.collabUsers)
+        : [
+            { userId: 'u-smoke', username: String(authUser.username || 'smoke-user') },
+            { userId: 'u-alpha', username: 'alpha.team' },
+            { userId: 'u-bravo', username: 'bravo' },
+        ];
 
     await page.route('**/.netlify/functions/**', async (route) => {
         const request = route.request();
@@ -170,6 +177,37 @@ async function installNetlifyMocks(page, options = {}) {
                     ok: true,
                     boardId: String(board.id || ''),
                     presence: clone(board.presence),
+                });
+            }
+
+            if (action === 'search_users') {
+                const board = findBoard(body.boardId);
+                if (!board) {
+                    return jsonResponse(route, 404, {
+                        ok: false,
+                        error: 'Board introuvable',
+                    });
+                }
+                const query = String(body.query || '').trim().toLowerCase();
+                const memberIds = new Set(
+                    (Array.isArray(board.members) ? board.members : [])
+                        .map((entry) => String(entry?.userId || ''))
+                        .filter(Boolean)
+                );
+                const users = collabUsers
+                    .filter((entry) => {
+                        const username = String(entry?.username || '').toLowerCase();
+                        const userId = String(entry?.userId || '');
+                        return query && username.includes(query) && !memberIds.has(userId);
+                    })
+                    .slice(0, Number(body.limit || 7))
+                    .map((entry) => ({
+                        userId: String(entry.userId || ''),
+                        username: String(entry.username || ''),
+                    }));
+                return jsonResponse(route, 200, {
+                    ok: true,
+                    users,
                 });
             }
 

@@ -145,6 +145,14 @@ function normalizeLegacyKey(value, fallback = "") {
     .trim();
 }
 
+function normalizeUsernameQuery(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 24);
+}
+
 function slugifyToken(value, fallback = "item") {
   const safe = normalizeLegacyKey(value, fallback)
     .replace(/[\s_]+/g, "-")
@@ -1150,6 +1158,54 @@ async function touchBoardPresence(store, board, user, role, payload = {}) {
   return listBoardPresence(store, boardId);
 }
 
+async function searchUsersForBoard(store, board, requesterId, query, options = {}) {
+  const boardId = String(board?.id || "").trim();
+  const safeQuery = normalizeUsernameQuery(query);
+  const limit = Math.max(1, Math.min(12, Number(options.limit) || 6));
+  if (!boardId || !safeQuery) return [];
+
+  const role = getRoleForUser(board, requesterId);
+  if (role !== ROLE_OWNER) return [];
+
+  const memberIds = new Set([
+    String(board.ownerId || ""),
+    ...(Array.isArray(board.members) ? board.members.map((member) => String(member?.userId || "")) : []),
+  ].filter(Boolean));
+  const exactKeys = await listKeysByPrefix(store, `users/by-name/${safeQuery}`, limit);
+  let candidateKeys = [...exactKeys];
+
+  if (safeQuery.length >= 2 && candidateKeys.length < limit) {
+    const broadKeys = await listKeysByPrefix(store, "users/by-name/", 180);
+    const broadMatches = broadKeys.filter((key) => String(key || "").includes(safeQuery));
+    candidateKeys = [...new Set([...candidateKeys, ...broadMatches])].slice(0, 180);
+  }
+
+  const rows = await Promise.all(candidateKeys.map((key) => store.get(key, { type: "json" }).catch(() => null)));
+  const users = rows
+    .map((row) => {
+      const username = String(row?.username || "").trim();
+      const userId = String(row?.userId || "").trim();
+      if (!username || !userId || memberIds.has(userId)) return null;
+      const starts = username.startsWith(safeQuery);
+      const index = username.indexOf(safeQuery);
+      if (index < 0) return null;
+      return { userId, username, starts, index };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.starts !== b.starts) return a.starts ? -1 : 1;
+      if (a.index !== b.index) return a.index - b.index;
+      return String(a.username || "").localeCompare(String(b.username || ""), "fr", { sensitivity: "base" });
+    })
+    .slice(0, limit)
+    .map((entry) => ({
+      userId: entry.userId,
+      username: entry.username,
+    }));
+
+  return users;
+}
+
 async function clearBoardPresence(store, boardId, userId) {
   if (!boardId || !userId) return;
   await store.delete(presenceKey(boardId, userId)).catch(() => {});
@@ -1620,6 +1676,23 @@ exports.handler = async (event) => {
     });
   }
 
+  if (action === "search_users") {
+    const boardId = String(body.boardId || "");
+    const board = await loadBoard(store, boardId);
+    if (!board) return errorResponse(404, "Tableau introuvable.");
+
+    const role = getRoleForUser(board, user.id);
+    if (role !== ROLE_OWNER) return errorResponse(403, "Seul le lead peut rechercher des membres.");
+
+    const users = await searchUsersForBoard(store, board, user.id, body.query, {
+      limit: body.limit,
+    });
+    return jsonResponse(200, {
+      ok: true,
+      users,
+    });
+  }
+
   if (action === "remove_member") {
     const boardId = String(body.boardId || "");
     const targetUserId = String(body.userId || "");
@@ -1732,4 +1805,5 @@ exports.__test = {
   sanitizeShareRole,
   listBoardPresence,
   touchBoardPresence,
+  searchUsersForBoard,
 };

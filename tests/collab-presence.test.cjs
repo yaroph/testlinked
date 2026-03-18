@@ -136,3 +136,27 @@ test('touchBoardPresence conserve les coordonnees de curseur partagees', async (
   assert.equal(presence[0].cursorMapX, 61.2);
   assert.equal(presence[0].cursorMapY, 24.4);
 });
+
+test('searchUsersForBoard propose des usernames cloud hors membres existants', async () => {
+  const store = new MemoryStore();
+  await store.setJSON('users/by-name/smoke-user', { userId: 'u-smoke', username: 'smoke-user' });
+  await store.setJSON('users/by-name/alpha.team', { userId: 'u-alpha', username: 'alpha.team' });
+  await store.setJSON('users/by-name/alpine.ops', { userId: 'u-alpine', username: 'alpine.ops' });
+  await store.setJSON('users/by-name/bravo', { userId: 'u-bravo', username: 'bravo' });
+
+  const board = {
+    id: 'board_search',
+    ownerId: 'u-smoke',
+    members: [
+      { userId: 'u-smoke', username: 'smoke-user', role: 'owner' },
+      { userId: 'u-bravo', username: 'bravo', role: 'editor' },
+    ],
+  };
+
+  const users = await __test.searchUsersForBoard(store, board, 'u-smoke', 'alp', { limit: 5 });
+
+  assert.deepEqual(users, [
+    { userId: 'u-alpha', username: 'alpha.team' },
+    { userId: 'u-alpine', username: 'alpine.ops' },
+  ]);
+});

@@ -2378,6 +2378,76 @@ body.map-shell .cloud-inline-form {
     align-items: center;
 }
 
+body.map-shell .cloud-inline-autocomplete-field {
+    min-width: 0;
+}
+
+body.map-shell .editor-autocomplete-field {
+    position: relative;
+}
+
+body.map-shell .editor-autocomplete-results,
+body.map-shell .editor-autocomplete-results * {
+    box-sizing: border-box;
+}
+
+body.map-shell .editor-autocomplete-results {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid rgba(102, 243, 255, 0.18);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(6, 14, 31, 0.98), rgba(3, 9, 21, 0.96));
+    box-shadow: 0 22px 48px rgba(0, 0, 0, 0.34);
+    z-index: 120;
+}
+
+body.map-shell .editor-autocomplete-results[hidden],
+body.map-shell .editor-autocomplete-results:empty {
+    display: none !important;
+}
+
+body.map-shell .editor-autocomplete-hit {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid rgba(102, 243, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(9, 18, 38, 0.84);
+    text-align: left;
+    clip-path: none;
+    color: #e9fbff;
+}
+
+body.map-shell .editor-autocomplete-hit:hover,
+body.map-shell .editor-autocomplete-hit.active {
+    border-color: rgba(102, 243, 255, 0.28);
+    background: rgba(14, 28, 56, 0.92);
+    transform: translateY(-1px);
+}
+
+body.map-shell .editor-autocomplete-name {
+    color: #effbff;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+body.map-shell .editor-autocomplete-type {
+    color: #84a3b9;
+    font-size: 0.68rem;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+}
+
 body.map-shell .cloud-inline-select {
     min-width: 110px;
 }

@@ -1612,6 +1612,13 @@ export function injectStyles() {
             gap: 8px;
             align-items: center;
         }
+        .cloud-inline-autocomplete-field {
+            min-width: 0;
+        }
+        .cloud-inline-autocomplete-field .editor-autocomplete-results {
+            top: calc(100% + 6px);
+            z-index: 120;
+        }
         .cloud-inline-select {
             min-width: 110px;
         }

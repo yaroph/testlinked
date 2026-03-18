@@ -491,3 +491,41 @@ test('point owner can open the Gerer board panel', async ({ page }) => {
     await expect(page.locator('.cloud-board-manage-head')).toBeVisible();
     await expect(page.locator('.modal-tool-title')).toContainText('Gestion du board');
 });
+
+test('point board manager suggests cloud usernames while sharing', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+    });
+
+    await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        collabUsers: [
+            { userId: 'u-smoke', username: 'smoke-user' },
+            { userId: 'u-alpha', username: 'alpha.team' },
+            { userId: 'u-alfred', username: 'alfred.ops' },
+        ],
+        boards: [{
+            id: 'board-owner',
+            title: 'Board Owner',
+            role: 'owner',
+            page: 'point',
+            members: [{ userId: 'u-smoke', username: 'smoke-user', role: 'owner' }],
+            onlineUsers: ['u-smoke'],
+        }],
+    });
+
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await page.click('.cloud-manage-board');
+    await expect(page.locator('.cloud-board-manage-head')).toBeVisible();
+
+    await page.fill('#cloud-share-username', 'alf');
+    await expect(page.locator('#cloud-share-username-results')).toBeVisible();
+    await expect(page.locator('#cloud-share-username-results .editor-autocomplete-hit').first()).toContainText('alfred.ops');
+});
