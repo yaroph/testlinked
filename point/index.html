@@ -1969,23 +1969,7 @@
       requestAnimationFrame(renderFrame);
     })();
   </script>
-  <script>
-    (() => {
-      const selector = 'input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="hidden"]), textarea';
-      const lockField = (field) => {
-        if (!field || typeof field.setAttribute !== 'function') return;
-        field.setAttribute('autocomplete', 'off');
-        field.setAttribute('autocorrect', 'off');
-        field.setAttribute('autocapitalize', 'off');
-        field.setAttribute('spellcheck', 'false');
-      };
-      document.querySelectorAll(selector).forEach(lockField);
-      document.addEventListener('focusin', (event) => {
-        const field = event.target;
-        if (field && typeof field.matches === 'function' && field.matches(selector)) lockField(field);
-      });
-    })();
-  </script>
+  <script src="../shared/js/lock-fields.js"></script>
 </body>
 </html>
 

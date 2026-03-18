@@ -1,4 +1,4 @@
-import * as Y from '../../node_modules/yjs/dist/yjs.mjs';
+import * as Y from '../vendor/yjs.mjs';
 
 const POINT_TEXT_FIELD_ALIASES = {
     name: 'name',
