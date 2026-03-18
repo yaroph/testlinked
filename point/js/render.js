@@ -337,7 +337,20 @@ export function draw() {
     ctx.scale(p.scale, p.scale);
 
     const useGlow = (!state.performance && p.scale > 0.4);
-    const focusId = state.hoverId || state.selection;
+    const previewPairState = state.aiPreviewPair && state.aiPreviewPair.aId && state.aiPreviewPair.bId
+        && nodeById(state.aiPreviewPair.aId)
+        && nodeById(state.aiPreviewPair.bId)
+        ? state.aiPreviewPair
+        : null;
+    const previewAId = previewPairState ? String(previewPairState.aId || '') : '';
+    const previewBId = previewPairState ? String(previewPairState.bId || '') : '';
+    const previewPairKey = (previewAId && previewBId) ? pairKey(previewAId, previewBId) : '';
+    const previewNodeIds = new Set(
+        previewPairState
+            ? [previewAId, previewBId].filter(Boolean)
+            : []
+    );
+    const focusId = previewPairState ? null : (state.hoverId || state.selection);
     const hasFocus = (focusId !== null);
 
     const allowedKinds = FILTER_RULES[activeFilter];
@@ -376,9 +389,14 @@ export function draw() {
         });
     }
 
-    const nodeMap = predictedLinks.length
+    const nodeMap = (predictedLinks.length || previewNodeIds.size)
         ? new Map(state.nodes.map((n) => [String(n.id), n]))
         : null;
+    const hasPreviewPair = Boolean(
+        previewNodeIds.size === 2
+        && nodeMap?.has(previewAId)
+        && nodeMap?.has(previewBId)
+    );
     const nonPersonNodes = [];
     const personNodes = [];
     for (const node of state.nodes) {
@@ -388,7 +406,7 @@ export function draw() {
     const sortedNodes = nonPersonNodes.concat(personNodes);
     const renderableNodes = [];
     for (const node of sortedNodes) {
-        if (activeFilter !== FILTERS.ALL && node.type === TYPES.PERSON && !activeNodes.has(node.id)) continue;
+        if (activeFilter !== FILTERS.ALL && node.type === TYPES.PERSON && !activeNodes.has(node.id) && !(hasPreviewPair && previewNodeIds.has(String(node.id)))) continue;
         if (isFocus && !state.focusSet.has(String(node.id))) continue;
         renderableNodes.push(node);
     }
@@ -434,7 +452,9 @@ export function draw() {
             return false;
         }
         if (!isHVT && !pathPreviewOnly) {
-            if (state.pathfinding.active) {
+            if (hasPreviewPair) {
+                dimmed = !previewNodeIds.has(String(node.id));
+            } else if (state.pathfinding.active) {
                 dimmed = !state.pathfinding.pathNodes.has(node.id);
             } else if (hasFocus) {
                 dimmed = String(node.id) !== String(focusId) && !focusNeighborIds.has(String(node.id));
@@ -447,6 +467,11 @@ export function draw() {
     function isLinkDimmed(link) {
         if (isHVT || isFocus) return false;
         if (pathPreviewOnly) return false;
+        if (hasPreviewPair) {
+            const s = getLinkEndpointId(link.source);
+            const t = getLinkEndpointId(link.target);
+            return pairKey(s, t) !== previewPairKey;
+        }
         if (state.pathfinding.active) {
             const s = getLinkEndpointId(link.source);
             const t = getLinkEndpointId(link.target);
@@ -459,6 +484,40 @@ export function draw() {
         const t = getLinkEndpointId(link.target);
         return (String(s) !== String(focusId) && String(t) !== String(focusId));
     }
+
+    const drawPreviewPairLink = () => {
+        if (!hasPreviewPair) return;
+        const a = nodeMap?.get(previewAId);
+        const b = nodeMap?.get(previewBId);
+        if (!a || !b) return;
+
+        const degA = degreeCache.get(a.id) || 0;
+        const degB = degreeCache.get(b.id) || 0;
+        const degreeBoost = Math.min(1.2, (degA + degB) / 12);
+        const offset = getCurveOffset(a.id, b.id, 1, 0, degreeBoost);
+        const previewColor = previewPairState?.actionType === 'link' && previewPairState?.kind
+            ? computeLinkColor({ kind: previewPairState.kind })
+            : 'rgba(115, 251, 247, 0.96)';
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        if (offset !== 0) {
+            const { cx, cy } = getCurve(a.x, a.y, b.x, b.y, offset);
+            ctx.quadraticCurveTo(cx, cy, b.x, b.y);
+        } else {
+            ctx.lineTo(b.x, b.y);
+        }
+        ctx.setLineDash([12 * invScaleSqrt, 9 * invScaleSqrt]);
+        ctx.strokeStyle = previewColor;
+        ctx.lineWidth = 2.6 * invScaleSqrt;
+        ctx.globalAlpha = 0.95;
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = previewColor;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+    };
 
     // 0. LIENS PREDITS (IA)
     if (predictedLinks.length && (!isHVT || state.aiSettings?.showPredicted)) {
@@ -658,6 +717,8 @@ export function draw() {
         }
     }
 
+    drawPreviewPairLink();
+
     // 2. LIEN TEMP
     if (state.tempLink) {
         ctx.beginPath();
@@ -679,6 +740,7 @@ export function draw() {
         let nodeColor = sanitizeNodeColor(n.color);
         const statusVisual = getPersonStatusVisual(n);
         const isTop = topSet ? topSet.has(n.id) : true;
+        const isPreviewNode = hasPreviewPair && previewNodeIds.has(String(n.id));
         
         // --- LOGIQUE VISUELLE HVT ---
         let isBoss = false;
@@ -702,14 +764,14 @@ export function draw() {
 
         // Gestion Contour
         const isFocusDirectNeighbor = isFocus && state.focusDirectSet.has(String(n.id));
-        if (state.selection === n.id || state.hoverId === n.id || isPathfindingNode || isPathStart) {
-            ctx.shadowBlur = 20;
-            let strokeColor = '#ffffff';
+        if (isPreviewNode || state.selection === n.id || state.hoverId === n.id || isPathfindingNode || isPathStart) {
+            ctx.shadowBlur = isPreviewNode ? 22 : 20;
+            let strokeColor = isPreviewNode ? '#73fbf7' : '#ffffff';
             if (isPathfindingNode) strokeColor = '#00ffff';
             if (isPathStart) strokeColor = '#ffff00';
             ctx.shadowColor = strokeColor;
             ctx.strokeStyle = strokeColor;
-            ctx.lineWidth = 3 * invScaleSqrt;
+            ctx.lineWidth = (isPreviewNode ? 3.4 : 3) * invScaleSqrt;
             ctx.stroke();
         } else if (isFocusDirectNeighbor) {
             ctx.shadowBlur = 16;
@@ -799,13 +861,14 @@ export function draw() {
             const isHover = (state.hoverId === n.id);
             const isSelected = (state.selection === n.id);
             const isPathStart = state.pathfinding.startId === n.id;
+            const isPreviewNode = hasPreviewPair && previewNodeIds.has(String(n.id));
             const hvtScore = n.hvtScore || 0;
             const degree = degreeCache.get(n.id) || 0;
 
             let showName = false;
             if (labelMode === 2) showName = true;
             else if (labelMode === 1) {
-                showName = isSelected || isHover || isPathfindingNode || isPathStart;
+                showName = isPreviewNode || isSelected || isHover || isPathfindingNode || isPathStart;
                 if (!showName) showName = (hvtScore > 0.55) || (influence > 0.46) || (degree > 4) || (isImportant && p.scale > 0.28) || (p.scale > 0.55);
             }
             
@@ -833,6 +896,7 @@ export function draw() {
             const boxH = textH + padding * 0.9;
 
             let priority = 0;
+            if (isPreviewNode) priority += 95;
             if (isSelected) priority += 100;
             if (isHover) priority += 90;
             if (isPathfindingNode || isPathStart) priority += 80;

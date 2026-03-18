@@ -1,6 +1,52 @@
 const { test, expect } = require('@playwright/test');
 const { installNetlifyMocks, waitForPointReady } = require('./helpers.cjs');
 
+async function seedPointGraph(page, nodes, links = [], selectionId = null) {
+    await page.evaluate(async ({ nodes, links, selectionId }) => {
+        const { state } = await import('/point/js/state.js');
+        const { updatePersonColors } = await import('/point/js/logic.js');
+        const { refreshLists, selectNode } = await import('/point/js/ui.js');
+
+        state.nodes = nodes;
+        state.links = links;
+        state.selection = null;
+        state.hoverId = null;
+        state.focusMode = false;
+        state.focusRootId = null;
+        state.focusSet.clear();
+        state.focusDirectSet.clear();
+        state.aiPredictedLinks = [];
+        state.aiPreviewPair = null;
+        updatePersonColors();
+        refreshLists();
+        if (selectionId) selectNode(selectionId);
+    }, { nodes, links, selectionId });
+}
+
+async function sampleCanvasPixelAtPairMidpoint(page, aId, bId) {
+    return page.evaluate(async ({ aId, bId }) => {
+        const { state } = await import('/point/js/state.js');
+        const canvas = document.getElementById('graph');
+        const ctx = canvas.getContext('2d');
+        const a = state.nodes.find((node) => String(node.id) === String(aId));
+        const b = state.nodes.find((node) => String(node.id) === String(bId));
+        if (!a || !b) throw new Error('Pair nodes missing');
+
+        const midX = (Number(a.x) + Number(b.x)) / 2;
+        const midY = (Number(a.y) + Number(b.y)) / 2;
+        const cssX = (midX * state.view.scale) + state.view.x + (canvas.clientWidth / 2);
+        const cssY = (midY * state.view.scale) + state.view.y + (canvas.clientHeight / 2);
+        const dpr = window.devicePixelRatio || 1;
+        const pixel = Array.from(ctx.getImageData(Math.round(cssX * dpr), Math.round(cssY * dpr), 1, 1).data);
+
+        return {
+            pixel,
+            preview: state.aiPreviewPair,
+            point: { x: cssX, y: cssY }
+        };
+    }, { aId, bId });
+}
+
 test('point guest file menu keeps local actions and auth-gated cloud access', async ({ page }) => {
     await installNetlifyMocks(page);
 
@@ -129,6 +175,178 @@ test('point editor stays open while panning and closes on a single empty click',
 
     await page.mouse.click(startX, startY);
     await expect(page.locator('#editor')).toBeHidden();
+});
+
+test('point editor docks to the right on ultra-wide screens', async ({ page }) => {
+    await installNetlifyMocks(page);
+
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    await page.evaluate(() => {
+        const btn = document.getElementById('createPerson');
+        if (!btn) throw new Error('createPerson button missing');
+        btn.click();
+    });
+
+    await expect(page.locator('#editor')).toBeVisible();
+    await page.waitForTimeout(120);
+
+    const editorBox = await page.locator('#editor').boundingBox();
+    if (!editorBox) throw new Error('Editor box unavailable');
+    expect(2560 - (editorBox.x + editorBox.width)).toBeLessThanOrEqual(90);
+});
+
+test('point file merge keeps person and company separate when they only share a phone number', async ({ page }) => {
+    await installNetlifyMocks(page);
+
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    const payload = {
+        nodes: [
+            {
+                id: 'person-1',
+                name: 'Aaron Ashford',
+                type: 'person',
+                color: '#ffffff',
+                manualColor: false,
+                personStatus: 'active',
+                num: '55511646',
+                accountNumber: '',
+                citizenNumber: '',
+                linkedMapPointId: '',
+                description: '',
+                notes: '',
+                x: -80,
+                y: 0,
+                fixed: true
+            },
+            {
+                id: 'company-1',
+                name: 'Luchetti\'s',
+                type: 'company',
+                color: '#73fbf7',
+                manualColor: true,
+                personStatus: 'active',
+                num: '55511646',
+                accountNumber: '',
+                citizenNumber: '',
+                linkedMapPointId: '',
+                description: '',
+                notes: '',
+                x: 80,
+                y: 0,
+                fixed: true
+            }
+        ],
+        links: []
+    };
+
+    await page.setInputFiles('#fileMerge', {
+        name: 'merge-phone.json',
+        mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify(payload), 'utf8')
+    });
+
+    await page.waitForFunction(async () => {
+        const { state } = await import('/point/js/state.js');
+        return state.nodes.length === 2;
+    });
+
+    const nodeSummary = await page.evaluate(async () => {
+        const { state } = await import('/point/js/state.js');
+        return state.nodes.map((node) => ({ id: node.id, name: node.name, type: node.type }));
+    });
+
+    expect(nodeSummary).toHaveLength(2);
+    expect(nodeSummary.find((node) => node.type === 'person')?.name).toBe('Aaron Ashford');
+    expect(nodeSummary.find((node) => node.type === 'company')?.name).toBe("Luchetti's");
+});
+
+test('point intel suggests merges and previewing them lights up the pair on the canvas', async ({ page }) => {
+    await installNetlifyMocks(page);
+
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    await seedPointGraph(page, [
+        {
+            id: 'p-short',
+            name: 'D. Kralj',
+            type: 'person',
+            color: '#ffffff',
+            manualColor: false,
+            personStatus: 'active',
+            num: '55544123',
+            accountNumber: '',
+            citizenNumber: '',
+            linkedMapPointId: '',
+            description: 'detective terrain',
+            notes: 'liaison lspd',
+            x: -140,
+            y: 0,
+            fixed: true
+        },
+        {
+            id: 'p-full',
+            name: 'Dragic Kralj',
+            type: 'person',
+            color: '#ffffff',
+            manualColor: false,
+            personStatus: 'active',
+            num: '55544123',
+            accountNumber: '',
+            citizenNumber: '',
+            linkedMapPointId: '',
+            description: 'detective terrain',
+            notes: 'liaison lspd',
+            x: 140,
+            y: 0,
+            fixed: true
+        },
+        {
+            id: 'org-lspd',
+            name: 'LSPD',
+            type: 'company',
+            color: '#73fbf7',
+            manualColor: true,
+            personStatus: 'active',
+            num: '',
+            accountNumber: '',
+            citizenNumber: '',
+            linkedMapPointId: '',
+            description: '',
+            notes: '',
+            x: -320,
+            y: -70,
+            fixed: true
+        }
+    ], [], 'p-short');
+
+    await page.click('#btnQuickIntel');
+    await page.click('[data-ai-open="intel-global"]');
+    await expect(page.locator('#intel-panel')).toBeVisible();
+
+    await page.click('#intelRun');
+    const mergeRow = page.locator('.intel-item', { hasText: 'Fusionner' }).first();
+    await expect(mergeRow).toBeVisible();
+    await expect(mergeRow).toContainText('D. Kralj');
+    await expect(mergeRow).toContainText('Dragic Kralj');
+    await expect(mergeRow).toContainText('Cible: Dragic Kralj');
+
+    await mergeRow.getByRole('button', { name: 'Voir' }).click();
+    await expect(mergeRow).toHaveClass(/is-previewing/);
+
+    const after = await sampleCanvasPixelAtPairMidpoint(page, 'p-short', 'p-full');
+
+    expect(after.preview).toBeTruthy();
+    expect(after.preview.actionType).toBe('merge');
+    expect(after.pixel[1]).toBeGreaterThan(160);
+    expect(after.pixel[2]).toBeGreaterThan(180);
+    expect(after.pixel[3]).toBeGreaterThan(120);
 });
 
 test('point session summary hides the extra cloud box until a board is opened', async ({ page }) => {

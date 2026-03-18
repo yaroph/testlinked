@@ -15,6 +15,118 @@ function personStatusPriority(status) {
     return 0;
 }
 
+function normalizeNodeText(value) {
+    return String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s'-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function nameQualityScore(name, type) {
+    const normalized = normalizeNodeText(name);
+    if (!normalized) return -1;
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    let score = normalized.length + (tokens.length * 6);
+    if (type === TYPES.PERSON) {
+        if (tokens.length >= 2) score += 12;
+        if (tokens.some((token) => token.length === 1)) score -= 18;
+    }
+    return score;
+}
+
+function choosePreferredName(currentName, incomingName, type) {
+    const current = String(currentName || '').trim();
+    const incoming = String(incomingName || '').trim();
+    if (!current) return incoming;
+    if (!incoming) return current;
+
+    const currentNormalized = normalizeNodeText(current);
+    const incomingNormalized = normalizeNodeText(incoming);
+    if (!currentNormalized) return incoming;
+    if (!incomingNormalized) return current;
+
+    if (currentNormalized === incomingNormalized) {
+        return incoming.length > current.length ? incoming : current;
+    }
+
+    return nameQualityScore(incoming, type) > (nameQualityScore(current, type) + 4)
+        ? incoming
+        : current;
+}
+
+function mergeTextValue(currentValue, incomingValue) {
+    const current = String(currentValue || '').trim();
+    const incoming = String(incomingValue || '').trim();
+    if (!current) return incoming;
+    if (!incoming) return current;
+
+    const currentNormalized = normalizeNodeText(current);
+    const incomingNormalized = normalizeNodeText(incoming);
+    if (!currentNormalized) return incoming;
+    if (!incomingNormalized) return current;
+
+    if (currentNormalized === incomingNormalized) {
+        return incoming.length > current.length ? incoming : current;
+    }
+    if (currentNormalized.includes(incomingNormalized)) return current;
+    if (incomingNormalized.includes(currentNormalized)) return incoming;
+    return `${current}\n\n${incoming}`;
+}
+
+function isDefaultNodeColor(node) {
+    const type = String(node?.type || '');
+    const color = sanitizeNodeColor(node?.color);
+    if (type === TYPES.PERSON) return color === '#ffffff';
+    return color === '#cfd8e3';
+}
+
+function mergeNodeFields(sourceNode, targetNode) {
+    if (!sourceNode || !targetNode) return;
+
+    targetNode.name = choosePreferredName(targetNode.name, sourceNode.name, targetNode.type || sourceNode.type);
+
+    ['num', 'accountNumber', 'citizenNumber', 'linkedMapPointId'].forEach((field) => {
+        const current = String(targetNode[field] || '').trim();
+        const incoming = String(sourceNode[field] || '').trim();
+        if (!current && incoming) targetNode[field] = sourceNode[field];
+    });
+
+    const mergedDescription = mergeTextValue(targetNode.description, sourceNode.description);
+    if (mergedDescription !== String(targetNode.description || '')) {
+        targetNode.description = mergedDescription;
+    }
+
+    const mergedNotes = mergeTextValue(targetNode.notes, sourceNode.notes);
+    if (mergedNotes !== String(targetNode.notes || '')) {
+        targetNode.notes = mergedNotes;
+    }
+
+    if ((sourceNode.manualColor && !targetNode.manualColor) || isDefaultNodeColor(targetNode)) {
+        const nextColor = sanitizeNodeColor(sourceNode.color);
+        if (nextColor) {
+            targetNode.color = nextColor;
+            if (sourceNode.manualColor) targetNode.manualColor = true;
+        }
+    }
+
+    if (!targetNode.type && sourceNode.type) {
+        targetNode.type = sourceNode.type;
+    }
+
+    if (sourceNode.fixed) targetNode.fixed = true;
+
+    if (sourceNode && targetNode && sourceNode.type === TYPES.PERSON && targetNode.type === TYPES.PERSON) {
+        const sourceStatus = normalizePersonStatus(sourceNode.personStatus, sourceNode.type);
+        const targetStatus = normalizePersonStatus(targetNode.personStatus, targetNode.type);
+        if (personStatusPriority(sourceStatus) > personStatusPriority(targetStatus)) {
+            targetNode.personStatus = sourceStatus;
+        }
+    }
+}
+
 function updateHvtInfluenceFlow() {
     const influence = calculateHvtInfluence(state.nodes, state.links, {
         selectedSeedId: state.hvtSelectedId,
@@ -164,6 +276,10 @@ export function mergeNodes(sourceId, targetId) {
     pushHistory();
     const sourceNode = nodeById(sourceId);
     const targetNode = nodeById(targetId);
+    if (!sourceNode || !targetNode) return;
+
+    mergeNodeFields(sourceNode, targetNode);
+
     const linksToMove = state.links.filter(l => {
         const s = (typeof l.source === 'object') ? l.source.id : l.source;
         const t = (typeof l.target === 'object') ? l.target.id : l.target;
@@ -189,13 +305,6 @@ export function mergeNodes(sourceId, targetId) {
         const t = (typeof l.target === 'object') ? l.target.id : l.target;
         return s !== sourceId && t !== sourceId;
     });
-    if (sourceNode && targetNode && sourceNode.type === TYPES.PERSON && targetNode.type === TYPES.PERSON) {
-        const sourceStatus = normalizePersonStatus(sourceNode.personStatus, sourceNode.type);
-        const targetStatus = normalizePersonStatus(targetNode.personStatus, targetNode.type);
-        if (personStatusPriority(sourceStatus) > personStatusPriority(targetStatus)) {
-            targetNode.personStatus = sourceStatus;
-        }
-    }
     state.nodes = state.nodes.filter(n => n.id !== sourceId);
     updatePersonColors();
     restartSim();

@@ -693,11 +693,14 @@ export function injectStyles() {
         #intel-list { margin-top: 8px; overflow-y: auto; padding-right: 4px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; }
         .intel-item { background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
         .intel-item.highlight { border-color: rgba(115, 251, 247, 0.4); box-shadow: 0 0 12px rgba(115, 251, 247, 0.12); }
+        .intel-item.is-previewing { border-color: rgba(115, 251, 247, 0.68); box-shadow: 0 0 18px rgba(115, 251, 247, 0.24); background: rgba(7, 18, 34, 0.88); }
         .intel-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 0.7rem; color: #999; }
         .intel-score { color: var(--accent-cyan); font-weight: bold; }
         .intel-confidence { color: #9fd4d2; font-weight: 600; }
         .intel-names { font-size: 0.85rem; color: #fff; margin: 4px 0; display: flex; align-items: center; gap: 6px; }
         .intel-badge { font-size: 0.65rem; text-transform: uppercase; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 6px; color: #aaa; }
+        .intel-badge-merge { border-color: rgba(255, 214, 82, 0.4); color: #ffd652; }
+        .intel-merge-target { margin-top: 2px; font-size: 0.72rem; color: #cfdff4; letter-spacing: 0.4px; }
         .intel-reasons { font-size: 0.7rem; color: #888; margin-top: 6px; line-height: 1.2; }
         .intel-cta { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
         .intel-cta button { font-size: 0.65rem; padding: 5px 8px; border-radius: 4px; }
@@ -708,6 +711,10 @@ export function injectStyles() {
 
         @media (max-width: 1100px) {
             #intel-panel { right: 20px; top: 90px; width: 320px; }
+        }
+
+        @media (min-width: 2560px) {
+            #intel-panel { right: 28px; top: 84px; width: 440px; max-height: 84vh; }
         }
 
         /* --- CONTEXT MENU --- */

@@ -233,12 +233,38 @@ function isCompactLayout() {
     return window.matchMedia('(max-width: 900px)').matches;
 }
 
+function isUltraWideEditorLayout() {
+    return window.matchMedia('(min-width: 2560px) and (min-height: 1200px)').matches;
+}
+
+function applyDefaultEditorPosition(editorPanel, rightPanel = document.getElementById('right')) {
+    if (!editorPanel) return;
+    if (isCompactLayout()) return;
+    if (!rightPanel) return;
+
+    if (!isUltraWideEditorLayout()) {
+        editorPanel.style.left = '50%';
+        editorPanel.style.top = '50%';
+        editorPanel.style.transform = 'translate(-50%, -50%)';
+        editorPanel.dataset.freePosition = '0';
+        return;
+    }
+
+    const containerRect = rightPanel.getBoundingClientRect();
+    const maxX = Math.max(24, containerRect.width - editorPanel.offsetWidth - 24);
+    const maxY = Math.max(24, containerRect.height - editorPanel.offsetHeight - 24);
+    const desiredLeft = Math.max(24, containerRect.width - editorPanel.offsetWidth - 36);
+    const desiredTop = clamp((containerRect.height - editorPanel.offsetHeight) / 2, 24, maxY);
+
+    editorPanel.style.left = `${Math.min(desiredLeft, maxX)}px`;
+    editorPanel.style.top = `${desiredTop}px`;
+    editorPanel.style.transform = 'none';
+    editorPanel.dataset.freePosition = '0';
+}
+
 function resetEditorPosition(editorPanel) {
     if (!editorPanel) return;
-    editorPanel.style.left = '50%';
-    editorPanel.style.top = '50%';
-    editorPanel.style.transform = 'translate(-50%, -50%)';
-    editorPanel.dataset.freePosition = '0';
+    applyDefaultEditorPosition(editorPanel);
 }
 
 function clampEditorInViewport(editorPanel = document.getElementById('editor')) {
@@ -261,18 +287,22 @@ function clampEditorInViewport(editorPanel = document.getElementById('editor')) 
         return;
     }
 
+    applyDefaultEditorPosition(editorPanel, rightPanel);
+
     const panelRect = editorPanel.getBoundingClientRect();
+    const overflowLeft = panelRect.left - containerRect.left - 8;
+    const overflowRight = containerRect.right - panelRect.right - 8;
     const overflowTop = panelRect.top - containerRect.top - 8;
     const overflowBottom = containerRect.bottom - panelRect.bottom - 8;
 
-    if (overflowTop >= 0 && overflowBottom >= 0) return;
+    if (overflowLeft >= 0 && overflowRight >= 0 && overflowTop >= 0 && overflowBottom >= 0) return;
 
-    const centeredLeft = Math.max(8, (containerRect.width - editorPanel.offsetWidth) / 2);
-    const centeredTop = clamp((containerRect.height - editorPanel.offsetHeight) / 2, 8, maxY);
-    editorPanel.style.left = `${centeredLeft}px`;
-    editorPanel.style.top = `${centeredTop}px`;
+    const clampedLeft = clamp(panelRect.left - containerRect.left, 8, maxX);
+    const clampedTop = clamp(panelRect.top - containerRect.top, 8, maxY);
+    editorPanel.style.left = `${clampedLeft}px`;
+    editorPanel.style.top = `${clampedTop}px`;
     editorPanel.style.transform = 'none';
-    editorPanel.dataset.freePosition = '1';
+    editorPanel.dataset.freePosition = '0';
 }
 
 function ensureEditorDrag() {

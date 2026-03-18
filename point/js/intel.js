@@ -232,6 +232,73 @@ function aliasScoreForNames(nameA, nameB) {
     return 0;
 }
 
+function normalizeDigits(value) {
+    return String(value || '').replace(/\D+/g, '').trim();
+}
+
+function normalizedNameKey(name) {
+    return normalizeText(stripPunctuation(name || '')).replace(/\s+/g, ' ').trim();
+}
+
+function hasReliablePhone(value) {
+    const digits = normalizeDigits(value);
+    return digits.length >= 7 && !/^(\d)\1+$/.test(digits);
+}
+
+function hasMergeFieldConflict(a, b, field, normalizer = normalizeText) {
+    const left = normalizer(String(a?.[field] || '').trim());
+    const right = normalizer(String(b?.[field] || '').trim());
+    return Boolean(left && right && left !== right);
+}
+
+function isPersonInitialAliasPair(a, b) {
+    if (a?.type !== TYPES.PERSON || b?.type !== TYPES.PERSON) return false;
+    const tokensA = nameTokens(a.name || '', true);
+    const tokensB = nameTokens(b.name || '', true);
+    if (tokensA.length < 2 || tokensB.length < 2) return false;
+    const surnameA = getSurname(a.name || '');
+    const surnameB = getSurname(b.name || '');
+    if (!surnameA || !surnameB || surnameA !== surnameB) return false;
+    const firstA = tokensA[0] || '';
+    const firstB = tokensB[0] || '';
+    if (!firstA || !firstB || firstA[0] !== firstB[0]) return false;
+    return tokensA.some((token) => token.length === 1) || tokensB.some((token) => token.length === 1);
+}
+
+function mergeNameQualityScore(node) {
+    const normalized = normalizedNameKey(node?.name || '');
+    if (!normalized) return -1;
+    const tokens = nameTokens(node?.name || '', true);
+    let score = normalized.length + (tokens.length * 6);
+    if (node?.type === TYPES.PERSON) {
+        if (tokens.length >= 2) score += 10;
+        if (tokens.some((token) => token.length === 1)) score -= 16;
+    }
+    return score;
+}
+
+function nodeDataRichness(node) {
+    if (!node || typeof node !== 'object') return 0;
+    let score = mergeNameQualityScore(node);
+    score += String(node.description || '').trim().length * 0.18;
+    score += String(node.notes || '').trim().length * 0.12;
+    if (String(node.num || '').trim()) score += 14;
+    if (String(node.accountNumber || '').trim()) score += 18;
+    if (String(node.citizenNumber || '').trim()) score += 20;
+    if (String(node.linkedMapPointId || '').trim()) score += 10;
+    if (node.manualColor) score += 4;
+    return score;
+}
+
+function chooseMergeDirection(a, b) {
+    const scoreA = nodeDataRichness(a);
+    const scoreB = nodeDataRichness(b);
+    if (scoreA > scoreB) return { source: b, target: a };
+    if (scoreB > scoreA) return { source: a, target: b };
+    if (mergeNameQualityScore(a) >= mergeNameQualityScore(b)) return { source: b, target: a };
+    return { source: a, target: b };
+}
+
 function hasAliasKeyword(text) {
     const safe = normalizeText(text || '');
     return ALIAS_KEYWORDS.some(k => safe.includes(k));
@@ -552,6 +619,17 @@ export function recordFeedback(aId, bId, delta) {
     if (delta < 0) state.aiFeedback[key].down += Math.abs(delta);
 }
 
+function selectSuggestionsWithNovelty(suggestions, limit, noveltyRatio) {
+    const safeLimit = Math.max(0, Number(limit) || 0);
+    if (safeLimit <= 0) return [];
+    if (suggestions.length <= safeLimit) return suggestions.slice(0, safeLimit);
+
+    const surpriseList = suggestions.filter((suggestion) => suggestion.surprise >= 0.55);
+    const normalList = suggestions.filter((suggestion) => suggestion.surprise < 0.55);
+    const surpriseCount = Math.min(Math.round(safeLimit * noveltyRatio), surpriseList.length);
+    return surpriseList.slice(0, surpriseCount).concat(normalList.slice(0, safeLimit - surpriseCount));
+}
+
 export function computeLinkSuggestions(options = {}) {
     const nodes = state.nodes || [];
     if (nodes.length < 2) return [];
@@ -692,6 +770,17 @@ export function computeLinkSuggestions(options = {}) {
         }
     }
 
+    const mergeCandidates = new Set();
+    for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+            const aId = String(nodes[i].id);
+            const bId = String(nodes[j].id);
+            if (nodes[i].type !== nodes[j].type) continue;
+            if (focusId && aId !== focusId && bId !== focusId) continue;
+            mergeCandidates.add(pairKey(aId, bId));
+        }
+    }
+
     const suggestions = [];
     const useGraph = sources.graph !== false;
     const useText = sources.text !== false;
@@ -700,6 +789,136 @@ export function computeLinkSuggestions(options = {}) {
     const useBridge = sources.bridge !== false;
     const useLex = sources.lex !== false;
     const useGeo = sources.geo !== false;
+
+    const buildMergeSuggestion = (aId, bId) => {
+        const a = nodeMap.get(String(aId));
+        const b = nodeMap.get(String(bId));
+        if (!a || !b) return null;
+        if (String(a.type || '') !== String(b.type || '')) return null;
+        if (hasMergeFieldConflict(a, b, 'citizenNumber')) return null;
+        if (hasMergeFieldConflict(a, b, 'accountNumber')) return null;
+
+        const sameCitizen = Boolean(
+            String(a.citizenNumber || '').trim()
+            && normalizeText(String(a.citizenNumber || '').trim()) === normalizeText(String(b.citizenNumber || '').trim())
+        );
+        const sameAccount = Boolean(
+            String(a.accountNumber || '').trim()
+            && normalizeText(String(a.accountNumber || '').trim()) === normalizeText(String(b.accountNumber || '').trim())
+        );
+        const sameName = Boolean(
+            normalizedNameKey(a.name || '')
+            && normalizedNameKey(a.name || '') === normalizedNameKey(b.name || '')
+        );
+        const aliasInitial = isPersonInitialAliasPair(a, b);
+        const aliasScore = a.type === TYPES.PERSON ? aliasScoreForNames(a.name || '', b.name || '') : 0;
+        const sameReliablePhone = (() => {
+            const left = normalizeDigits(a.num);
+            const right = normalizeDigits(b.num);
+            return Boolean(left && right && left === right && hasReliablePhone(left));
+        })();
+        const notesA = noteTokensById.get(String(a.id)) || new Set();
+        const notesB = noteTokensById.get(String(b.id)) || new Set();
+        const descOverlap = jaccard(notesA, notesB);
+        const tagsA = tagsById.get(String(a.id)) || new Set();
+        const tagsB = tagsById.get(String(b.id)) || new Set();
+        const tagOverlap = jaccard(tagsA, tagsB);
+        const geoInfo = geoScoreForNodes(a, b, mapPoints);
+        const geoScore = geoInfo.score || 0;
+        const strongAlias = aliasInitial || aliasScore >= 0.82;
+        const strongIdentity = sameCitizen || sameAccount || sameName || strongAlias;
+
+        if (!strongIdentity && !(sameReliablePhone && descOverlap >= 0.22)) return null;
+        if (a.type === TYPES.PERSON && !strongIdentity && !sameReliablePhone) return null;
+        if (a.type === TYPES.PERSON && !sameCitizen && !sameAccount && !sameName && !aliasInitial && aliasScore < 0.82) return null;
+
+        let score = 0;
+        const reasons = [];
+
+        if (sameCitizen) {
+            score += 0.76;
+            reasons.push('Numero social identique');
+        }
+        if (sameAccount) {
+            score += 0.68;
+            reasons.push('Numero de compte identique');
+        }
+        if (sameName) {
+            score += 0.54;
+            reasons.push('Nom strictement identique');
+        }
+        if (aliasInitial) {
+            score += 0.48;
+            reasons.push('Nom abrege compatible');
+        } else if (aliasScore >= 0.9) {
+            score += 0.38;
+            reasons.push('Alias tres probable');
+        } else if (aliasScore >= 0.82) {
+            score += 0.28;
+            reasons.push('Alias probable');
+        }
+        if (sameReliablePhone) {
+            score += strongIdentity ? 0.18 : 0.1;
+            reasons.push('Telephone identique');
+        }
+        if (descOverlap >= 0.22) {
+            score += Math.min(0.16, descOverlap * 0.38);
+            reasons.push('Notes proches');
+        }
+        if (tagOverlap >= 0.25) {
+            score += Math.min(0.1, tagOverlap * 0.22);
+            reasons.push('Tags communs');
+        }
+        if (geoScore > 0.58) {
+            score += 0.08;
+            reasons.push('Position proche');
+        }
+
+        score = clamp(score, 0, 0.99);
+        if (score < 0.56) return null;
+
+        const evidence = (sameCitizen ? 0.22 : 0)
+            + (sameAccount ? 0.18 : 0)
+            + (sameName ? 0.16 : 0)
+            + (strongAlias ? 0.18 : 0)
+            + (sameReliablePhone ? 0.08 : 0)
+            + (descOverlap >= 0.22 ? 0.06 : 0)
+            + (tagOverlap >= 0.25 ? 0.04 : 0)
+            + (geoScore > 0.58 ? 0.04 : 0);
+        const confidence = clamp((score * 0.76) + evidence, 0, 0.99);
+        const surprise = clamp((strongAlias ? 0.34 : 0.12) + (sameName ? 0.06 : 0.18), 0, 1);
+        const direction = chooseMergeDirection(a, b);
+        const aStatus = getNodePersonStatus(a);
+        const bStatus = getNodePersonStatus(b);
+
+        return {
+            id: pairKey(aId, bId),
+            actionType: 'merge',
+            aId: String(aId),
+            bId: String(bId),
+            a,
+            b,
+            score,
+            confidence,
+            surprise,
+            reasons,
+            graphScore: 0,
+            textScore: Math.max(descOverlap, aliasScore),
+            tagScore: tagOverlap,
+            profileScore: 0,
+            lexScore: 0,
+            geoScore,
+            aStatus,
+            bStatus,
+            alias: strongAlias,
+            bridge: 0,
+            kind: null,
+            mergeSourceId: String(direction.source.id),
+            mergeTargetId: String(direction.target.id),
+            mergeSource: direction.source,
+            mergeTarget: direction.target
+        };
+    };
 
     candidates.forEach(key => {
         const parts = key.split('|');
@@ -955,6 +1174,7 @@ export function computeLinkSuggestions(options = {}) {
 
         suggestions.push({
             id: key,
+            actionType: 'link',
             aId,
             bId,
             a,
@@ -977,12 +1197,34 @@ export function computeLinkSuggestions(options = {}) {
         });
     });
 
-    suggestions.sort((x, y) => (y.score - x.score) || (y.confidence - x.confidence));
-    if (suggestions.length <= limit) return suggestions.slice(0, limit);
+    const mergeSuggestions = [];
+    mergeCandidates.forEach((key) => {
+        const [aId, bId] = key.split('|');
+        const suggestion = buildMergeSuggestion(aId, bId);
+        if (suggestion) mergeSuggestions.push(suggestion);
+    });
 
-    const surpriseList = suggestions.filter(s => s.surprise >= 0.55);
-    const normalList = suggestions.filter(s => s.surprise < 0.55);
-    const surpriseCount = Math.min(Math.round(limit * noveltyRatio), surpriseList.length);
-    const result = surpriseList.slice(0, surpriseCount).concat(normalList.slice(0, limit - surpriseCount));
-    return result;
+    mergeSuggestions.sort((x, y) => (y.score - x.score) || (y.confidence - x.confidence));
+    const mergePairs = new Set(mergeSuggestions.map((suggestion) => suggestion.id));
+
+    const linkSuggestions = suggestions
+        .filter((suggestion) => !mergePairs.has(suggestion.id))
+        .sort((x, y) => (y.score - x.score) || (y.confidence - x.confidence));
+
+    if (!mergeSuggestions.length) {
+        return selectSuggestionsWithNovelty(linkSuggestions, limit, noveltyRatio);
+    }
+
+    const mergeSlots = Math.min(
+        mergeSuggestions.length,
+        Math.max(1, Math.min(4, Math.round(limit * 0.35)))
+    );
+    const linkSlots = Math.max(0, limit - mergeSlots);
+    const result = mergeSuggestions
+        .slice(0, mergeSlots)
+        .concat(selectSuggestionsWithNovelty(linkSuggestions, linkSlots, noveltyRatio));
+
+    return result
+        .sort((x, y) => (y.score - x.score) || (y.confidence - x.confidence))
+        .slice(0, limit);
 }

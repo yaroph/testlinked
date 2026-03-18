@@ -1,5 +1,5 @@
 import { state, saveState, scheduleSave, ensureLinkIds, nodeById, isPerson, isCompany, isGroup, undo, pushHistory, setLocalPersistenceEnabled, isLocalPersistenceEnabled } from './state.js';
-import { ensureNode, addLink as logicAddLink, calculatePath, clearPath, calculateHVT, updatePersonColors } from './logic.js';
+import { ensureNode, addLink as logicAddLink, calculatePath, clearPath, calculateHVT, mergeNodes, updatePersonColors } from './logic.js';
 import { renderPathfindingSidebar } from './templates.js';
 import { restartSim } from './physics.js';
 import { draw, updateDegreeCache, resizeCanvas } from './render.js';
@@ -3550,6 +3550,9 @@ function resetAllPointData() {
         state.nodes = [];
         state.links = [];
         state.selection = null;
+        intelSuggestions = [];
+        state.aiPredictedLinks = [];
+        state.aiPreviewPair = null;
         clearFocusMode();
         state.nextId = 1;
         state.projectName = null;
@@ -3570,6 +3573,9 @@ function clearPointWorkspaceData(options = {}) {
     state.nodes = [];
     state.links = [];
     state.selection = null;
+    intelSuggestions = [];
+    state.aiPredictedLinks = [];
+    state.aiPreviewPair = null;
     state.projectName = projectName;
     state.nextId = 1;
     state.pathfinding.startId = null;
@@ -4902,7 +4908,154 @@ function linkSignature(sourceId, targetId, kind) {
 }
 
 function normalizeMergeText(value) {
-    return String(value ?? '').trim().toLowerCase();
+    return String(value ?? '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s'-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeMergeDigits(value) {
+    return String(value ?? '').replace(/\D+/g, '').trim();
+}
+
+function buildTypedMergeKey(type, value, normalizer = normalizeMergeText) {
+    const normalizedValue = normalizer(value);
+    if (!normalizedValue) return '';
+    return `${normalizeMergeText(type)}|${normalizedValue}`;
+}
+
+function mergeNameTokens(value, keepInitials = true) {
+    return normalizeMergeText(value)
+        .split(/\s+/)
+        .filter(Boolean)
+        .filter((token) => keepInitials || token.length > 1);
+}
+
+function mergeSurname(value) {
+    const tokens = mergeNameTokens(value, false);
+    if (!tokens.length) return '';
+    return tokens[tokens.length - 1] || '';
+}
+
+function isReliableMergePhone(value) {
+    const digits = normalizeMergeDigits(value);
+    return digits.length >= 7 && !/^(\d)\1+$/.test(digits);
+}
+
+function isMergeIdentifierConflict(existingNode, incomingNode, field, normalizer = normalizeMergeText) {
+    const left = normalizer(existingNode?.[field]);
+    const right = normalizer(incomingNode?.[field]);
+    return Boolean(left && right && left !== right);
+}
+
+function hasCompatibleMergeIdentity(existingNode, incomingNode) {
+    if (!existingNode || !incomingNode) return false;
+    if (String(existingNode.type || '') !== String(incomingNode.type || '')) return false;
+    if (isMergeIdentifierConflict(existingNode, incomingNode, 'citizenNumber')) return false;
+    if (isMergeIdentifierConflict(existingNode, incomingNode, 'accountNumber')) return false;
+    return true;
+}
+
+function isPersonInitialAlias(existingNode, incomingNode) {
+    if (String(existingNode?.type || '') !== TYPES.PERSON || String(incomingNode?.type || '') !== TYPES.PERSON) {
+        return false;
+    }
+
+    const leftTokens = mergeNameTokens(existingNode.name, true);
+    const rightTokens = mergeNameTokens(incomingNode.name, true);
+    if (leftTokens.length < 2 || rightTokens.length < 2) return false;
+
+    const leftSurname = mergeSurname(existingNode.name);
+    const rightSurname = mergeSurname(incomingNode.name);
+    if (!leftSurname || !rightSurname || leftSurname !== rightSurname) return false;
+
+    const leftFirst = leftTokens[0] || '';
+    const rightFirst = rightTokens[0] || '';
+    if (!leftFirst || !rightFirst || leftFirst[0] !== rightFirst[0]) return false;
+
+    const leftAbbrev = leftTokens.some((token) => token.length === 1);
+    const rightAbbrev = rightTokens.some((token) => token.length === 1);
+    if (!leftAbbrev && !rightAbbrev) return false;
+
+    return true;
+}
+
+function mergeNameQualityScore(name, type) {
+    const normalized = normalizeMergeText(name);
+    if (!normalized) return -1;
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    let score = normalized.length + (tokens.length * 6);
+    if (type === TYPES.PERSON) {
+        if (tokens.length >= 2) score += 10;
+        if (tokens.some((token) => token.length === 1)) score -= 16;
+    }
+    return score;
+}
+
+function choosePreferredMergeName(currentName, nextName, type) {
+    const current = String(currentName || '').trim();
+    const next = String(nextName || '').trim();
+    if (!current) return next;
+    if (!next) return current;
+
+    const normalizedCurrent = normalizeMergeText(current);
+    const normalizedNext = normalizeMergeText(next);
+    if (!normalizedCurrent) return next;
+    if (!normalizedNext) return current;
+    if (normalizedCurrent === normalizedNext) return next.length > current.length ? next : current;
+
+    return mergeNameQualityScore(next, type) > (mergeNameQualityScore(current, type) + 4)
+        ? next
+        : current;
+}
+
+function mergeTextFieldValue(currentValue, nextValue) {
+    const current = String(currentValue || '').trim();
+    const next = String(nextValue || '').trim();
+    if (!current) return next;
+    if (!next) return current;
+
+    const normalizedCurrent = normalizeMergeText(current);
+    const normalizedNext = normalizeMergeText(next);
+    if (!normalizedCurrent) return next;
+    if (!normalizedNext) return current;
+    if (normalizedCurrent === normalizedNext) return next.length > current.length ? next : current;
+    if (normalizedCurrent.includes(normalizedNext)) return current;
+    if (normalizedNext.includes(normalizedCurrent)) return next;
+    return `${current}\n\n${next}`;
+}
+
+function isDefaultImportedNodeColor(node) {
+    const color = sanitizeNodeColor(node?.color);
+    if (String(node?.type || '') === TYPES.PERSON) return color === '#ffffff';
+    return color === '#cfd8e3';
+}
+
+function getUniqueCompatibleIndexedNode(map, key, node, predicate = () => true) {
+    if (!key) return null;
+    const bucket = map.get(key);
+    if (!bucket || !bucket.size) return null;
+    const matches = Array.from(bucket).filter((candidate) => candidate && predicate(candidate, node));
+    return matches.length === 1 ? matches[0] : null;
+}
+
+function isSafeNumMergeCandidate(existingNode, incomingNode) {
+    if (!hasCompatibleMergeIdentity(existingNode, incomingNode)) return false;
+    const left = normalizeMergeDigits(existingNode?.num);
+    const right = normalizeMergeDigits(incomingNode?.num);
+    if (!left || !right || left !== right || !isReliableMergePhone(left)) return false;
+
+    const sameName = normalizeMergeText(existingNode?.name) && normalizeMergeText(existingNode?.name) === normalizeMergeText(incomingNode?.name);
+    if (sameName) return true;
+
+    if (String(existingNode?.type || '') === TYPES.PERSON) {
+        return isPersonInitialAlias(existingNode, incomingNode);
+    }
+
+    return false;
 }
 
 function pushIndexedNode(map, key, node) {
@@ -4968,14 +5121,15 @@ function normalizeImportedLink(rawLink) {
 function indexNodeForMerge(indexes, node) {
     if (!node || typeof node !== 'object') return;
     pushIndexedNode(indexes.byId, normalizeMergeText(node.id), node);
-    pushIndexedNode(indexes.byCitizenNumber, normalizeMergeText(node.citizenNumber), node);
-    pushIndexedNode(indexes.byAccountNumber, normalizeMergeText(node.accountNumber), node);
-    pushIndexedNode(indexes.byNum, normalizeMergeText(node.num), node);
+    pushIndexedNode(indexes.byCitizenNumber, buildTypedMergeKey(node.type, node.citizenNumber), node);
+    pushIndexedNode(indexes.byAccountNumber, buildTypedMergeKey(node.type, node.accountNumber), node);
+    pushIndexedNode(indexes.byNum, buildTypedMergeKey(node.type, node.num, normalizeMergeDigits), node);
     pushIndexedNode(indexes.byNameType, `${normalizeMergeText(node.type)}|${normalizeMergeText(node.name)}`, node);
 }
 
 function buildNodeMergeIndexes(nodes) {
     const indexes = {
+        nodes,
         byId: new Map(),
         byCitizenNumber: new Map(),
         byAccountNumber: new Map(),
@@ -4988,20 +5142,46 @@ function buildNodeMergeIndexes(nodes) {
 }
 
 function findMergeTarget(indexes, node) {
-    const exactId = getUniqueIndexedNode(indexes.byId, normalizeMergeText(node.id));
-    if (exactId) return exactId;
-
-    const citizenMatch = getUniqueIndexedNode(indexes.byCitizenNumber, normalizeMergeText(node.citizenNumber));
+    const citizenMatch = getUniqueCompatibleIndexedNode(
+        indexes.byCitizenNumber,
+        buildTypedMergeKey(node.type, node.citizenNumber),
+        node,
+        (candidate, incomingNode) => hasCompatibleMergeIdentity(candidate, incomingNode)
+    );
     if (citizenMatch) return citizenMatch;
 
-    const accountMatch = getUniqueIndexedNode(indexes.byAccountNumber, normalizeMergeText(node.accountNumber));
+    const accountMatch = getUniqueCompatibleIndexedNode(
+        indexes.byAccountNumber,
+        buildTypedMergeKey(node.type, node.accountNumber),
+        node,
+        (candidate, incomingNode) => hasCompatibleMergeIdentity(candidate, incomingNode)
+    );
     if (accountMatch) return accountMatch;
 
-    const numMatch = getUniqueIndexedNode(indexes.byNum, normalizeMergeText(node.num));
+    const exactNameMatch = getUniqueCompatibleIndexedNode(
+        indexes.byNameType,
+        `${normalizeMergeText(node.type)}|${normalizeMergeText(node.name)}`,
+        node,
+        (candidate, incomingNode) => hasCompatibleMergeIdentity(candidate, incomingNode)
+    );
+    if (exactNameMatch) return exactNameMatch;
+
+    const numMatch = getUniqueCompatibleIndexedNode(
+        indexes.byNum,
+        buildTypedMergeKey(node.type, node.num, normalizeMergeDigits),
+        node,
+        (candidate, incomingNode) => isSafeNumMergeCandidate(candidate, incomingNode)
+    );
     if (numMatch) return numMatch;
 
-    if (String(node.type || '') !== TYPES.PERSON) {
-        return getUniqueIndexedNode(indexes.byNameType, `${normalizeMergeText(node.type)}|${normalizeMergeText(node.name)}`);
+    if (String(node.type || '') === TYPES.PERSON && Array.isArray(indexes.nodes)) {
+        const aliasMatches = indexes.nodes.filter((candidate) =>
+            candidate
+            && String(candidate.id || '') !== String(node.id || '')
+            && hasCompatibleMergeIdentity(candidate, node)
+            && isPersonInitialAlias(candidate, node)
+        );
+        if (aliasMatches.length === 1) return aliasMatches[0];
     }
 
     return null;
@@ -5024,16 +5204,28 @@ function mergeImportedNodeIntoExisting(existingNode, incomingNode) {
     fillBlank('citizenNumber');
     fillBlank('num');
     fillBlank('linkedMapPointId');
-    fillBlank('description');
-    fillBlank('notes');
 
-    if ((!existingNode.color || existingNode.color === '#ffffff' || existingNode.color === '#cfd8e3') && incomingNode.color && existingNode.color !== incomingNode.color) {
-        existingNode.color = incomingNode.color;
+    const mergedDescription = mergeTextFieldValue(existingNode.description, incomingNode.description);
+    if (mergedDescription !== String(existingNode.description || '')) {
+        existingNode.description = mergedDescription;
         changed = true;
     }
 
-    if (!String(existingNode.name || '').trim() && String(incomingNode.name || '').trim()) {
-        existingNode.name = incomingNode.name;
+    const mergedNotes = mergeTextFieldValue(existingNode.notes, incomingNode.notes);
+    if (mergedNotes !== String(existingNode.notes || '')) {
+        existingNode.notes = mergedNotes;
+        changed = true;
+    }
+
+    if ((incomingNode.manualColor && !existingNode.manualColor) || (isDefaultImportedNodeColor(existingNode) && incomingNode.color && existingNode.color !== incomingNode.color)) {
+        existingNode.color = incomingNode.color;
+        if (incomingNode.manualColor) existingNode.manualColor = true;
+        changed = true;
+    }
+
+    const preferredName = choosePreferredMergeName(existingNode.name, incomingNode.name, existingNode.type || incomingNode.type);
+    if (preferredName && preferredName !== existingNode.name) {
+        existingNode.name = preferredName;
         changed = true;
     }
 
@@ -5128,6 +5320,9 @@ function processData(d, mode, options = {}) {
         if (d.physicsSettings) state.physicsSettings = d.physicsSettings;
         if (d.meta && d.meta.projectName) state.projectName = d.meta.projectName;
         else state.projectName = null;
+        intelSuggestions = [];
+        state.aiPredictedLinks = [];
+        state.aiPreviewPair = null;
 
         const numericIds = state.nodes.map(n => Number(n.id)).filter(Number.isFinite);
         if (numericIds.length) state.nextId = Math.max(...numericIds) + 1;
@@ -5224,6 +5419,9 @@ function processData(d, mode, options = {}) {
         });
 
         ensureLinkIds();
+        intelSuggestions = [];
+        state.aiPredictedLinks = [];
+        state.aiPreviewPair = null;
         updatePersonColors();
         restartSim();
         refreshLists();
@@ -5948,6 +6146,7 @@ function setupIntelControls() {
     if (btnClear) btnClear.onclick = () => {
         intelSuggestions = [];
         state.aiPredictedLinks = [];
+        clearIntelPairPreview({ redraw: false, syncRows: false });
         draw();
         const listEl = document.getElementById('intel-list');
         const countEl = document.getElementById('intelCount');
@@ -5964,21 +6163,73 @@ function showIntelPanel() {
     updateIntelPanel(true);
 }
 
-function hideIntelPanel() {
-    if (intelPanel) intelPanel.style.display = 'none';
+function isActiveIntelPreviewPair(aId, bId) {
+    if (!state.aiPreviewPair) return false;
+    const left = String(aId || '');
+    const right = String(bId || '');
+    const previewA = String(state.aiPreviewPair.aId || '');
+    const previewB = String(state.aiPreviewPair.bId || '');
+    return (left === previewA && right === previewB) || (left === previewB && right === previewA);
 }
 
-function centerOnPair(aId, bId) {
+function syncIntelPreviewRows() {
+    const listEl = document.getElementById('intel-list');
+    if (!listEl) return;
+    listEl.querySelectorAll('.intel-item').forEach((row) => {
+        row.classList.toggle('is-previewing', isActiveIntelPreviewPair(row.dataset.a, row.dataset.b));
+    });
+}
+
+export function clearIntelPairPreview(options = {}) {
+    if (!state.aiPreviewPair) return;
+    state.aiPreviewPair = null;
+    if (options.syncRows !== false) syncIntelPreviewRows();
+    if (options.redraw !== false) draw();
+}
+
+function setIntelPairPreview(aId, bId, meta = {}) {
+    state.aiPreviewPair = {
+        aId: String(aId || ''),
+        bId: String(bId || ''),
+        actionType: String(meta.actionType || 'link'),
+        kind: String(meta.kind || '')
+    };
+    syncIntelPreviewRows();
+}
+
+function hideIntelPanel() {
+    clearIntelPairPreview({ redraw: false });
+    if (intelPanel) intelPanel.style.display = 'none';
+    draw();
+}
+
+function centerOnPair(aId, bId, meta = {}) {
     const a = nodeById(aId);
     const b = nodeById(bId);
     if (!a || !b) return;
+
+    const canvas = document.getElementById('graph');
+    const viewportWidth = Number(canvas?.clientWidth || canvas?.width || window.innerWidth || 0);
+    const viewportHeight = Number(canvas?.clientHeight || canvas?.height || window.innerHeight || 0);
     const cx = (a.x + b.x) / 2;
     const cy = (a.y + b.y) / 2;
-    state.view.scale = 1.2;
-    state.view.x = -cx * state.view.scale;
+
+    if (viewportWidth && viewportHeight) {
+        const spanX = Math.max(240, Math.abs(Number(a.x || 0) - Number(b.x || 0)) + 240);
+        const spanY = Math.max(220, Math.abs(Number(a.y || 0) - Number(b.y || 0)) + 220);
+        const usableWidth = Math.max(220, viewportWidth * 0.62);
+        const usableHeight = Math.max(220, viewportHeight * 0.66);
+        state.view.scale = clamp(Math.min(usableWidth / spanX, usableHeight / spanY), 0.4, 1.65);
+    } else {
+        state.view.scale = 1.2;
+    }
+
+    const sideBiasPx = intelPanel && intelPanel.style.display !== 'none'
+        ? Math.min(180, Math.round((intelPanel.offsetWidth || 0) * 0.28))
+        : 0;
+    state.view.x = -cx * state.view.scale - sideBiasPx;
     state.view.y = -cy * state.view.scale;
-    state.selection = a.id;
-    renderEditor();
+    setIntelPairPreview(aId, bId, meta);
     draw();
 }
 
@@ -6122,8 +6373,11 @@ function updateIntelPanel(force = false) {
     const scope = state.aiSettings.scope || 'selection';
     const focusId = (scope === 'selection' && state.selection) ? state.selection : null;
     if (scope === 'selection' && !focusId) {
+        clearIntelPairPreview({ redraw: false, syncRows: false });
         listEl.innerHTML = '<div class="intel-empty-state">Selectionne une fiche ou passe en mode reseau.</div>';
         if (countEl) countEl.textContent = '0';
+        state.aiPredictedLinks = [];
+        draw();
         return;
     }
 
@@ -6144,24 +6398,32 @@ function updateIntelPanel(force = false) {
         listEl.innerHTML = '<div class="intel-empty-state">Aucune suggestion utile pour ce filtre.</div>';
         if (countEl) countEl.textContent = '0';
         state.aiPredictedLinks = [];
+        clearIntelPairPreview({ redraw: false, syncRows: false });
         draw();
         return;
     }
 
     if (countEl) countEl.textContent = `${intelSuggestions.length}`;
-    state.aiPredictedLinks = intelSuggestions.map(s => ({
+    state.aiPredictedLinks = intelSuggestions
+        .filter((suggestion) => suggestion.actionType !== 'merge')
+        .map(s => ({
         aId: s.aId,
         bId: s.bId,
         score: s.score,
         kind: s.kind,
         confidence: s.confidence
     }));
-    if (state.aiSettings.showPredicted) draw();
+    if (state.aiPreviewPair && !intelSuggestions.some((suggestion) => isActiveIntelPreviewPair(suggestion.aId, suggestion.bId))) {
+        clearIntelPairPreview({ redraw: false, syncRows: false });
+    }
+    draw();
 
     const showReasons = state.aiSettings.showReasons !== false;
     listEl.innerHTML = intelSuggestions.map(s => {
+        const isMerge = s.actionType === 'merge';
         const scorePct = Math.round(s.score * 100);
         const confPct = Math.round(s.confidence * 100);
+        const mergeBadge = isMerge ? `<span class="intel-badge intel-badge-merge">Fusion</span>` : '';
         const isBridge = s.bridge ? `<span class="intel-badge">Pont</span>` : '';
         const isSurprise = s.surprise >= 0.6 ? `<span class="intel-badge">Surprise</span>` : '';
         const isAlias = s.alias ? `<span class="intel-badge">Alias?</span>` : '';
@@ -6173,25 +6435,39 @@ function updateIntelPanel(force = false) {
             hasDeceased ? `<span class="intel-badge">Mort</span>` : ''
         ].join('');
         const reasons = (showReasons && s.reasons && s.reasons.length) ? `<div class="intel-reasons">${s.reasons.slice(0, 3).map(r => escapeHtml(r)).join(' · ')}</div>` : '';
-        const allowedKinds = getAllowedKinds(s.a.type, s.b.type);
-        const options = Array.from(allowedKinds).map(k => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${linkKindEmoji(k)} ${kindToLabel(k)}</option>`).join('');
+        const mergeTargetLabel = isMerge && s.mergeTarget
+            ? `<div class="intel-merge-target">Cible: ${escapeHtml(s.mergeTarget.name || 'Sans nom')}</div>`
+            : '';
+        const cta = isMerge
+            ? `
+                <button class="mini-btn primary intel-merge-btn" data-action="merge">Fusionner</button>
+                <button class="mini-btn" data-action="focus">Voir</button>
+            `
+            : (() => {
+                const allowedKinds = getAllowedKinds(s.a.type, s.b.type);
+                const options = Array.from(allowedKinds).map(k => `<option value="${k}" ${k === s.kind ? 'selected' : ''}>${linkKindEmoji(k)} ${kindToLabel(k)}</option>`).join('');
+                return `
+                    <select class="intel-select intel-kind" data-action="kind">${options}</select>
+                    <button class="mini-btn primary intel-connect-btn" data-action="apply">Connecter</button>
+                    <button class="mini-btn" data-action="focus">Voir</button>
+                `;
+            })();
         return `
-            <div class="intel-item ${s.surprise >= 0.6 ? 'highlight' : ''}" data-a="${s.aId}" data-b="${s.bId}">
+            <div class="intel-item ${s.surprise >= 0.6 ? 'highlight' : ''} ${isActiveIntelPreviewPair(s.aId, s.bId) ? 'is-previewing' : ''}" data-a="${s.aId}" data-b="${s.bId}" data-action-type="${isMerge ? 'merge' : 'link'}" data-kind="${escapeHtml(s.kind || '')}" data-source="${escapeHtml(s.mergeSourceId || '')}" data-target="${escapeHtml(s.mergeTargetId || '')}">
                 <div class="intel-card-top">
                     <div class="intel-meta">
                         <span class="intel-score">Score ${scorePct}%</span>
                         <span class="intel-confidence">Confiance ${confPct}%</span>
                     </div>
-                    <div class="intel-badges">${isBridge}${isSurprise}${isAlias}${isGeo}${statusBadges}</div>
+                    <div class="intel-badges">${mergeBadge}${isBridge}${isSurprise}${isAlias}${isGeo}${statusBadges}</div>
                 </div>
                 <div class="intel-names">
                     <span class="intel-name-pair">${escapeHtml(s.a.name)} ⇄ ${escapeHtml(s.b.name)}</span>
                 </div>
+                ${mergeTargetLabel}
                 ${reasons}
                 <div class="intel-cta">
-                    <select class="intel-select intel-kind" data-action="kind">${options}</select>
-                    <button class="mini-btn primary intel-connect-btn" data-action="apply">Connecter</button>
-                    <button class="mini-btn" data-action="focus">Voir</button>
+                    ${cta}
                 </div>
             </div>
         `;
@@ -6200,6 +6476,11 @@ function updateIntelPanel(force = false) {
     listEl.querySelectorAll('.intel-item').forEach(row => {
         const aId = row.dataset.a;
         const bId = row.dataset.b;
+        const actionType = row.dataset.actionType || 'link';
+        const buildPairMeta = () => ({
+            actionType,
+            kind: row.querySelector('.intel-kind')?.value || row.dataset.kind || ''
+        });
         row.querySelectorAll('[data-action]').forEach(btn => {
             const action = btn.dataset.action;
             if (action === 'apply') {
@@ -6210,11 +6491,38 @@ function updateIntelPanel(force = false) {
                     if (res) updateIntelPanel(true);
                 };
             }
+            if (action === 'merge') {
+                btn.onclick = () => {
+                    const sourceId = row.dataset.source;
+                    const targetId = row.dataset.target;
+                    const sourceNode = nodeById(sourceId);
+                    const targetNode = nodeById(targetId);
+                    if (!sourceNode || !targetNode) return;
+                    showCustomConfirm(`Fusionner "${sourceNode.name}" DANS "${targetNode.name}" ?`, () => {
+                        intelSuggestions = [];
+                        clearIntelPairPreview({ redraw: false, syncRows: false });
+                        mergeNodes(sourceId, targetId);
+                        selectNode(targetId);
+                        scheduleSave();
+                        refreshHvt();
+                    });
+                };
+            }
+            if (action === 'kind') {
+                btn.onchange = () => {
+                    row.dataset.kind = btn.value;
+                    if (isActiveIntelPreviewPair(aId, bId) && state.aiPreviewPair) {
+                        state.aiPreviewPair.kind = btn.value;
+                        state.aiPreviewPair.actionType = actionType;
+                        draw();
+                    }
+                };
+            }
             if (action === 'focus') {
-                btn.onclick = () => centerOnPair(aId, bId);
+                btn.onclick = () => centerOnPair(aId, bId, buildPairMeta());
             }
         });
-        row.onclick = () => centerOnPair(aId, bId);
+        row.onclick = () => centerOnPair(aId, bId, buildPairMeta());
         row.querySelectorAll('button, select').forEach((control) => {
             control.addEventListener('click', (event) => event.stopPropagation());
         });
@@ -6289,6 +6597,7 @@ export function addLink(a, b, kind, options = {}) {
 }
 
 export function selectNode(id) {
+    clearIntelPairPreview({ redraw: false });
     state.selection = id;
     if (state.focusMode) {
         setFocusMode(id, state.focusDepth);
@@ -6311,6 +6620,7 @@ export function selectNode(id) {
 function zoomToNode(id) {
     const n = nodeById(id);
     if (!n) return;
+    clearIntelPairPreview({ redraw: false });
     state.selection = n.id;
     if (state.focusMode) {
         setFocusMode(n.id, state.focusDepth);

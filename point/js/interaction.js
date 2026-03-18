@@ -2,7 +2,7 @@ import { state, saveState } from './state.js';
 import { getSimulation } from './physics.js';
 import { draw } from './render.js';
 import { screenToWorld, clamp } from './utils.js';
-import { selectNode, renderEditor, updatePathfindingPanel, addLink } from './ui.js';
+import { selectNode, renderEditor, updatePathfindingPanel, addLink, clearIntelPairPreview } from './ui.js';
 
 function getD3() {
     if (typeof globalThis !== 'undefined' && globalThis.d3) return globalThis.d3;
@@ -225,10 +225,13 @@ export function setupCanvasEvents(canvas) {
         if (hit) {
             selectNode(hit.id);
         } else if (state.selection) {
+            clearIntelPairPreview({ redraw: false });
             state.selection = null;
             renderEditor();
             updatePathfindingPanel();
             draw();
+        } else if (state.aiPreviewPair) {
+            clearIntelPairPreview();
         }
     });
     
@@ -246,6 +249,7 @@ export function setupCanvasEvents(canvas) {
         state.tempLink = null;
         state.hoverId = null;
         clearSuppressedClick();
+        clearIntelPairPreview({ redraw: false, syncRows: false });
         canvas.style.cursor = 'default';
         draw();
     });

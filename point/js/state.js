@@ -45,7 +45,8 @@ export const state = {
         intelUnlocked: true
     },
     aiFeedback: {},
-    aiPredictedLinks: []
+    aiPredictedLinks: [],
+    aiPreviewPair: null
 };
 
 const STORAGE_KEY = 'pointPageState_v13'; 
@@ -173,6 +174,7 @@ export function loadState() {
         state.aiSettings.showPredicted = false;
         if (data.aiFeedback) state.aiFeedback = data.aiFeedback;
         if (data.aiPredictedLinks) state.aiPredictedLinks = data.aiPredictedLinks;
+        state.aiPreviewPair = null;
         if (data.meta && data.meta.projectName) state.projectName = data.meta.projectName; // CHARGEMENT DU NOM
         ensureLinkIds();
         state.pathfinding = { startId: null, active: false, pathNodes: new Set(), pathLinks: new Set() };
