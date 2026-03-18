@@ -26,7 +26,7 @@ export function renderPathfindingSidebar(state, selectedNode) {
     if (!state.pathfinding.startId) {
         if (selectedNode) {
             return `
-                <div class="pf-card">
+                <div class="pf-card pf-card-start">
                     <div class="pf-node-box pf-node-box-active">
                         <span class="pf-node-label">Candidat source</span>
                         <span class="pf-node-value">${escapeHtml(selectedNode.name)}</span>
@@ -61,7 +61,7 @@ export function renderPathfindingSidebar(state, selectedNode) {
     }
 
     return `
-        <div class="pf-card">
+        <div class="pf-card pf-card-linking">
             <div class="pf-node-grid">
                 <div class="pf-node-box pf-node-box-active">
                     <span class="pf-node-label">Source</span>
@@ -74,8 +74,8 @@ export function renderPathfindingSidebar(state, selectedNode) {
             </div>
             <div class="pf-status-wrap">
                 ${statusDisplay}
+                <button id="btnPathCancel" class="pf-cancel-btn" type="button" title="Annuler la sequence" aria-label="Annuler la sequence">Annuler</button>
             </div>
-            <button id="btnPathCancel" class="pf-cancel-btn" type="button">Annuler la sequence</button>
         </div>
     `;
 }

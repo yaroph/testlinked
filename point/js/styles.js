@@ -2716,8 +2716,8 @@ export function injectStyles() {
         .pf-card {
             display: flex;
             flex-direction: column;
-            gap: 10px;
-            padding: 12px;
+            gap: 8px;
+            padding: 10px;
             border: 1px dashed rgba(102, 243, 255, 0.28);
             border-radius: 8px;
             background: linear-gradient(180deg, rgba(4, 11, 26, 0.88), rgba(3, 8, 20, 0.76));
@@ -2753,14 +2753,14 @@ export function injectStyles() {
         .pf-node-grid {
             display: grid;
             grid-template-columns: 1fr;
-            gap: 8px;
+            gap: 6px;
         }
         .pf-node-box {
             display: flex;
             flex-direction: column;
-            gap: 3px;
-            min-height: 44px;
-            padding: 8px 10px;
+            gap: 2px;
+            min-height: 40px;
+            padding: 7px 9px;
             border: 1px solid rgba(102, 243, 255, 0.12);
             border-radius: 8px;
             background: rgba(2, 8, 20, 0.72);
@@ -2774,14 +2774,14 @@ export function injectStyles() {
             background: rgba(255, 107, 129, 0.06);
         }
         .pf-node-label {
-            font-size: 0.68rem;
-            letter-spacing: 1.6px;
+            font-size: 0.6rem;
+            letter-spacing: 1.4px;
             text-transform: uppercase;
             color: #86a7c8;
         }
         .pf-node-value {
-            font-size: 0.92rem;
-            line-height: 1.2;
+            font-size: 0.84rem;
+            line-height: 1.1;
             font-weight: 600;
             color: var(--text-light);
             white-space: nowrap;
@@ -2789,20 +2789,25 @@ export function injectStyles() {
             text-overflow: ellipsis;
         }
         .pf-status-wrap {
-            min-height: 46px;
-            display: flex;
-            align-items: center;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 6px;
+            align-items: stretch;
         }
         .pf-status {
             width: 100%;
-            padding: 10px 12px;
+            min-height: 36px;
+            padding: 8px 10px;
             border-radius: 8px;
             text-align: center;
-            font-size: 0.78rem;
-            letter-spacing: 1.5px;
+            font-size: 0.68rem;
+            letter-spacing: 1.3px;
             text-transform: uppercase;
             border: 1px solid rgba(102, 243, 255, 0.14);
             background: rgba(3, 9, 22, 0.82);
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .pf-status-active {
             color: var(--accent-cyan);
@@ -2814,6 +2819,10 @@ export function injectStyles() {
         }
         .pf-action-btn {
             width: 100%;
+            min-height: 36px;
+            padding: 8px 10px;
+            font-size: 0.68rem;
+            letter-spacing: 1.35px;
         }
         .pf-action-btn-alt {
             border-color: rgba(255, 107, 129, 0.74);
@@ -2821,12 +2830,15 @@ export function injectStyles() {
             background: linear-gradient(90deg, rgba(66, 16, 30, 0.78), rgba(35, 10, 18, 0.88));
         }
         .pf-cancel-btn {
-            width: 100%;
-            min-height: 38px;
+            width: auto;
+            min-width: 96px;
+            min-height: 36px;
+            padding: 8px 10px;
             background: rgba(4, 10, 22, 0.92);
             border-color: rgba(102, 243, 255, 0.2);
             color: var(--text-muted);
-            font-size: 0.74rem;
+            font-size: 0.66rem;
+            letter-spacing: 1.2px;
         }
         .pf-empty-card {
             min-height: 84px;
@@ -2848,6 +2860,11 @@ export function injectStyles() {
         }
         .pf-empty-text {
             font-size: 0.86rem;
+        }
+        @media (min-width: 1920px) {
+            .pf-card-linking .pf-node-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
         }
 
         .mini-btn {

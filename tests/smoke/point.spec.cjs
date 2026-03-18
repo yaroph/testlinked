@@ -15,6 +15,10 @@ async function seedPointGraph(page, nodes, links = [], selectionId = null) {
         state.focusRootId = null;
         state.focusSet.clear();
         state.focusDirectSet.clear();
+        state.pathfinding.startId = null;
+        state.pathfinding.active = false;
+        state.pathfinding.pathNodes = [];
+        state.pathfinding.pathLinks = [];
         state.aiPredictedLinks = [];
         state.aiPreviewPair = null;
         updatePersonColors();
@@ -73,6 +77,74 @@ test('point guest file menu keeps local actions and auth-gated cloud access', as
 
     await expect(page.locator('#cloud-auth-user')).toBeVisible();
     await expect(page.locator('#cloud-auth-pass')).toBeVisible();
+});
+
+test('point ai link panel stays compact on ultra-wide screens', async ({ page }) => {
+    await installNetlifyMocks(page);
+
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    await seedPointGraph(page, [
+        {
+            id: 'pf-a',
+            name: 'Weazel News',
+            type: 'company',
+            color: '#73fbf7',
+            manualColor: false,
+            personStatus: 'active',
+            num: '',
+            accountNumber: '',
+            citizenNumber: '',
+            linkedMapPointId: '',
+            description: '',
+            notes: '',
+            x: -120,
+            y: 0,
+            fixed: true
+        },
+        {
+            id: 'pf-b',
+            name: 'Nadio Ricci',
+            type: 'person',
+            color: '#ffffff',
+            manualColor: false,
+            personStatus: 'active',
+            num: '',
+            accountNumber: '',
+            citizenNumber: '',
+            linkedMapPointId: '',
+            description: '',
+            notes: '',
+            x: 120,
+            y: 0,
+            fixed: true
+        }
+    ], [
+        {
+            id: 'pf-link',
+            source: 'pf-a',
+            target: 'pf-b',
+            kind: 'relation'
+        }
+    ], 'pf-a');
+
+    await expect(page.locator('#btnPathStart')).toBeVisible();
+    await page.click('#btnPathStart');
+
+    await page.evaluate(async () => {
+        const { selectNode } = await import('/point/js/ui.js');
+        selectNode('pf-b');
+    });
+
+    await expect(page.locator('#btnPathCalc')).toBeVisible();
+    await page.click('#btnPathCalc');
+    await expect(page.locator('.pf-status-active')).toContainText(/Liaison active/i);
+
+    const cardBox = await page.locator('.pf-card').boundingBox();
+    if (!cardBox) throw new Error('AI link card unavailable');
+    expect(cardBox.height).toBeLessThanOrEqual(190);
 });
 
 test('point editor keeps long names visible and uses a square color picker', async ({ page }) => {
