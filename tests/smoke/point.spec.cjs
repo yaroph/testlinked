@@ -249,7 +249,7 @@ test('point editor stays open while panning and closes on a single empty click',
     await expect(page.locator('#editor')).toBeHidden();
 });
 
-test('point editor docks to the right on ultra-wide screens', async ({ page }) => {
+test('point editor docks to the bottom left on ultra-wide screens', async ({ page }) => {
     await installNetlifyMocks(page);
 
     await page.setViewportSize({ width: 2560, height: 1440 });
@@ -265,10 +265,11 @@ test('point editor docks to the right on ultra-wide screens', async ({ page }) =
     await expect(page.locator('#editor')).toBeVisible();
     await page.waitForTimeout(120);
 
+    const rightBox = await page.locator('#right').boundingBox();
     const editorBox = await page.locator('#editor').boundingBox();
-    if (!editorBox) throw new Error('Editor box unavailable');
-    expect(2560 - (editorBox.x + editorBox.width)).toBeLessThanOrEqual(90);
-    expect(editorBox.y).toBeLessThanOrEqual(80);
+    if (!rightBox || !editorBox) throw new Error('Editor box unavailable');
+    expect(editorBox.x - rightBox.x).toBeLessThanOrEqual(90);
+    expect((rightBox.y + rightBox.height) - (editorBox.y + editorBox.height)).toBeLessThanOrEqual(90);
     expect(editorBox.height).toBeLessThanOrEqual(920);
 });
 
@@ -490,6 +491,48 @@ test('point owner can open the Gerer board panel', async ({ page }) => {
 
     await expect(page.locator('.cloud-board-manage-head')).toBeVisible();
     await expect(page.locator('.modal-tool-title')).toContainText('Gestion du board');
+});
+
+test('point file modal only lists point boards', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+    });
+
+    const api = await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        boards: [
+            {
+                id: 'board-point-only',
+                title: 'Point Board',
+                role: 'editor',
+                page: 'point',
+            },
+            {
+                id: 'board-map-hidden',
+                title: 'Map Board',
+                role: 'editor',
+                page: 'map',
+            }
+        ],
+    });
+
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await expect(page.locator('.cloud-board-row')).toHaveCount(1);
+    await expect(page.locator('.cloud-board-row')).toContainText('Point Board');
+
+    await expect.poll(() => {
+        const lastRequest = [...api.requests]
+            .reverse()
+            .find((entry) => entry.endpoint === 'collab-board' && entry.action === 'list_boards');
+        return lastRequest?.payload?.page || '';
+    }).toBe('point');
 });
 
 test('point board manager suggests cloud usernames while sharing', async ({ page }) => {

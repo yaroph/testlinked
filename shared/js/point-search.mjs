@@ -1,6 +1,6 @@
-export function normalizeSearchText(value) {
-    return String(value ?? '').trim().toLowerCase();
-}
+import { getSearchTextMatch, hasSearchTextMatch, normalizeSearchText } from './search-text-match.mjs';
+
+export { normalizeSearchText } from './search-text-match.mjs';
 
 export function normalizeSearchPhone(value) {
     return String(value ?? '').replace(/\D+/g, '');
@@ -12,10 +12,10 @@ export function tokenizeSearchQuery(value) {
 }
 
 function scoreTextField(fieldValue, token, weight, prefixBonus = 0) {
-    if (!fieldValue || !token) return 0;
-    if (fieldValue === token) return weight + prefixBonus + 18;
-    if (fieldValue.startsWith(token)) return weight + prefixBonus;
-    if (fieldValue.includes(token)) return weight;
+    const match = getSearchTextMatch(fieldValue, token);
+    if (match.kind === 'exact') return weight + prefixBonus + 18;
+    if (match.kind === 'prefix') return weight + prefixBonus;
+    if (match.kind === 'word') return weight;
     return 0;
 }
 
@@ -128,11 +128,12 @@ export function findPointSearchMatches(nodes, query, options = {}) {
             }
 
             const name = normalizeSearchText(node?.name || '');
-            if (name === normalizedQuery) score += 50;
-            else if (name.startsWith(normalizedQuery)) score += 30;
-            else if (name.includes(normalizedQuery)) score += 16;
+            const nameMatch = getSearchTextMatch(name, normalizedQuery);
+            if (nameMatch.kind === 'exact') score += 50;
+            else if (nameMatch.kind === 'prefix') score += 30;
+            else if (nameMatch.kind === 'word') score += 16;
 
-            if (mode === 'smart' && combinedText.includes(normalizedQuery)) {
+            if (mode === 'smart' && hasSearchTextMatch(combinedText, normalizedQuery)) {
                 score += 12;
             }
 

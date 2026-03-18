@@ -46,3 +46,41 @@ test('smart search covers descriptive and numeric fields while quick search stay
   const quickName = findPointSearchMatches(nodes, 'atlas', { ...options, mode: 'name' });
   assert.equal(quickName[0]?.id, 'n-atlas');
 });
+
+test('text search matches token starts but not inner substrings', async () => {
+  const { findPointSearchMatches } = await import('../shared/js/point-search.mjs');
+
+  const nodes = [
+    {
+      id: 'n-good',
+      name: 'Corpo West',
+      type: 'group',
+      num: '',
+      accountNumber: '',
+      citizenNumber: '',
+      linkedMapPointId: '',
+      description: 'Equipe corpo secteur sud',
+      notes: '',
+    },
+    {
+      id: 'n-bad',
+      name: 'Anticorpo Cell',
+      type: 'group',
+      num: '',
+      accountNumber: '',
+      citizenNumber: '',
+      linkedMapPointId: '',
+      description: 'Unite specialisee',
+      notes: '',
+    },
+  ];
+
+  const options = {
+    typeLabel: (node) => String(node?.type || ''),
+    statusLabel: () => 'actif',
+  };
+
+  const matches = findPointSearchMatches(nodes, 'corpo', { ...options, mode: 'smart' });
+
+  assert.deepEqual(matches.map((node) => node.id), ['n-good']);
+});

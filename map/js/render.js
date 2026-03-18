@@ -5,6 +5,7 @@ import { startMarkerDrag } from './engine.js';
 import { handleZoneMouseDown } from './zone-editor.js';
 import { escapeHtml } from './utils.js';
 import { renderMapRemoteCursors } from './collab-cursors.js';
+import { hasSearchTextMatch } from '../../shared/js/search-text-match.mjs';
 
 const markersLayer = document.getElementById('markers-layer');
 const zonesLayer = document.getElementById('zones-layer');
@@ -605,8 +606,8 @@ function renderMarkersAndClusters() {
         group.points.forEach((point, pIndex) => {
             if (state.statusFilter !== 'ALL' && (point.status || 'ACTIVE') !== state.statusFilter) return;
             if (searchTerm) {
-                const matchName = String(point.name || '').toLowerCase().includes(searchTerm);
-                const matchType = String(point.type || '').toLowerCase().includes(searchTerm);
+                const matchName = hasSearchTextMatch(point.name || '', searchTerm);
+                const matchType = hasSearchTextMatch(point.type || '', searchTerm);
                 if (!matchName && !matchType) return;
             }
 

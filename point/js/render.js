@@ -1,7 +1,7 @@
 import { state, isGroup, isCompany, nodeById } from './state.js';
 import { NODE_BASE_SIZE, DEG_SCALE, R_MIN, R_MAX, LINK_KIND_EMOJI, TYPES, KINDS, FILTERS, FILTER_RULES, PERSON_STATUS } from './constants.js';
 import { computeLinkColor, sanitizeNodeColor, normalizePersonStatus, hexToRgb, rgbToHex } from './utils.js';
-import { getPointRemoteCursors } from './collab-cursors.js';
+import { getPointRemoteCursors, setPointCursorAnimationScheduler } from './collab-cursors.js';
 
 const canvas = document.getElementById('graph');
 const ctx = canvas.getContext('2d');
@@ -44,6 +44,10 @@ const HVT_NODE_VISUAL_CACHE = new Map();
 const HVT_LINK_VISUAL_CACHE = new Map();
 let hvtCacheVersion = -1;
 let drawFrameHandle = 0;
+
+setPointCursorAnimationScheduler(() => {
+    scheduleDraw();
+});
 
 function getLinkEndpointId(endpoint) {
     return (typeof endpoint === 'object') ? endpoint?.id : endpoint;
@@ -998,11 +1002,23 @@ export function draw() {
             const cursorX = Number(entry?.cursorWorldX);
             const cursorY = Number(entry?.cursorWorldY);
             if (!Number.isFinite(cursorX) || !Number.isFinite(cursorY)) return;
+            const accent = entry.color || '#73fbf7';
+            const accentRgb = hexToRgb(accent) || { r: 115, g: 251, b: 247 };
+            const pulse = clamp01(Number(entry?.pulse || 0));
+            const motion = clamp01((Number(entry?.cursorMotion || 0) || 0) / 34);
+            const isViewing = String(entry?.mode || '').toLowerCase() === 'viewing';
+            const detail = String(entry?.detail || '').slice(0, 38);
 
             ctx.save();
             ctx.translate(cursorX, cursorY);
             ctx.scale(cursorScale, cursorScale);
-            ctx.globalAlpha = 0.98;
+            ctx.globalAlpha = isViewing ? 0.88 : 0.98;
+
+            const auraRadius = 10 + (pulse * 10) + (motion * 4);
+            ctx.beginPath();
+            ctx.arc(4, 10, auraRadius, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, ${0.09 + (pulse * 0.12)})`;
+            ctx.fill();
 
             ctx.beginPath();
             ctx.moveTo(0, 0);
@@ -1013,24 +1029,29 @@ export function draw() {
             ctx.lineTo(10, 16);
             ctx.lineTo(21, 16);
             ctx.closePath();
-            ctx.fillStyle = '#f7fcff';
-            ctx.strokeStyle = entry.color || '#73fbf7';
+            ctx.fillStyle = isViewing ? 'rgba(247, 252, 255, 0.94)' : '#f7fcff';
+            ctx.strokeStyle = accent;
             ctx.lineWidth = 1.3;
-            ctx.shadowBlur = 16;
-            ctx.shadowColor = entry.color || '#73fbf7';
+            ctx.shadowBlur = 16 + (pulse * 10);
+            ctx.shadowColor = accent;
             ctx.fill();
             ctx.stroke();
             ctx.shadowBlur = 0;
 
             const label = String(entry.username || 'operateur').slice(0, 24);
             ctx.font = '700 12px "Rajdhani", sans-serif';
-            const textWidth = ctx.measureText(label).width;
-            const badgeWidth = Math.max(44, textWidth + 32);
-            const badgeHeight = 24;
+            const labelWidth = ctx.measureText(label).width;
+            let detailWidth = 0;
+            if (detail) {
+                ctx.font = '600 10px "Rajdhani", sans-serif';
+                detailWidth = ctx.measureText(detail).width;
+            }
+            const badgeWidth = Math.max(52, Math.max(labelWidth, detailWidth) + 32);
+            const badgeHeight = detail ? 34 : 24;
             const badgeX = 18;
-            const badgeY = -8;
+            const badgeY = detail ? -12 : -8;
 
-            ctx.fillStyle = 'rgba(3, 8, 20, 0.94)';
+            ctx.fillStyle = isViewing ? 'rgba(5, 11, 24, 0.9)' : 'rgba(3, 8, 20, 0.94)';
             if (ctx.roundRect) {
                 ctx.beginPath();
                 ctx.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 10);
@@ -1038,7 +1059,7 @@ export function draw() {
             } else {
                 ctx.fillRect(badgeX, badgeY, badgeWidth, badgeHeight);
             }
-            ctx.strokeStyle = entry.color || '#73fbf7';
+            ctx.strokeStyle = accent;
             ctx.lineWidth = 1.1;
             if (ctx.roundRect) {
                 ctx.beginPath();
@@ -1048,7 +1069,7 @@ export function draw() {
                 ctx.strokeRect(badgeX, badgeY, badgeWidth, badgeHeight);
             }
 
-            ctx.fillStyle = entry.color || '#73fbf7';
+            ctx.fillStyle = accent;
             ctx.beginPath();
             ctx.arc(badgeX + 11, badgeY + (badgeHeight / 2), 4, 0, Math.PI * 2);
             ctx.fill();
@@ -1056,7 +1077,13 @@ export function draw() {
             ctx.fillStyle = '#f4fbff';
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(label, badgeX + 20, badgeY + (badgeHeight / 2) + 0.5);
+            ctx.font = '700 12px "Rajdhani", sans-serif';
+            ctx.fillText(label, badgeX + 20, badgeY + (detail ? 10.5 : (badgeHeight / 2) + 0.5));
+            if (detail) {
+                ctx.font = '600 10px "Rajdhani", sans-serif';
+                ctx.fillStyle = isViewing ? 'rgba(214, 231, 244, 0.8)' : 'rgba(228, 243, 255, 0.86)';
+                ctx.fillText(detail, badgeX + 20, badgeY + 23.5);
+            }
             ctx.restore();
         });
     }

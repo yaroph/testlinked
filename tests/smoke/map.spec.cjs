@@ -147,3 +147,46 @@ test('map local tab does not relaunch board listing', async ({ page }) => {
     const listAfter = api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'list_boards').length;
     expect(listAfter).toBe(listBefore);
 });
+
+test('map file modal only lists map boards', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+    });
+
+    const api = await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        boards: [
+            {
+                id: 'board-map-only',
+                title: 'Map Board',
+                role: 'editor',
+                page: 'map',
+            },
+            {
+                id: 'board-point-hidden',
+                title: 'Point Board',
+                role: 'editor',
+                page: 'point',
+            }
+        ],
+    });
+
+    await page.goto('/map/');
+    await waitForMapReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await expect(page.locator('.cloud-board-row')).toHaveCount(1);
+    await expect(page.locator('.cloud-board-row')).toContainText('Map Board');
+    await expect(page.locator('#modal-overlay')).not.toContainText('Point Board');
+
+    await expect.poll(() => {
+        const lastRequest = [...api.requests]
+            .reverse()
+            .find((entry) => entry.endpoint === 'collab-board' && entry.action === 'list_boards');
+        return lastRequest?.payload?.page || '';
+    }).toBe('map');
+});

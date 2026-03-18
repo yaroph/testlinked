@@ -103,17 +103,20 @@ async function installNetlifyMocks(page, options = {}) {
             const findBoard = (boardId) => boardsStore.boards.find((entry) => String(entry?.id || '') === String(boardId || '').trim());
 
              if (action === 'list_boards') {
+                const requestedPage = String(body.page || '').trim().toLowerCase();
                 return jsonResponse(route, 200, {
                     ok: true,
-                    boards: boardsStore.boards.map((board) => ({
-                        id: String(board.id || ''),
-                        title: String(board.title || 'Sans nom'),
-                        role: String(board.role || 'editor'),
-                        page: String(board.page || 'point'),
-                        ownerId: String(board.ownerId || ''),
-                        ownerName: String(board.ownerName || ''),
-                        updatedAt: String(board.updatedAt || ''),
-                    })),
+                    boards: boardsStore.boards
+                        .filter((board) => !requestedPage || String(board.page || 'point').toLowerCase() === requestedPage)
+                        .map((board) => ({
+                            id: String(board.id || ''),
+                            title: String(board.title || 'Sans nom'),
+                            role: String(board.role || 'editor'),
+                            page: String(board.page || 'point'),
+                            ownerId: String(board.ownerId || ''),
+                            ownerName: String(board.ownerName || ''),
+                            updatedAt: String(board.updatedAt || ''),
+                        })),
                     board: null,
                     shares: [],
                     presence: [],
@@ -168,6 +171,11 @@ async function installNetlifyMocks(page, options = {}) {
                     activeTextKey: String(body.activeTextKey || ''),
                     activeTextLabel: String(body.activeTextLabel || ''),
                     mode: String(body.mode || 'editing'),
+                    cursorVisible: Boolean(body.cursorVisible),
+                    cursorWorldX: Number(body.cursorWorldX ?? 0),
+                    cursorWorldY: Number(body.cursorWorldY ?? 0),
+                    cursorMapX: Number(body.cursorMapX ?? 50),
+                    cursorMapY: Number(body.cursorMapY ?? 50),
                     lastAt: buildIsoNow(),
                 };
                 const filtered = nextPresence.filter((entry) => String(entry?.userId || '') !== viewerId);

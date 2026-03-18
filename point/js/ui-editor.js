@@ -242,22 +242,15 @@ function applyDefaultEditorPosition(editorPanel, rightPanel = document.getElemen
     if (isCompactLayout()) return;
     if (!rightPanel) return;
 
-    if (!isUltraWideEditorLayout()) {
-        editorPanel.style.left = '50%';
-        editorPanel.style.top = '50%';
-        editorPanel.style.transform = 'translate(-50%, -50%)';
-        editorPanel.dataset.freePosition = '0';
-        return;
-    }
-
     const containerRect = rightPanel.getBoundingClientRect();
-    const maxX = Math.max(24, containerRect.width - editorPanel.offsetWidth - 24);
-    const maxY = Math.max(24, containerRect.height - editorPanel.offsetHeight - 24);
-    const desiredLeft = Math.max(24, containerRect.width - editorPanel.offsetWidth - 36);
-    const desiredTop = clamp(28, 24, maxY);
+    const inset = isUltraWideEditorLayout() ? 28 : 18;
+    const maxX = Math.max(inset, containerRect.width - editorPanel.offsetWidth - inset);
+    const maxY = Math.max(inset, containerRect.height - editorPanel.offsetHeight - inset);
+    const desiredLeft = inset;
+    const desiredTop = Math.max(inset, containerRect.height - editorPanel.offsetHeight - inset);
 
     editorPanel.style.left = `${Math.min(desiredLeft, maxX)}px`;
-    editorPanel.style.top = `${desiredTop}px`;
+    editorPanel.style.top = `${Math.min(desiredTop, maxY)}px`;
     editorPanel.style.transform = 'none';
     editorPanel.dataset.freePosition = '0';
 }
@@ -501,6 +494,7 @@ export function renderEditor() {
 
     setupEditorListeners(n);
     renderActiveLinks(n);
+    clampEditorInViewport(editorPanel);
     requestAnimationFrame(() => {
         syncEditorRailHeight(ui.editorBody);
         restoreEditorFocusState(focusSnapshot);

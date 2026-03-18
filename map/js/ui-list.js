@@ -4,6 +4,7 @@ import { renderAll } from './render.js';
 import { updateTransform } from './engine.js'; 
 import { openGroupEditor } from './ui-modals.js'; // IMPORT NÉCESSAIRE
 import { escapeHtml } from './utils.js';
+import { hasSearchTextMatch } from '../../shared/js/search-text-match.mjs';
 
 export function renderGroupsList() {
     const container = document.getElementById('groups-list');
@@ -19,8 +20,8 @@ export function renderGroupsList() {
         const term = state.searchTerm ? state.searchTerm.toLowerCase() : '';
         const filteredPoints = group.points.filter(p => {
             if (!term) return true;
-            return (p.name && p.name.toLowerCase().includes(term)) || 
-                   (p.type && p.type.toLowerCase().includes(term));
+            return hasSearchTextMatch(p.name || '', term) ||
+                   hasSearchTextMatch(p.type || '', term);
         });
 
         if (term && filteredPoints.length === 0 && (!group.zones || group.zones.length === 0)) {

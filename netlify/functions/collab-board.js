@@ -1246,6 +1246,9 @@ exports.handler = async (event) => {
   const { store, user } = auth;
 
   if (action === "list_boards") {
+    const requestedPage = body.page === undefined || body.page === null || String(body.page).trim() === ""
+      ? ""
+      : normalizePage(body.page);
     const index = await getUserBoardIndex(store, user.id);
     let loadedBoards = [];
 
@@ -1280,6 +1283,7 @@ exports.handler = async (event) => {
     }
 
     const boards = accessibleBoards
+      .filter((board) => !requestedPage || normalizePage(board.page) === requestedPage)
       .map((board) => boardSummary(board, getRoleForUser(board, user.id)))
       .filter(Boolean);
 

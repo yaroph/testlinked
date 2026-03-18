@@ -2210,7 +2210,7 @@ async function renderCloudHome() {
         if (renderToken !== collab.homeRenderSeq || collab.homePanel === 'local') return;
 
         try {
-            const res = await collabBoardRequest('list_boards', {});
+            const res = await collabBoardRequest('list_boards', { page: 'map' });
             if (renderToken !== collab.homeRenderSeq || collab.homePanel === 'local') return;
             const allBoards = Array.isArray(res.boards) ? res.boards : [];
             boards = allBoards.filter((board) => String(board.page || 'point') === 'map');
@@ -2422,7 +2422,7 @@ async function renderCloudHome() {
         renderCloudHomeLoading('cloud', 'Chargement des boards map...');
         await flushPendingCloudAutosave(collab.activeBoardId).catch(() => {});
         try {
-            const res = await collabBoardRequest('list_boards', {});
+            const res = await collabBoardRequest('list_boards', { page: 'map' });
             const allBoards = Array.isArray(res.boards) ? res.boards : [];
             boards = allBoards.filter((board) => String(board.page || 'point') === 'map');
         } catch (e) {

@@ -137,6 +137,23 @@ test('touchBoardPresence conserve les coordonnees de curseur partagees', async (
   assert.equal(presence[0].cursorMapY, 24.4);
 });
 
+test('getPresenceCursorDetail privilegie le champ edite puis la cible active', async () => {
+  const { getPresenceCursorDetail } = await import('../shared/js/collab-cursor-visuals.mjs');
+
+  assert.equal(
+    getPresenceCursorDetail({ activeNodeName: 'Alpha', activeTextLabel: 'Notes' }, { entityLabel: 'Fiche' }),
+    'Alpha · Notes'
+  );
+  assert.equal(
+    getPresenceCursorDetail({ activeNodeName: 'Bravo', mode: 'editing' }, { entityLabel: 'Fiche' }),
+    'Fiche Bravo'
+  );
+  assert.equal(
+    getPresenceCursorDetail({ mode: 'viewing' }, { editingLabel: 'Edition live', viewingLabel: 'Lecture' }),
+    'Lecture'
+  );
+});
+
 test('searchUsersForBoard propose des usernames cloud hors membres existants', async () => {
   const store = new MemoryStore();
   await store.setJSON('users/by-name/smoke-user', { userId: 'u-smoke', username: 'smoke-user' });

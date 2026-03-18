@@ -2993,9 +2993,10 @@ async function renderCloudHome() {
         await flushPendingCloudAutosave(collab.activeBoardId).catch(() => {});
         if (renderToken !== collab.homeRenderSeq || collab.homePanel === 'local') return;
         try {
-            const res = await collabBoardRequest('list_boards', {});
+            const res = await collabBoardRequest('list_boards', { page: 'point' });
             if (renderToken !== collab.homeRenderSeq || collab.homePanel === 'local') return;
-            boards = Array.isArray(res.boards) ? res.boards : [];
+            boards = (Array.isArray(res.boards) ? res.boards : [])
+                .filter((board) => String(board?.page || 'point') === 'point');
         } catch (e) {
             if (renderToken !== collab.homeRenderSeq) return;
             showCustomAlert(`Erreur cloud: ${escapeHtml(e.message || 'inconnue')}`);
@@ -3019,7 +3020,7 @@ async function renderCloudHome() {
                             </button>
                         ` : ''}
                     </div>
-                    <div class="cloud-row-sub">${escapeHtml(role)} · ${escapeHtml(b.page || 'point')}</div>
+                    <div class="cloud-row-sub">${escapeHtml(role)} - POINT</div>
                 </div>
                 <div class="cloud-row-actions">
                     ${active ? '' : `<button type="button" class="mini-btn cloud-open-board" data-board="${escapeHtml(b.id)}">Ouvrir</button>`}
@@ -3033,7 +3034,7 @@ async function renderCloudHome() {
 
     const panelBody = localPanel === 'local'
         ? localRows
-        : (boardRows || '<div class="modal-empty-state">Aucun board cloud.</div>');
+        : (boardRows || '<div class="modal-empty-state">Aucun board point cloud.</div>');
 
     msgEl.innerHTML = `
         <div class="cloud-shell">

@@ -84,6 +84,31 @@ export function getPresenceCursorLabel(username = '') {
     return String(username || 'operateur').trim().slice(0, 32) || 'operateur';
 }
 
+function compactCursorText(value = '', maxLength = 48) {
+    const clean = String(value || '').trim().replace(/\s+/g, ' ');
+    if (!clean) return '';
+    if (clean.length <= maxLength) return clean;
+    return `${clean.slice(0, Math.max(1, maxLength - 1))}…`;
+}
+
+export function getPresenceCursorDetail(entry = {}, options = {}) {
+    const activeTextLabel = compactCursorText(entry?.activeTextLabel || '', 32);
+    const activeNodeName = compactCursorText(entry?.activeNodeName || '', 28);
+    const entityLabel = compactCursorText(options.entityLabel || '', 12);
+    const editingLabel = compactCursorText(options.editingLabel || 'Edition live', 20) || 'Edition live';
+    const viewingLabel = compactCursorText(options.viewingLabel || 'Lecture', 20) || 'Lecture';
+
+    if (activeTextLabel) {
+        return activeNodeName ? `${activeNodeName} · ${activeTextLabel}` : activeTextLabel;
+    }
+    if (activeNodeName) {
+        return entityLabel ? `${entityLabel} ${activeNodeName}` : activeNodeName;
+    }
+    return String(entry?.mode || '').trim().toLowerCase() === 'viewing'
+        ? viewingLabel
+        : editingLabel;
+}
+
 export function normalizePointCursorPresence(entry = {}) {
     const visible = hasOwn(entry, 'cursorVisible')
         ? coerceFlag(entry.cursorVisible, false)
