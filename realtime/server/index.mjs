@@ -5,8 +5,8 @@ import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
 import collabLib from '../../netlify/lib/collab.js';
-import { canonicalizePointPayload, applyPointOps } from '../../shared/realtime/point-doc.mjs';
-import { canonicalizeMapPayload, applyMapOps } from '../../shared/realtime/map-doc.mjs';
+import { canonicalizePointPayload, applyPointOps, preservePointRealtimeTextInOps } from '../../shared/realtime/point-doc.mjs';
+import { canonicalizeMapPayload, applyMapOps, preserveMapRealtimeTextInOps } from '../../shared/realtime/map-doc.mjs';
 import {
     makePointTextKey,
     parsePointTextKey,
@@ -71,6 +71,12 @@ function applyBoardOps(page, snapshot, ops) {
     return page === REALTIME_PAGE_MAP
         ? applyMapOps(snapshot, ops)
         : applyPointOps(snapshot, ops);
+}
+
+function preserveBoardRealtimeTextInOps(page, snapshot, ops) {
+    return page === REALTIME_PAGE_MAP
+        ? preserveMapRealtimeTextInOps(snapshot, ops)
+        : preservePointRealtimeTextInOps(snapshot, ops);
 }
 
 function valuesEqual(leftValue, rightValue) {
@@ -475,7 +481,7 @@ class BoardRoom {
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: 'Board en lecture seule.' });
             return false;
         }
-        const safeOps = Array.isArray(ops) ? ops.slice(0, 200) : [];
+        const safeOps = preserveBoardRealtimeTextInOps(this.page, this.snapshot, Array.isArray(ops) ? ops.slice(0, 200) : []);
         if (!safeOps.length) return false;
 
         const nextSnapshot = applyBoardOps(this.page, this.snapshot, safeOps);

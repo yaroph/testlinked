@@ -33,7 +33,7 @@ import {
 } from '../../shared/js/collab-browser.mjs';
 import { createRealtimeBoardSession } from '../../shared/realtime/board-session.mjs';
 import { canUseRealtimeTransport } from '../../shared/realtime/config.mjs';
-import { canonicalizeMapPayload, diffMapOps, applyMapOps } from '../../shared/realtime/map-doc.mjs';
+import { canonicalizeMapPayload, diffMapOpsWithoutRealtimeText, applyMapOps, stripMapRealtimeTextFields } from '../../shared/realtime/map-doc.mjs';
 import {
     MAP_SHARED_SNAPSHOT_STORAGE_KEY,
     clearSharedMapSnapshot,
@@ -453,33 +453,6 @@ function getCloudMapPayload() {
         groups: cloneJsonSafe(state.groups || [], []),
         tacticalLinks: cloneJsonSafe(state.tacticalLinks || [], [])
     };
-}
-
-function stripMapRealtimeTextFields(payload) {
-    const normalized = canonicalizeMapPayload(payload);
-    return {
-        ...normalized,
-        groups: normalized.groups.map((group) => ({
-            ...group,
-            points: (Array.isArray(group.points) ? group.points : []).map((point) => ({
-                ...point,
-                name: '',
-                type: '',
-                notes: ''
-            })),
-            zones: (Array.isArray(group.zones) ? group.zones : []).map((zone) => ({
-                ...zone,
-                name: ''
-            }))
-        }))
-    };
-}
-
-function diffMapOpsWithoutRealtimeText(previousPayload, nextPayload) {
-    return diffMapOps(
-        stripMapRealtimeTextFields(previousPayload),
-        stripMapRealtimeTextFields(nextPayload)
-    );
 }
 
 function computeCloudFingerprint() {

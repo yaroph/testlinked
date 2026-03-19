@@ -1,5 +1,7 @@
 import { cloneJson, sortById, valuesEqual } from './utils.mjs';
 
+const POINT_REALTIME_TEXT_FIELDS = ['name', 'num', 'accountNumber', 'citizenNumber', 'description', 'notes'];
+
 function normalizeMeta(meta) {
     const source = meta && typeof meta === 'object' ? { ...meta } : {};
     return {
@@ -44,6 +46,18 @@ function normalizeLink(link) {
     };
 }
 
+function stripPointNodeRealtimeText(node) {
+    return {
+        ...node,
+        name: '',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        description: '',
+        notes: ''
+    };
+}
+
 export function canonicalizePointPayload(payload = {}) {
     const raw = payload && typeof payload === 'object' ? payload : {};
     return {
@@ -53,6 +67,14 @@ export function canonicalizePointPayload(payload = {}) {
             : {},
         nodes: sortById((Array.isArray(raw.nodes) ? raw.nodes : []).map(normalizeNode).filter(Boolean)),
         links: sortById((Array.isArray(raw.links) ? raw.links : []).map(normalizeLink).filter(Boolean))
+    };
+}
+
+export function stripPointRealtimeTextFields(payload = {}) {
+    const normalized = canonicalizePointPayload(payload);
+    return {
+        ...normalized,
+        nodes: normalized.nodes.map(stripPointNodeRealtimeText)
     };
 }
 
@@ -102,6 +124,89 @@ export function diffPointOps(previousPayload, nextPayload) {
     });
 
     return ops;
+}
+
+export function diffPointOpsWithoutRealtimeText(previousPayload, nextPayload) {
+    const previous = canonicalizePointPayload(previousPayload);
+    const next = canonicalizePointPayload(nextPayload);
+    const previousComparable = stripPointRealtimeTextFields(previous);
+    const nextComparable = stripPointRealtimeTextFields(next);
+    const ops = [];
+
+    if (!valuesEqual(previous.meta, next.meta)) {
+        ops.push({ type: 'set_meta', meta: cloneJson(next.meta, {}) });
+    }
+
+    if (!valuesEqual(previous.physicsSettings, next.physicsSettings)) {
+        ops.push({ type: 'set_physics', physicsSettings: cloneJson(next.physicsSettings, {}) });
+    }
+
+    const previousNodes = new Map(previousComparable.nodes.map((node) => [node.id, node]));
+    const nextNodes = new Map(nextComparable.nodes.map((node) => [node.id, node]));
+    const nextFullNodes = new Map(next.nodes.map((node) => [node.id, node]));
+
+    nextComparable.nodes.forEach((node) => {
+        const previousNode = previousNodes.get(node.id);
+        if (!previousNode || !valuesEqual(previousNode, node)) {
+            const fullNode = nextFullNodes.get(node.id);
+            if (fullNode) {
+                ops.push({ type: 'upsert_node', node: cloneJson(fullNode, fullNode) });
+            }
+        }
+    });
+
+    previousComparable.nodes.forEach((node) => {
+        if (!nextNodes.has(node.id)) {
+            ops.push({ type: 'delete_node', id: node.id });
+        }
+    });
+
+    const previousLinks = new Map(previous.links.map((link) => [link.id, link]));
+    const nextLinks = new Map(next.links.map((link) => [link.id, link]));
+
+    next.links.forEach((link) => {
+        const previousLink = previousLinks.get(link.id);
+        if (!previousLink || !valuesEqual(previousLink, link)) {
+            ops.push({ type: 'upsert_link', link: cloneJson(link, link) });
+        }
+    });
+
+    previous.links.forEach((link) => {
+        if (!nextLinks.has(link.id)) {
+            ops.push({ type: 'delete_link', id: link.id });
+        }
+    });
+
+    return ops;
+}
+
+export function preservePointRealtimeTextInOps(snapshot, ops = []) {
+    const current = canonicalizePointPayload(snapshot);
+    const currentNodes = new Map(current.nodes.map((node) => [node.id, node]));
+
+    return (Array.isArray(ops) ? ops : []).map((operation) => {
+        const type = String(operation?.type || '').trim();
+        if (type !== 'upsert_node') {
+            return cloneJson(operation, operation);
+        }
+
+        const node = normalizeNode(operation.node);
+        if (!node) {
+            return cloneJson(operation, operation);
+        }
+
+        const currentNode = currentNodes.get(node.id);
+        if (currentNode) {
+            POINT_REALTIME_TEXT_FIELDS.forEach((fieldName) => {
+                node[fieldName] = currentNode[fieldName];
+            });
+        }
+
+        return {
+            ...cloneJson(operation, operation),
+            node: cloneJson(node, node)
+        };
+    });
 }
 
 export function applyPointOps(snapshot, ops = []) {

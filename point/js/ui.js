@@ -33,7 +33,7 @@ import {
 } from '../../shared/js/collab-state.mjs';
 import { createRealtimeBoardSession } from '../../shared/realtime/board-session.mjs';
 import { canUseRealtimeTransport } from '../../shared/realtime/config.mjs';
-import { canonicalizePointPayload, diffPointOps, applyPointOps } from '../../shared/realtime/point-doc.mjs';
+import { canonicalizePointPayload, diffPointOpsWithoutRealtimeText, applyPointOps, stripPointRealtimeTextFields } from '../../shared/realtime/point-doc.mjs';
 import { findPointSearchMatches } from '../../shared/js/point-search.mjs';
 import { bindAsyncActionButton } from '../../shared/js/ui-async.mjs';
 import { clampPointCursorCoord, normalizePointCursorPresence } from '../../shared/js/collab-cursor-visuals.mjs';
@@ -1503,29 +1503,6 @@ function applyCloudBoardData(rawData, options = {}) {
 
 function fingerprintFromPointPayload(payload) {
     return JSON.stringify(canonicalizePointPayloadForCompare(payload));
-}
-
-function stripPointRealtimeTextFields(payload) {
-    const normalized = canonicalizePointPayload(payload);
-    return {
-        ...normalized,
-        nodes: normalized.nodes.map((node) => ({
-            ...node,
-            name: '',
-            num: '',
-            accountNumber: '',
-            citizenNumber: '',
-            description: '',
-            notes: ''
-        }))
-    };
-}
-
-function diffPointOpsWithoutRealtimeText(previousPayload, nextPayload) {
-    return diffPointOps(
-        stripPointRealtimeTextFields(previousPayload),
-        stripPointRealtimeTextFields(nextPayload)
-    );
 }
 
 function captureCloudSavedState(changeSeq = collab.localChangeSeq, fingerprint = collab.lastSavedFingerprint || '') {

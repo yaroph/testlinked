@@ -64,6 +64,48 @@ test('point realtime delete_node also removes dangling links', async () => {
     assert.equal(next.links.length, 0);
 });
 
+test('point realtime structural ops preserve text fields', async () => {
+    const {
+        diffPointOpsWithoutRealtimeText,
+        preservePointRealtimeTextInOps,
+        applyPointOps
+    } = await loadModule('shared/realtime/point-doc.mjs');
+
+    const previous = {
+        nodes: [
+            { id: 'n1', name: 'Alpha', type: 'person', x: 10, y: 20, num: '010203', description: 'keep me' }
+        ],
+        links: []
+    };
+    const next = {
+        nodes: [
+            { id: 'n1', name: 'Alpha', type: 'person', x: 30, y: 40, num: '010203', description: 'keep me' }
+        ],
+        links: []
+    };
+
+    const ops = diffPointOpsWithoutRealtimeText(previous, next);
+    assert.equal(ops.length, 1);
+    assert.equal(ops[0].type, 'upsert_node');
+    assert.equal(ops[0].node.name, 'Alpha');
+    assert.equal(ops[0].node.description, 'keep me');
+
+    const rebuilt = applyPointOps(
+        previous,
+        preservePointRealtimeTextInOps(previous, [
+            {
+                type: 'upsert_node',
+                node: { id: 'n1', name: '', type: 'person', x: 30, y: 40, num: '', description: '', notes: '' }
+            }
+        ])
+    );
+    assert.equal(rebuilt.nodes[0].name, 'Alpha');
+    assert.equal(rebuilt.nodes[0].num, '010203');
+    assert.equal(rebuilt.nodes[0].description, 'keep me');
+    assert.equal(rebuilt.nodes[0].x, 30);
+    assert.equal(rebuilt.nodes[0].y, 40);
+});
+
 test('map realtime ops rebuild the target snapshot', async () => {
     const {
         canonicalizeMapPayload,
@@ -116,4 +158,67 @@ test('map realtime ops rebuild the target snapshot', async () => {
         applyMapOps(previous, ops),
         canonicalizeMapPayload(next)
     );
+});
+
+test('map realtime structural ops preserve text fields', async () => {
+    const {
+        diffMapOpsWithoutRealtimeText,
+        preserveMapRealtimeTextInOps,
+        applyMapOps
+    } = await loadModule('shared/realtime/map-doc.mjs');
+
+    const previous = {
+        groups: [
+            {
+                id: 'g1',
+                name: 'Allies',
+                color: '#73fbf7',
+                visible: true,
+                points: [{ id: 'p1', name: 'Alpha', x: 10, y: 20, type: 'unit', iconType: 'DEFAULT', notes: 'keep', status: 'ACTIVE' }],
+                zones: []
+            }
+        ],
+        tacticalLinks: []
+    };
+    const next = {
+        groups: [
+            {
+                id: 'g1',
+                name: 'Allies',
+                color: '#73fbf7',
+                visible: true,
+                points: [{ id: 'p1', name: 'Alpha', x: 15, y: 25, type: 'unit', iconType: 'DEFAULT', notes: 'keep', status: 'ACTIVE' }],
+                zones: []
+            }
+        ],
+        tacticalLinks: []
+    };
+
+    const ops = diffMapOpsWithoutRealtimeText(previous, next);
+    assert.equal(ops.length, 1);
+    assert.equal(ops[0].type, 'upsert_group');
+    assert.equal(ops[0].group.name, 'Allies');
+    assert.equal(ops[0].group.points[0].name, 'Alpha');
+    assert.equal(ops[0].group.points[0].notes, 'keep');
+
+    const rebuilt = applyMapOps(
+        previous,
+        preserveMapRealtimeTextInOps(previous, [
+            {
+                type: 'upsert_group',
+                group: {
+                    id: 'g1',
+                    name: '',
+                    color: '#73fbf7',
+                    visible: true,
+                    points: [{ id: 'p1', name: '', x: 15, y: 25, type: '', iconType: 'DEFAULT', notes: '', status: 'ACTIVE' }],
+                    zones: []
+                }
+            }
+        ])
+    );
+    assert.equal(rebuilt.groups[0].name, 'Allies');
+    assert.equal(rebuilt.groups[0].points[0].name, 'Alpha');
+    assert.equal(rebuilt.groups[0].points[0].type, 'unit');
+    assert.equal(rebuilt.groups[0].points[0].notes, 'keep');
 });
