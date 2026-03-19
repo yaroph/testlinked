@@ -422,6 +422,14 @@ function getEditorScrollContainer(editorBody = ui.editorBody) {
     return editorBody.querySelector('.editor-main-card') || editorBody;
 }
 
+function syncCompactEditorOpenState(isOpen) {
+    const active = Boolean(isOpen);
+    try {
+        document.body?.classList.toggle('point-editor-open', active);
+        document.documentElement?.classList.toggle('point-editor-open', active);
+    } catch (e) {}
+}
+
 function captureEditorFocusState(editorBody = ui.editorBody) {
     if (!editorBody) return null;
     const active = document.activeElement;
@@ -476,11 +484,13 @@ export function renderEditor() {
 
     if (!n) {
         if (editorPanel) editorPanel.style.display = 'none';
+        syncCompactEditorOpenState(false);
         ui.editorTitle.style.display = 'none';
         ui.editorBody.innerHTML = '';
         return;
     }
     if (editorPanel) editorPanel.style.display = 'block';
+    syncCompactEditorOpenState(true);
 
     ui.editorTitle.style.display = 'none';
     ui.editorBody.innerHTML = renderEditorHTML(n, state);

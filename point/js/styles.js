@@ -2960,6 +2960,7 @@ export function injectStyles() {
             box-shadow: inset 0 0 0 1px rgba(102, 243, 255, 0.04);
             overflow-x: hidden;
             overflow-y: auto;
+            overscroll-behavior: contain;
             scrollbar-width: thin;
             scrollbar-color: rgba(102, 243, 255, 0.3) transparent;
         }
@@ -4337,6 +4338,16 @@ export function injectStyles() {
         }
 
         @media (max-width: 900px) {
+            html.point-editor-open,
+            body.point-skin.point-editor-open {
+                scrollbar-width: none;
+            }
+            html.point-editor-open::-webkit-scrollbar,
+            body.point-skin.point-editor-open::-webkit-scrollbar {
+                width: 0;
+                height: 0;
+                display: none;
+            }
             .modal-segment {
                 grid-template-columns: 1fr;
             }
@@ -4531,6 +4542,9 @@ export function injectStyles() {
                 max-width: 100%;
                 border-radius: 0;
                 clip-path: none;
+            }
+            body.point-skin.point-editor-open #right {
+                overflow: hidden;
             }
             #editorBody {
                 max-height: none;
