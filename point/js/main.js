@@ -1,6 +1,6 @@
 import { loadState, state, pushHistory } from './state.js';
 import { restartSim } from './physics.js';
-import { initUI, refreshLists, selectNode, initCloudCollab } from './ui.js'; 
+import { initUI, refreshLists, selectNode, initCloudCollab, maybeRecoverDamagedLocalWorkspace } from './ui.js'; 
 import { updatePersonColors } from './logic.js'; 
 import { resizeCanvas, draw } from './render.js';
 
@@ -28,6 +28,7 @@ window.addEventListener('load', () => {
     }
     updatePersonColors();
     refreshLists();
+    maybeRecoverDamagedLocalWorkspace();
     
     // 3. Physique
     restartSim();

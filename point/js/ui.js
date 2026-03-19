@@ -66,6 +66,7 @@ const POINT_LOCAL_CHANGE_EVENT = 'bni:point-local-change';
 const ACTION_LOG_STORAGE_KEY = 'bniLinkedActionLog_v1';
 const ACTION_LOG_MAX = 80;
 const LOCAL_WORKSPACE_BACKUP_KEY = 'bniLinkedPointLocalWorkspace_v1';
+const LOCAL_WORKSPACE_HEALTH_WARNED_KEY = 'bniLinkedPointWorkspaceHealthWarned_v1';
 const COLLAB_NODE_FIELDS = ['name', 'type', 'color', 'manualColor', 'personStatus', 'num', 'accountNumber', 'citizenNumber', 'linkedMapPointId', 'description', 'notes', 'x', 'y', 'fixed'];
 const COLLAB_LINK_FIELDS = ['source', 'target', 'kind'];
 const COLLAB_PRESENCE_HEARTBEAT_MS = 6500;
@@ -658,6 +659,97 @@ function restoreLastLocalWorkspace(options = {}) {
         clearPointWorkspaceData();
     }
     return false;
+}
+
+function getPointWorkspaceNameHealth(payload = null) {
+    const source = payload && typeof payload === 'object' ? payload : { nodes: state.nodes };
+    const nodes = Array.isArray(source?.nodes) ? source.nodes : [];
+    const total = nodes.length;
+    const unnamed = nodes.reduce((count, node) => {
+        const rawName = String(node?.name || '').trim();
+        return count + (rawName === '' || rawName === 'Sans nom' ? 1 : 0);
+    }, 0);
+    return {
+        total,
+        unnamed,
+        ratio: total > 0 ? unnamed / total : 0
+    };
+}
+
+function isLikelyDamagedLocalWorkspace(stats) {
+    const total = Number(stats?.total || 0);
+    const unnamed = Number(stats?.unnamed || 0);
+    const ratio = Number(stats?.ratio || 0);
+    if (total < 8) return false;
+    if (unnamed < 4) return false;
+    return ratio >= 0.28;
+}
+
+function isBackupHealthier(currentStats, backupStats) {
+    if (!backupStats || Number(backupStats.total || 0) < 1) return false;
+    if (Number(backupStats.total || 0) + 2 < Number(currentStats.total || 0)) return false;
+    if (Number(backupStats.unnamed || 0) >= Number(currentStats.unnamed || 0)) return false;
+    return Number(backupStats.ratio || 0) <= Math.max(0.06, Number(currentStats.ratio || 0) - 0.15);
+}
+
+function readWorkspaceHealthWarningState() {
+    try {
+        if (typeof sessionStorage === 'undefined') return '';
+        return String(sessionStorage.getItem(LOCAL_WORKSPACE_HEALTH_WARNED_KEY) || '');
+    } catch (e) {
+        return '';
+    }
+}
+
+function writeWorkspaceHealthWarningState(value = '') {
+    try {
+        if (typeof sessionStorage === 'undefined') return;
+        if (!value) {
+            sessionStorage.removeItem(LOCAL_WORKSPACE_HEALTH_WARNED_KEY);
+            return;
+        }
+        sessionStorage.setItem(LOCAL_WORKSPACE_HEALTH_WARNED_KEY, String(value));
+    } catch (e) {}
+}
+
+export function maybeRecoverDamagedLocalWorkspace() {
+    if (isCloudBoardActive()) return false;
+
+    const currentStats = getPointWorkspaceNameHealth();
+    if (!isLikelyDamagedLocalWorkspace(currentStats)) {
+        writeWorkspaceHealthWarningState('');
+        return false;
+    }
+
+    const warningFingerprint = `${currentStats.total}:${currentStats.unnamed}`;
+    if (readWorkspaceHealthWarningState() === warningFingerprint) {
+        return false;
+    }
+    writeWorkspaceHealthWarningState(warningFingerprint);
+
+    const backupPayload = readLastLocalWorkspaceSnapshot();
+    const backupStats = backupPayload ? getPointWorkspaceNameHealth(backupPayload) : null;
+
+    if (backupPayload && isBackupHealthier(currentStats, backupStats)) {
+        showCustomConfirm(
+            `Le workspace local semble endommage (${currentStats.unnamed}/${currentStats.total} fiches sans nom). Restaurer la derniere sauvegarde locale saine ?`,
+            () => {
+                withoutCloudAutosave(() => processData(backupPayload, 'load', { silent: true }));
+                state.selection = null;
+                renderEditor();
+                updatePathfindingPanel();
+                updateFocusControls();
+                updateCenterEmptyState();
+                draw();
+                writeWorkspaceHealthWarningState('');
+                showCustomAlert('Sauvegarde locale restauree.');
+            }
+        );
+        return true;
+    }
+
+    showCustomAlert(`Le workspace local semble endommage (${currentStats.unnamed}/${currentStats.total} fiches sans nom). Utilise Fichier > Reset ou reimporte une sauvegarde saine.`);
+    return true;
 }
 
 let cloudWorkspaceBusyEl = null;
