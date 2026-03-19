@@ -594,16 +594,25 @@ function setupEditorListeners(n) {
         scheduleSave();
     };
 
+    // --- CORRECTION YJS BINDING : PROTECTION DES VALEURS LOCALES ---
+
     const edQuickName = document.getElementById('edQuickNameInline');
     if (edQuickName) {
         edQuickName.addEventListener('input', syncEditorNameLayout);
         edQuickName.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') event.preventDefault();
         });
+        
+        const originalName = String(n.name || '');
         const hasRealtimeNameBinding = bindRealtimePointField(n, 'name', edQuickName);
+        
         if (!hasRealtimeNameBinding) {
             edQuickName.oninput = (e) => applyNodeName(e.target.value);
+        } else if (originalName && !edQuickName.value) {
+            edQuickName.value = originalName;
+            edQuickName.dispatchEvent(new Event('input', { bubbles: true }));
         }
+
         edQuickName.addEventListener('blur', () => {
             const finalizedName = normalizeNodeNameDraft(edQuickName.value, { finalize: true });
             if (hasRealtimeNameBinding) {
@@ -619,12 +628,19 @@ function setupEditorListeners(n) {
         });
         syncEditorNameLayout();
     }
+
     const edQuickNum = document.getElementById('edQuickNum');
     if (edQuickNum) {
-        if (!bindRealtimePointField(n, 'num', edQuickNum)) {
+        const originalNum = String(n.num || '');
+        const hasBinding = bindRealtimePointField(n, 'num', edQuickNum);
+        if (!hasBinding) {
             edQuickNum.oninput = (e) => applyNodePhone(e.target.value);
+        } else if (originalNum && !edQuickNum.value) {
+            edQuickNum.value = originalNum;
+            edQuickNum.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
+
     const quickType = document.getElementById('edQuickType');
     if (quickType) quickType.onchange = (e) => {
         queueHistory();
@@ -637,6 +653,7 @@ function setupEditorListeners(n) {
         renderEditor();
         scheduleSave();
     };
+
     const inpColor = document.getElementById('edColorQuick');
     if(inpColor) inpColor.oninput = (e) => {
         queueHistory();
@@ -649,39 +666,58 @@ function setupEditorListeners(n) {
         saveState();
         scheduleSave();
     };
+
     const inpQuickAccountNumber = document.getElementById('edQuickAccountNumber');
     if (inpQuickAccountNumber) {
-        if (!bindRealtimePointField(n, 'accountNumber', inpQuickAccountNumber)) {
+        const originalAccount = String(n.accountNumber || '');
+        const hasBinding = bindRealtimePointField(n, 'accountNumber', inpQuickAccountNumber);
+        if (!hasBinding) {
             inpQuickAccountNumber.oninput = (e) => {
                 queueHistory();
                 n.accountNumber = e.target.value;
                 syncMetaDisplays();
                 scheduleSave();
             };
+        } else if (originalAccount && !inpQuickAccountNumber.value) {
+            inpQuickAccountNumber.value = originalAccount;
+            inpQuickAccountNumber.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
+
     const inpQuickCitizenNumber = document.getElementById('edQuickCitizenNumber');
     if (inpQuickCitizenNumber) {
-        if (!bindRealtimePointField(n, 'citizenNumber', inpQuickCitizenNumber)) {
+        const originalCitizen = String(n.citizenNumber || '');
+        const hasBinding = bindRealtimePointField(n, 'citizenNumber', inpQuickCitizenNumber);
+        if (!hasBinding) {
             inpQuickCitizenNumber.oninput = (e) => {
                 queueHistory();
                 n.citizenNumber = e.target.value;
                 syncMetaDisplays();
                 scheduleSave();
             };
+        } else if (originalCitizen && !inpQuickCitizenNumber.value) {
+            inpQuickCitizenNumber.value = originalCitizen;
+            inpQuickCitizenNumber.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
+
     const inpDescription = document.getElementById('edDescription');
     if (inpDescription) {
-        if (!bindRealtimeDescriptionField(n, inpDescription)) {
+        const originalDesc = String(n.description || '');
+        const hasBinding = bindRealtimeDescriptionField(n, inpDescription);
+        if (!hasBinding) {
             inpDescription.oninput = (e) => {
                 queueHistory();
                 n.description = e.target.value;
                 n.notes = e.target.value;
                 scheduleSave();
             };
+        } else if (originalDesc && !inpDescription.value) {
+            inpDescription.value = originalDesc;
+            inpDescription.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
+
     Array.from(document.querySelectorAll('[data-person-status]')).forEach((btn) => {
         btn.onclick = () => {
             const nextStatus = normalizePersonStatus(btn.getAttribute('data-person-status'), n.type);
