@@ -3,7 +3,7 @@ import { ensureNode, addLink as logicAddLink, calculatePath, clearPath, calculat
 import { renderPathfindingSidebar } from './templates.js';
 import { restartSim } from './physics.js';
 import { draw, updateDegreeCache, resizeCanvas, scheduleDraw } from './render.js';
-import { escapeHtml, linkKindEmoji, kindToLabel, clamp, uid, sanitizeNodeColor, normalizePersonStatus } from './utils.js';
+import { escapeHtml, linkKindEmoji, kindToLabel, clamp, uid, sanitizeNodeColor, normalizePersonStatus, screenToWorld } from './utils.js';
 import { TYPES, FILTERS, FILTER_RULES, KINDS, PERSON_STATUS } from './constants.js';
 import { injectStyles } from './styles.js';
 import { setupCanvasEvents } from './interaction.js';
@@ -118,6 +118,7 @@ const collab = {
     activeTextKey: '',
     activeTextLabel: '',
     homeRenderSeq: 0,
+    profileFlash: '',
     cursorVisible: false,
     cursorWorldX: 0,
     cursorWorldY: 0,
@@ -2656,7 +2657,6 @@ async function renderCloudMembers(boardId) {
                     <div id="cloud-share-username-results" class="editor-autocomplete-results" hidden></div>
                 </div>
                 <select id="cloud-share-role" class="compact-select cloud-inline-select">
-                    <option value="owner">Owner</option>
                     <option value="editor">Editor</option>
                     <option value="viewer">Viewer</option>
                 </select>
@@ -3116,6 +3116,139 @@ async function runCloudAuth(action) {
     }
 }
 
+function clearCloudProfileFlash() {
+    collab.profileFlash = '';
+}
+
+async function runCloudProfileUpdate() {
+    if (!collab.user) return false;
+
+    const nextUsernameInput = document.getElementById('cloud-profile-username');
+    const currentPassInput = document.getElementById('cloud-profile-current-pass');
+    const nextPassInput = document.getElementById('cloud-profile-next-pass');
+    const currentUsername = String(collab.user.username || '').trim();
+    const nextUsernameRaw = nextUsernameInput ? nextUsernameInput.value.trim() : '';
+    const currentPassword = currentPassInput ? currentPassInput.value : '';
+    const nextPassword = nextPassInput ? nextPassInput.value : '';
+    const nextUsername = nextUsernameRaw && nextUsernameRaw !== currentUsername ? nextUsernameRaw : '';
+
+    if (!nextUsername && !nextPassword) {
+        showCustomAlert('Ajoute un nouvel identifiant ou un nouveau mot de passe.');
+        return false;
+    }
+    if (!currentPassword) {
+        showCustomAlert('Entre ton mot de passe actuel.');
+        return false;
+    }
+
+    clearCloudProfileFlash();
+    try {
+        const res = await collabAuthRequest('update_profile', {
+            currentPassword,
+            nextUsername,
+            nextPassword
+        });
+        collab.user = res.user || collab.user;
+        collab.profileFlash = 'Profil mis a jour.';
+        persistCollabState();
+        syncCloudStatus();
+        if (isCloudBoardActive()) {
+            updatePointCloudPresence().catch(() => {});
+        }
+        await renderCloudProfile();
+        return true;
+    } catch (e) {
+        showCustomAlert(`Erreur: ${escapeHtml(e.message || 'inconnue')}`);
+        return false;
+    }
+}
+
+async function renderCloudProfile() {
+    if (!collab.user) {
+        await renderCloudHome();
+        return;
+    }
+    setCloudWorkspaceBusy(false);
+    if (!modalOverlay) createModal();
+    setModalMode('cloud');
+    const msgEl = document.getElementById('modal-msg');
+    const actEl = document.getElementById('modal-actions');
+    if (!msgEl || !actEl) return;
+
+    msgEl.innerHTML = `
+        <div class="cloud-shell">
+            <div class="cloud-home-head">
+                <div class="cloud-home-heading">
+                    <div class="cloud-home-kicker">Compte cloud</div>
+                    <div class="cloud-home-title">Profil</div>
+                </div>
+            </div>
+            <div class="cloud-column cloud-panel-shell">
+                <div class="modal-tool cloud-auth-shell cloud-profile-shell">
+                    <div class="cloud-auth-badge">Profil</div>
+                    <h3 class="cloud-auth-title">${escapeHtml(collab.user.username || 'Compte cloud')}</h3>
+                    <div class="cloud-auth-copy">Change ton identifiant ou ton mot de passe. Laisse vide ce que tu veux garder.</div>
+                    ${collab.profileFlash ? `<div class="cloud-profile-feedback is-success">${escapeHtml(collab.profileFlash)}</div>` : ''}
+                    <div class="cloud-profile-current">
+                        <span class="cloud-auth-label">Compte actuel</span>
+                        <span class="cloud-profile-current-value">${escapeHtml(collab.user.username || '')}</span>
+                    </div>
+                    <div class="cloud-auth-grid cloud-profile-grid">
+                        <label class="cloud-auth-field is-span-all">
+                            <span class="cloud-auth-label">Nouvel identifiant</span>
+                            <input id="cloud-profile-username" type="text" placeholder="${escapeHtml(collab.user.username || 'nouvel_identifiant')}" class="modal-input-standalone cloud-auth-input" autocomplete="username" />
+                        </label>
+                        <label class="cloud-auth-field">
+                            <span class="cloud-auth-label">Mot de passe actuel</span>
+                            <input id="cloud-profile-current-pass" type="password" placeholder="Mot de passe actuel" class="modal-input-standalone cloud-auth-input" autocomplete="current-password" />
+                        </label>
+                        <label class="cloud-auth-field">
+                            <span class="cloud-auth-label">Nouveau mot de passe</span>
+                            <input id="cloud-profile-next-pass" type="password" placeholder="Nouveau mot de passe" class="modal-input-standalone cloud-auth-input" autocomplete="new-password" />
+                        </label>
+                    </div>
+                    <div class="cloud-auth-hint">Le meme compte fonctionne sur Point et Map.</div>
+                </div>
+            </div>
+            <div class="cloud-status-bar">
+                <span class="cloud-status-pill">Compte: ${escapeHtml(collab.user.username || '')}</span>
+                <span class="cloud-status-pill ${isCloudBoardActive() ? 'cloud-status-active' : ''}">
+                    ${isCloudBoardActive() ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})` : 'Aucun board cloud actif'}
+                </span>
+            </div>
+        </div>
+    `;
+    actEl.innerHTML = `
+        <button type="button" id="cloud-profile-back" class="cloud-auth-secondary">Retour</button>
+        <button type="button" id="cloud-profile-save" class="primary cloud-auth-primary">Enregistrer</button>
+    `;
+
+    const backBtn = document.getElementById('cloud-profile-back');
+    const saveBtn = document.getElementById('cloud-profile-save');
+    if (backBtn) {
+        backBtn.onclick = async () => {
+            clearCloudProfileFlash();
+            await renderCloudHome();
+        };
+    }
+    if (saveBtn) {
+        saveBtn.onclick = () => {
+            runCloudProfileUpdate().catch(() => {});
+        };
+    }
+
+    Array.from(document.querySelectorAll('#cloud-profile-username, #cloud-profile-current-pass, #cloud-profile-next-pass')).forEach((field) => {
+        field.onkeydown = (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                runCloudProfileUpdate().catch(() => {});
+            }
+        };
+    });
+
+    document.getElementById('cloud-profile-username')?.focus();
+}
+
 function bindCloudBoardListActions() {
     Array.from(document.querySelectorAll('.cloud-open-board')).forEach((btn) => {
         bindImmediateActionButton(btn, async () => {
@@ -3199,10 +3332,10 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
     if (!msgEl || !actEl) return;
 
     const safePanel = localPanel === 'local' ? 'local' : 'cloud';
-    const title = collab.user ? escapeHtml(collab.user.username) : 'Session invite';
+    const title = collab.user ? escapeHtml(collab.user.username) : 'Cloud';
     const syncLabel = collab.user
         ? (isCloudBoardActive() ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})` : 'Aucun board cloud actif')
-        : 'Connexion requise';
+        : 'Mode local';
 
     msgEl.innerHTML = `
         <div class="cloud-shell">
@@ -3235,7 +3368,7 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
                 </div>
             </div>
             <div class="cloud-status-bar">
-                <span class="cloud-status-pill">${collab.user ? `Connecte: ${escapeHtml(collab.user.username)}` : 'Invite'}</span>
+                <span class="cloud-status-pill">${collab.user ? `Compte: ${escapeHtml(collab.user.username)}` : 'Mode local'}</span>
                 <span class="cloud-status-pill">${syncLabel}</span>
             </div>
         </div>
@@ -3244,6 +3377,7 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
         ? `
             <button type="button" id="cloud-create-board" class="primary">Nouveau</button>
             <button type="button" id="cloud-save-active">Sauvegarder</button>
+            <button type="button" id="cloud-open-profile" class="cloud-auth-secondary">Profil</button>
             <button type="button" id="cloud-logout">Deconnexion</button>
         `
         : '';
@@ -3260,6 +3394,14 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
         saveBtn.onclick = async () => {
             await saveActiveCloudBoard({ manual: true, quiet: false });
             await renderCloudHome();
+        };
+    }
+
+    const profileBtn = document.getElementById('cloud-open-profile');
+    if (profileBtn) {
+        profileBtn.onclick = () => {
+            clearCloudProfileFlash();
+            renderCloudProfile().catch(() => {});
         };
     }
 
@@ -3289,21 +3431,10 @@ async function renderCloudHome() {
     if (!collab.user) {
         const guestCloudPanel = `
             <div class="cloud-local-panel cloud-guest-panel">
-                <div class="cloud-guest-layout">
-                    <section class="cloud-guest-hero">
-                        <div class="cloud-guest-kicker">Mode invite</div>
-                        <div class="cloud-guest-title">Cloud verrouille</div>
-                        <div class="cloud-guest-copy">Tu gardes toutes les actions locales. Pour creer, ouvrir ou sauvegarder dans le cloud, reconnecte-toi avec ton mot de passe.</div>
-                        <div class="cloud-guest-pills">
-                            <span class="cloud-guest-pill">Local dispo</span>
-                            <span class="cloud-guest-pill">Point</span>
-                            <span class="cloud-guest-pill">Connexion requise</span>
-                        </div>
-                    </section>
                     <div class="modal-tool cloud-auth-shell cloud-auth-shell-inline cloud-auth-shell-guest">
                     <div class="cloud-auth-badge">Cloud</div>
-                    <h3 class="cloud-auth-title">Connexion au cloud</h3>
-                    <div class="cloud-auth-copy">Entre simplement un identifiant et un mot de passe. Si le compte n existe pas encore, tu peux le creer ici.</div>
+                    <h3 class="cloud-auth-title">Compte cloud</h3>
+                    <div class="cloud-auth-copy">Identifiant + mot de passe. Cree le compte ici si besoin.</div>
                     <div class="cloud-auth-grid">
                         <label class="cloud-auth-field">
                             <span class="cloud-auth-label">Identifiant</span>
@@ -3314,39 +3445,34 @@ async function renderCloudHome() {
                             <input id="cloud-auth-pass" type="password" placeholder="Mot de passe" class="modal-input-standalone cloud-auth-input" autocomplete="current-password" />
                         </label>
                     </div>
-                    <div class="cloud-auth-hint">Le meme compte fonctionne aussi sur la carte. Sans connexion, tu restes en local.</div>
+                    <div class="cloud-auth-hint">Le meme compte fonctionne sur Point et Map.</div>
                     </div>
-                </div>
             </div>
         `;
         const panelBody = localPanel === 'local' ? localRows : guestCloudPanel;
-        const panelShellClass = localPanel === 'cloud'
-            ? 'cloud-column cloud-panel-shell cloud-panel-shell-guest'
-            : 'cloud-column cloud-panel-shell';
 
         msgEl.innerHTML = `
             <div class="cloud-shell">
                 <div class="cloud-home-head">
                 <div class="cloud-home-heading">
                     <div class="cloud-home-kicker">Fichier</div>
-                    <div class="cloud-home-title">Session invite</div>
+                    <div class="cloud-home-title">Cloud</div>
                 </div>
                 <div class="cloud-home-tab-group">
                     <button type="button" id="cloud-home-tab-cloud" class="cloud-home-tab ${localPanel === 'cloud' ? 'is-active' : ''}">Cloud</button>
                     <button type="button" id="cloud-home-tab-local" class="cloud-home-tab cloud-home-tab-alt ${localPanel === 'local' ? 'is-active' : ''}">Local</button>
                 </div>
             </div>
-            <div class="${panelShellClass}">${panelBody}</div>
+            <div class="cloud-column cloud-panel-shell">${panelBody}</div>
             <div class="cloud-status-bar">
-                <span class="cloud-status-pill">Invite</span>
-                <span id="cloudModalSyncInfo" class="cloud-status-pill">Connexion requise</span>
+                <span class="cloud-status-pill">Mode local</span>
             </div>
         </div>
         `;
         actEl.innerHTML = localPanel === 'cloud'
             ? `
-                <button type="button" id="cloud-auth-register" class="cloud-auth-secondary">Creer un compte</button>
-                <button type="button" id="cloud-auth-login" class="primary cloud-auth-primary">Se connecter</button>
+                <button type="button" id="cloud-auth-register" class="cloud-auth-secondary">Creer</button>
+                <button type="button" id="cloud-auth-login" class="primary cloud-auth-primary">Connexion</button>
             `
             : '';
 
@@ -3359,11 +3485,11 @@ async function renderCloudHome() {
         if (loginBtn) loginBtn.onclick = () => { runCloudAuth('login').catch(() => {}); };
 
         const passInput = document.getElementById('cloud-auth-pass');
-        if (passInput) {
-            passInput.onkeydown = (event) => {
+        Array.from(document.querySelectorAll('#cloud-auth-user, #cloud-auth-pass')).forEach((field) => {
+            field.onkeydown = (event) => {
                 if (event.key === 'Enter') runCloudAuth('login').catch(() => {});
             };
-        }
+        });
         return;
     }
 
@@ -3430,7 +3556,7 @@ async function renderCloudHome() {
             </div>
             <div class="cloud-column cloud-panel-shell">${panelBody}</div>
             <div class="cloud-status-bar">
-                <span class="cloud-status-pill">Connecte: ${escapeHtml(collab.user.username)}</span>
+                <span class="cloud-status-pill">Compte: ${escapeHtml(collab.user.username)}</span>
                 <span id="cloudModalSyncInfo" class="cloud-status-pill ${isCloudBoardActive() ? 'cloud-status-active' : ''}">
                     ${isCloudBoardActive() ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})` : 'Aucun board cloud actif'}
                 </span>
@@ -3442,9 +3568,13 @@ async function renderCloudHome() {
         ? `
             <button type="button" id="cloud-create-board" class="primary">Nouveau</button>
             <button type="button" id="cloud-save-active">Sauvegarder</button>
+            <button type="button" id="cloud-open-profile" class="cloud-auth-secondary">Profil</button>
             <button type="button" id="cloud-logout">Deconnexion</button>
         `
-        : `<button type="button" id="cloud-logout">Deconnexion</button>`;
+        : `
+            <button type="button" id="cloud-open-profile" class="cloud-auth-secondary">Profil</button>
+            <button type="button" id="cloud-logout">Deconnexion</button>
+        `;
 
     const createBtn = document.getElementById('cloud-create-board');
     if (createBtn) {
@@ -3460,11 +3590,20 @@ async function renderCloudHome() {
             await renderCloudHome();
         };
     }
+    const profileBtn = document.getElementById('cloud-open-profile');
+    if (profileBtn) {
+        profileBtn.onclick = () => {
+            clearCloudProfileFlash();
+            renderCloudProfile().catch(() => {});
+        };
+    }
     const logoutBtn = document.getElementById('cloud-logout');
-    logoutBtn.onclick = async () => {
-        await logoutCollab();
-        await renderCloudHome();
-    };
+    if (logoutBtn) {
+        logoutBtn.onclick = async () => {
+            await logoutCollab();
+            await renderCloudHome();
+        };
+    }
     if (saveBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
         saveBtn.disabled = true;
         saveBtn.title = isCloudBoardActive() ? 'Droits insuffisants' : 'Aucun board actif';
@@ -5289,7 +5428,7 @@ function openQuickCreateModal() {
                 return;
             }
 
-            const targetNode = ensureNode(draftTargetType, finalName);
+            const targetNode = createNodeAtPosition(draftTargetType, finalName, makeSpawnPosition(null, 0, 0));
             logNodeAdded(targetNode.name, actorName);
             refreshLists();
             restartSim();
@@ -5325,7 +5464,18 @@ function openQuickCreateModal() {
                 }
                 const alreadyExisting = findNodeByName(endpoint?.name);
                 if (alreadyExisting) return alreadyExisting;
-                const createdNode = ensureNode(endpoint?.type || TYPES.PERSON, endpoint?.name || defaultBaseName());
+                const viewportCenter = getViewportWorldCenter();
+                let spawnPosition = makeSpawnPosition(viewportCenter, 0, 0);
+                if (endpoint === sourceEndpoint && targetEndpoint?.mode === 'existing' && targetEndpoint.node) {
+                    spawnPosition = makeSpawnPosition(targetEndpoint.node, -120, 0);
+                } else if (endpoint === targetEndpoint && sourceEndpoint?.mode === 'existing' && sourceEndpoint.node) {
+                    spawnPosition = makeSpawnPosition(sourceEndpoint.node, 120, 0);
+                } else if (endpoint === sourceEndpoint) {
+                    spawnPosition = makeSpawnPosition(viewportCenter, -72, 0);
+                } else if (endpoint === targetEndpoint) {
+                    spawnPosition = makeSpawnPosition(viewportCenter, 72, 0);
+                }
+                const createdNode = createNodeAtPosition(endpoint?.type || TYPES.PERSON, endpoint?.name || defaultBaseName(), spawnPosition);
                 createdNodes.push(createdNode);
                 return createdNode;
             };
@@ -5885,7 +6035,18 @@ function processData(d, mode, options = {}) {
         if (numericIds.length) state.nextId = Math.max(...numericIds) + 1;
         ensureLinkIds();
         updatePersonColors();
+        if (!state.nodes.length) {
+            state.selection = null;
+            clearFocusMode();
+            state.hvtSelectedId = null;
+            state.view.scale = 0.8;
+            state.view.x = 0;
+            state.view.y = 0;
+        }
         restartSim(); refreshLists();
+        if (!state.nodes.length) {
+            recenterGraphView({ save: false });
+        }
         if (!silent) showCustomAlert('OUVERTURE RÉUSSIE.');
     }
     else if (mode === 'merge') {
@@ -7125,10 +7286,58 @@ function setupSearch() {
     });
 }
 
+function getViewportWorldCenter() {
+    const canvas = document.getElementById('graph');
+    if (!canvas) return { x: 0, y: 0 };
+    const width = Number(canvas.clientWidth || canvas.width || 0);
+    const height = Number(canvas.clientHeight || canvas.height || 0);
+    const scale = Number(state.view?.scale || 0);
+    if (!width || !height || !Number.isFinite(scale) || scale <= 0) {
+        return { x: 0, y: 0 };
+    }
+    return screenToWorld(width / 2, height / 2, canvas, state.view);
+}
+
+function placeNodeAtWorldPosition(node, position = null) {
+    const targetX = Number(position?.x);
+    const targetY = Number(position?.y);
+    if (!node || !Number.isFinite(targetX) || !Number.isFinite(targetY)) return node;
+    node.x = targetX;
+    node.y = targetY;
+    node.fx = targetX;
+    node.fy = targetY;
+    node.vx = 0;
+    node.vy = 0;
+    return node;
+}
+
+function createNodeAtPosition(type, name, position = null) {
+    const node = ensureNode(type, name, position && Number.isFinite(Number(position.x)) && Number.isFinite(Number(position.y))
+        ? { x: Number(position.x), y: Number(position.y) }
+        : {});
+    return placeNodeAtWorldPosition(node, position);
+}
+
+function makeSpawnPosition(anchor = null, offsetX = 0, offsetY = 0) {
+    const base = anchor && Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y))
+        ? { x: Number(anchor.x), y: Number(anchor.y) }
+        : getViewportWorldCenter();
+    return {
+        x: base.x + Number(offsetX || 0),
+        y: base.y + Number(offsetY || 0)
+    };
+}
+
 function createNode(type, baseName, options = {}) {
     let name = baseName, i = 1;
     while(state.nodes.find(n => n.name === name)) { name = `${baseName} ${++i}`; }
-    const n = ensureNode(type, name);
+    const viewportCenter = getViewportWorldCenter();
+    const angle = (state.nodes.length + 1) * 1.6180339887;
+    const radius = state.nodes.length ? 26 : 0;
+    const n = createNodeAtPosition(type, name, {
+        x: viewportCenter.x + (Math.cos(angle) * radius),
+        y: viewportCenter.y + (Math.sin(angle) * radius)
+    });
     logNodeAdded(n.name, options.actor);
     zoomToNode(n.id); restartSim();
     scheduleSave();

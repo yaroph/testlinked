@@ -1587,6 +1587,39 @@ export function injectStyles() {
             border-radius: 10px;
             background: rgba(4, 11, 26, 0.46);
         }
+        .cloud-profile-shell {
+            max-width: none;
+        }
+        .cloud-profile-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .cloud-profile-grid .cloud-auth-field.is-span-all {
+            grid-column: 1 / -1;
+        }
+        .cloud-profile-current,
+        .cloud-profile-feedback {
+            padding: 11px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(102, 243, 255, 0.12);
+            background: rgba(4, 11, 26, 0.54);
+        }
+        .cloud-profile-current {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .cloud-profile-current-value {
+            color: #effbff;
+            font-size: 0.98rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .cloud-profile-feedback.is-success {
+            color: #9df5b8;
+            border-color: rgba(157, 245, 184, 0.2);
+            background: rgba(10, 26, 18, 0.52);
+        }
         .cloud-auth-primary,
         .cloud-auth-secondary,
         .cloud-auth-tertiary {
@@ -2039,6 +2072,8 @@ export function injectStyles() {
             display: flex;
             flex-direction: column;
             gap: 12px;
+            width: min(100%, 640px);
+            margin: 0 auto;
         }
         .cloud-guest-layout {
             display: grid;

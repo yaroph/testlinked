@@ -176,3 +176,30 @@ test('sanitizeShareRole degrade owner en editor pour le partage standard', () =>
   assert.equal(__test.sanitizeShareRole('viewer'), 'viewer');
   assert.equal(__test.sanitizeShareRole('editor'), 'editor');
 });
+
+test('getUnsupportedShareRoleMessage force le transfert pour un nouveau lead', () => {
+  assert.equal(
+    __test.getUnsupportedShareRoleMessage(
+      'owner',
+      { ownerId: 'u-owner' },
+      { id: 'u-target' }
+    ),
+    'Utilise "Donner lead" pour changer le lead.'
+  );
+  assert.equal(
+    __test.getUnsupportedShareRoleMessage(
+      'owner',
+      { ownerId: 'u-owner' },
+      { id: 'u-owner' }
+    ),
+    ''
+  );
+  assert.equal(
+    __test.getUnsupportedShareRoleMessage(
+      'viewer',
+      { ownerId: 'u-owner' },
+      { id: 'u-target' }
+    ),
+    ''
+  );
+});

@@ -16,7 +16,130 @@ const {
   resolveAuth,
   userKey,
   usernameKey,
+  getUserBoardIndex,
+  boardKey,
 } = require("../lib/collab");
+
+function createActionError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+async function syncUsernameReferences(store, userId, nextUsername) {
+  const index = await getUserBoardIndex(store, userId);
+  const boardIds = Array.isArray(index?.boardIds) ? index.boardIds : [];
+
+  for (const boardId of boardIds) {
+    const cleanBoardId = String(boardId || "").trim();
+    if (!cleanBoardId) continue;
+
+    const board = await store.get(boardKey(cleanBoardId), { type: "json" });
+    if (!board || typeof board !== "object") continue;
+
+    let changed = false;
+
+    if (String(board.ownerId || "") === String(userId) && String(board.ownerName || "") !== nextUsername) {
+      board.ownerName = nextUsername;
+      changed = true;
+    }
+
+    if (Array.isArray(board.members)) {
+      let memberChanged = false;
+      board.members = board.members.map((member) => {
+        if (String(member?.userId || "") !== String(userId)) return member;
+        if (String(member?.username || "") === nextUsername) return member;
+        memberChanged = true;
+        return {
+          ...member,
+          username: nextUsername,
+        };
+      });
+      changed = changed || memberChanged;
+    }
+
+    if (
+      board.lastEditedBy
+      && String(board.lastEditedBy.userId || "") === String(userId)
+      && String(board.lastEditedBy.username || "") !== nextUsername
+    ) {
+      board.lastEditedBy = {
+        ...board.lastEditedBy,
+        username: nextUsername,
+      };
+      changed = true;
+    }
+
+    if (changed) {
+      await store.setJSON(boardKey(cleanBoardId), board);
+    }
+  }
+}
+
+async function updateUserProfile(store, user, payload = {}) {
+  const currentPassword = String(payload.currentPassword || "");
+  if (!currentPassword) {
+    throw createActionError(400, "Mot de passe actuel requis.");
+  }
+  if (String(user?.passwordHash || "") !== hashPassword(currentPassword)) {
+    throw createActionError(401, "Mot de passe actuel invalide.");
+  }
+
+  const nextUsernameRaw = String(payload.nextUsername || "").trim();
+  const nextPassword = String(payload.nextPassword || "");
+  const nextUser = { ...user };
+  const currentUsername = String(user?.username || "");
+  let usernameChanged = false;
+  let passwordChanged = false;
+
+  if (nextUsernameRaw) {
+    const usernameCheck = normalizeUsername(nextUsernameRaw);
+    if (!usernameCheck.ok) {
+      throw createActionError(400, usernameCheck.reason);
+    }
+    if (usernameCheck.username !== currentUsername) {
+      const existing = await getUserByUsername(store, usernameCheck.username);
+      if (existing && String(existing.id || "") !== String(user.id || "")) {
+        throw createActionError(409, "Ce nom utilisateur existe deja.");
+      }
+      nextUser.username = usernameCheck.username;
+      usernameChanged = true;
+    }
+  }
+
+  if (nextPassword) {
+    if (nextPassword.length < 3) {
+      throw createActionError(400, "Mot de passe trop court (min 3).");
+    }
+    const nextPasswordHash = hashPassword(nextPassword);
+    if (nextPasswordHash === String(user?.passwordHash || "")) {
+      throw createActionError(400, "Le nouveau mot de passe est identique.");
+    }
+    nextUser.passwordHash = nextPasswordHash;
+    passwordChanged = true;
+  }
+
+  if (!usernameChanged && !passwordChanged) {
+    throw createActionError(400, "Aucune modification a enregistrer.");
+  }
+
+  nextUser.updatedAt = nowIso();
+  await store.setJSON(userKey(nextUser.id), nextUser);
+
+  if (usernameChanged) {
+    await store.setJSON(usernameKey(nextUser.username), { userId: nextUser.id, username: nextUser.username });
+    if (currentUsername && currentUsername !== nextUser.username) {
+      await store.delete(usernameKey(currentUsername));
+    }
+    await syncUsernameReferences(store, nextUser.id, nextUser.username);
+  }
+
+  return {
+    user: nextUser,
+    usernameChanged,
+    passwordChanged,
+  };
+}
 
 exports.handler = async (event) => {
   connectLambda(event);
@@ -133,5 +256,31 @@ exports.handler = async (event) => {
     return jsonResponse(200, { ok: true });
   }
 
+  if (action === "update_profile") {
+    if (event.httpMethod !== "POST") {
+      return errorResponse(400, "update_profile doit etre en POST.");
+    }
+
+    const auth = await resolveAuth(event, body);
+    if (!auth.ok) {
+      return errorResponse(auth.statusCode || 401, auth.error || "Session invalide.");
+    }
+
+    try {
+      const result = await updateUserProfile(auth.store, auth.user, body);
+      return jsonResponse(200, {
+        ok: true,
+        user: safeUser(result.user),
+      });
+    } catch (error) {
+      return errorResponse(error.statusCode || 400, error.message || "Erreur profil.");
+    }
+  }
+
   return errorResponse(400, "Action inconnue.");
+};
+
+exports.__test = {
+  syncUsernameReferences,
+  updateUserProfile,
 };

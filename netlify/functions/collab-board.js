@@ -1216,6 +1216,17 @@ function sanitizeShareRole(inputRole) {
   return role === ROLE_OWNER ? ROLE_EDITOR : role;
 }
 
+function getUnsupportedShareRoleMessage(inputRole, board, targetUser) {
+  const requestedRole = sanitizeRole(inputRole, ROLE_EDITOR);
+  if (
+    requestedRole === ROLE_OWNER
+    && String(targetUser?.id || "") !== String(board?.ownerId || "")
+  ) {
+    return 'Utilise "Donner lead" pour changer le lead.';
+  }
+  return "";
+}
+
 function sleep(ms) {
   const safeMs = Math.max(0, Number(ms) || 0);
   return new Promise((resolve) => setTimeout(resolve, safeMs));
@@ -1655,6 +1666,10 @@ exports.handler = async (event) => {
 
     const targetUser = await getUserByUsername(store, usernameCheck.username);
     if (!targetUser) return errorResponse(404, "Utilisateur introuvable.");
+    const unsupportedShareRoleMessage = getUnsupportedShareRoleMessage(body.role, board, targetUser);
+    if (unsupportedShareRoleMessage) {
+      return errorResponse(400, unsupportedShareRoleMessage);
+    }
 
     const memberRole = sanitizeShareRole(body.role);
     const now = nowIso();
@@ -1807,6 +1822,7 @@ exports.__test = {
   normalizeBoardPayload,
   mergeBoardPayload,
   sanitizeShareRole,
+  getUnsupportedShareRoleMessage,
   listBoardPresence,
   touchBoardPresence,
   searchUsersForBoard,

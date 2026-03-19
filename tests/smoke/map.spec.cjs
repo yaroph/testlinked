@@ -190,3 +190,54 @@ test('map file modal only lists map boards', async ({ page }) => {
         return lastRequest?.payload?.page || '';
     }).toBe('map');
 });
+
+test('map cloud profile editor updates the account username and password', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+    });
+
+    const api = await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        authPassword: 'secret123',
+        boards: [{
+            id: 'board-map-owner',
+            title: 'Map Owner',
+            role: 'owner',
+            page: 'map',
+            members: [{ userId: 'u-smoke', username: 'smoke-user', role: 'owner' }],
+        }],
+    });
+
+    await page.goto('/map/');
+    await waitForMapReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await page.click('#cloud-open-profile');
+
+    await expect(page.locator('#cloud-profile-username')).toBeVisible();
+    await page.fill('#cloud-profile-username', 'smoke-user-2');
+    await page.fill('#cloud-profile-current-pass', 'secret123');
+    await page.fill('#cloud-profile-next-pass', 'secret456');
+    await page.click('#cloud-profile-save');
+
+    await expect(page.locator('.cloud-profile-current-value')).toContainText('smoke-user-2');
+    await expect(page.locator('.cloud-profile-feedback')).toContainText('Profil mis a jour');
+
+    await page.click('#cloud-profile-back');
+    await expect(page.locator('.cloud-home-title')).toContainText('smoke-user-2');
+
+    await expect.poll(() => {
+        const lastRequest = [...api.requests]
+            .reverse()
+            .find((entry) => entry.endpoint === 'collab-auth' && entry.action === 'update_profile');
+        return lastRequest?.payload || null;
+    }).toMatchObject({
+        currentPassword: 'secret123',
+        nextUsername: 'smoke-user-2',
+        nextPassword: 'secret456',
+    });
+});

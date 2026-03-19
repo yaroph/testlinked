@@ -215,12 +215,12 @@ export function updatePersonColors() {
     });
 }
 
-export function ensureNode(type, name) {
+export function ensureNode(type, name, options = {}) {
     let n = state.nodes.find(x => x.name.toLowerCase() === name.toLowerCase());
     if (!n) {
         pushHistory();
-        const startX = (Math.random() - 0.5) * 50;
-        const startY = (Math.random() - 0.5) * 50;
+        const startX = Number.isFinite(Number(options?.x)) ? Number(options.x) : ((Math.random() - 0.5) * 50);
+        const startY = Number.isFinite(Number(options?.y)) ? Number(options.y) : ((Math.random() - 0.5) * 50);
         n = {
             id: uid(), name, type,
             x: startX, y: startY, fx: startX, fy: startY, vx: 0, vy: 0,

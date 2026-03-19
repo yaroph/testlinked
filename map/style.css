@@ -2876,6 +2876,8 @@ body.map-shell .cloud-guest-panel {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    width: min(100%, 640px);
+    margin: 0 auto;
 }
 
 body.map-shell .cloud-guest-layout {
@@ -3311,6 +3313,46 @@ body.map-shell .cloud-auth-hint {
     border: 1px solid rgba(102, 243, 255, 0.1);
     border-radius: 10px;
     background: rgba(4, 11, 26, 0.46);
+}
+
+body.map-shell .cloud-profile-shell {
+    max-width: none;
+}
+
+body.map-shell .cloud-profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+body.map-shell .cloud-profile-grid .cloud-auth-field.is-span-all {
+    grid-column: 1 / -1;
+}
+
+body.map-shell .cloud-profile-current,
+body.map-shell .cloud-profile-feedback {
+    padding: 11px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    background: rgba(4, 11, 26, 0.54);
+}
+
+body.map-shell .cloud-profile-current {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+body.map-shell .cloud-profile-current-value {
+    color: #effbff;
+    font-size: 0.98rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+body.map-shell .cloud-profile-feedback.is-success {
+    color: #9df5b8;
+    border-color: rgba(157, 245, 184, 0.2);
+    background: rgba(10, 26, 18, 0.52);
 }
 
 body.map-shell .cloud-auth-primary,

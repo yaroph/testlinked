@@ -24,6 +24,7 @@ async function installNetlifyMocks(page, options = {}) {
     const authUser = options.authUser && typeof options.authUser === 'object'
         ? clone(options.authUser)
         : { username: 'smoke-user' };
+    let authPassword = String(options.authPassword || 'secret');
     const alertsStore = {
         nextId: 1,
         alerts: Array.isArray(options.alerts) ? clone(options.alerts) : [],
@@ -86,6 +87,27 @@ async function installNetlifyMocks(page, options = {}) {
 
             if (action === 'logout') {
                 return jsonResponse(route, 200, { ok: true });
+            }
+
+            if (action === 'update_profile') {
+                if (String(body.currentPassword || '') !== authPassword) {
+                    return jsonResponse(route, 401, {
+                        ok: false,
+                        error: 'Mot de passe actuel invalide.',
+                    });
+                }
+                const nextUsername = String(body.nextUsername || '').trim();
+                const nextPassword = String(body.nextPassword || '');
+                if (nextUsername) {
+                    authUser.username = nextUsername;
+                }
+                if (nextPassword) {
+                    authPassword = nextPassword;
+                }
+                return jsonResponse(route, 200, {
+                    ok: true,
+                    user: clone(authUser),
+                });
             }
 
             return jsonResponse(route, 200, { ok: true });

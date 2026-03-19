@@ -91,6 +91,7 @@ const collab = {
     presenceInFlight: false,
     homePanel: 'cloud',
     homeRenderSeq: 0,
+    profileFlash: '',
     realtimeSession: null,
     realtimeFallbackActive: false,
     realtimeTextBindings: new Map(),
@@ -1614,7 +1615,7 @@ function bindCloudActionButton(button, handler) {
 }
 
 function getCloudModalStatusLabel() {
-    if (!collab.user) return 'Connexion requise';
+    if (!collab.user) return 'Mode local';
     return isCloudBoardActive()
         ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})`
         : 'Aucun board cloud actif';
@@ -1622,7 +1623,7 @@ function getCloudModalStatusLabel() {
 
 function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du cloud...') {
     const safePanel = localPanel === 'local' ? 'local' : 'cloud';
-    const title = collab.user ? escapeHtml(collab.user.username || 'Session cloud') : 'Session invite';
+    const title = collab.user ? escapeHtml(collab.user.username || 'Compte cloud') : 'Cloud';
     const syncLabel = getCloudModalStatusLabel();
 
     openCloudModal(
@@ -1658,13 +1659,23 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
                     </div>
                 </div>
                 <div class="cloud-status-bar">
-                    <span class="cloud-status-pill">${collab.user ? `Connecte: ${escapeHtml(collab.user.username || '')}` : 'Invite'}</span>
+                    <span class="cloud-status-pill">${collab.user ? `Compte: ${escapeHtml(collab.user.username || '')}` : 'Mode local'}</span>
                     <span class="cloud-status-pill ${isCloudBoardActive() ? 'cloud-status-active' : ''}">${syncLabel}</span>
                 </div>
             </div>
         `,
-        ''
+        collab.user && safePanel === 'cloud'
+            ? `<button type="button" id="cloud-open-profile" class="btn-modal-cancel cloud-auth-secondary">Profil</button>`
+            : ''
     );
+
+    const profileBtn = document.getElementById('cloud-open-profile');
+    if (profileBtn) {
+        bindCloudActionButton(profileBtn, async () => {
+            clearCloudProfileFlash();
+            await renderCloudProfile();
+        });
+    }
 
     bindCloudHomeTabs();
 }
@@ -1853,6 +1864,135 @@ async function runCloudAuth(action) {
         await customAlert('ERREUR AUTH', escapeHtml(e.message || 'Erreur inconnue.'));
         return false;
     }
+}
+
+function clearCloudProfileFlash() {
+    collab.profileFlash = '';
+}
+
+async function runCloudProfileUpdate() {
+    if (!collab.user) return false;
+
+    const nextUsernameInput = document.getElementById('cloud-profile-username');
+    const currentPassInput = document.getElementById('cloud-profile-current-pass');
+    const nextPassInput = document.getElementById('cloud-profile-next-pass');
+    const currentUsername = String(collab.user.username || '').trim();
+    const nextUsernameRaw = String(nextUsernameInput?.value || '').trim();
+    const currentPassword = String(currentPassInput?.value || '');
+    const nextPassword = String(nextPassInput?.value || '');
+    const nextUsername = nextUsernameRaw && nextUsernameRaw !== currentUsername ? nextUsernameRaw : '';
+
+    if (!nextUsername && !nextPassword) {
+        await customAlert('PROFIL', 'Ajoute un nouvel identifiant ou un nouveau mot de passe.');
+        return false;
+    }
+    if (!currentPassword) {
+        await customAlert('PROFIL', 'Entre ton mot de passe actuel.');
+        return false;
+    }
+
+    clearCloudProfileFlash();
+    try {
+        const res = await collabAuthRequest('update_profile', {
+            currentPassword,
+            nextUsername,
+            nextPassword,
+        });
+        collab.user = res.user || collab.user;
+        collab.profileFlash = 'Profil mis a jour.';
+        persistCollabState();
+        syncCloudStatus();
+        if (isCloudBoardActive()) {
+            updateMapCloudPresence().catch(() => {});
+        }
+        await renderCloudProfile();
+        return true;
+    } catch (e) {
+        await customAlert('ERREUR AUTH', escapeHtml(e.message || 'Erreur inconnue.'));
+        return false;
+    }
+}
+
+async function renderCloudProfile() {
+    if (!collab.user) {
+        await renderCloudHome();
+        return;
+    }
+
+    openCloudModal(
+        'PROFIL',
+        `
+            <div class="cloud-shell">
+                <div class="cloud-home-head">
+                    <div class="cloud-home-heading">
+                        <div class="cloud-home-kicker">Compte cloud</div>
+                        <div class="cloud-home-title">Profil</div>
+                    </div>
+                </div>
+                <div class="cloud-column cloud-panel-shell">
+                    <div class="modal-tool cloud-auth-shell cloud-profile-shell">
+                        <div class="cloud-auth-badge">Profil</div>
+                        <h3 class="cloud-auth-title">${escapeHtml(collab.user.username || 'Compte cloud')}</h3>
+                        <div class="cloud-auth-copy">Change ton identifiant ou ton mot de passe. Laisse vide ce que tu veux garder.</div>
+                        ${collab.profileFlash ? `<div class="cloud-profile-feedback is-success">${escapeHtml(collab.profileFlash)}</div>` : ''}
+                        <div class="cloud-profile-current">
+                            <span class="cloud-auth-label">Compte actuel</span>
+                            <span class="cloud-profile-current-value">${escapeHtml(collab.user.username || '')}</span>
+                        </div>
+                        <div class="cloud-auth-grid cloud-profile-grid">
+                            <label class="cloud-auth-field is-span-all">
+                                <span class="cloud-auth-label">Nouvel identifiant</span>
+                                <input id="cloud-profile-username" type="text" placeholder="${escapeHtml(collab.user.username || 'nouvel_identifiant')}" class="cloud-auth-input modal-input-standalone" autocomplete="username" />
+                            </label>
+                            <label class="cloud-auth-field">
+                                <span class="cloud-auth-label">Mot de passe actuel</span>
+                                <input id="cloud-profile-current-pass" type="password" placeholder="Mot de passe actuel" class="cloud-auth-input modal-input-standalone" autocomplete="current-password" />
+                            </label>
+                            <label class="cloud-auth-field">
+                                <span class="cloud-auth-label">Nouveau mot de passe</span>
+                                <input id="cloud-profile-next-pass" type="password" placeholder="Nouveau mot de passe" class="cloud-auth-input modal-input-standalone" autocomplete="new-password" />
+                            </label>
+                        </div>
+                        <div class="cloud-auth-hint">Le meme compte fonctionne sur Point et Map.</div>
+                    </div>
+                </div>
+                <div class="cloud-status-bar">
+                    <span class="cloud-status-pill">Compte: ${escapeHtml(collab.user.username || '')}</span>
+                    <span class="cloud-status-pill ${isCloudBoardActive() ? 'cloud-status-active' : ''}">${getCloudModalStatusLabel()}</span>
+                </div>
+            </div>
+        `,
+        `
+            <button type="button" id="cloud-profile-back" class="btn-modal-cancel cloud-auth-secondary">Retour</button>
+            <button type="button" id="cloud-profile-save" class="btn-modal-confirm cloud-auth-primary">Enregistrer</button>
+        `
+    );
+
+    const backBtn = document.getElementById('cloud-profile-back');
+    if (backBtn) {
+        bindCloudActionButton(backBtn, async () => {
+            clearCloudProfileFlash();
+            await renderCloudHome();
+        });
+    }
+
+    const saveBtn = document.getElementById('cloud-profile-save');
+    if (saveBtn) {
+        bindCloudActionButton(saveBtn, async () => {
+            await runCloudProfileUpdate();
+        });
+    }
+
+    Array.from(document.querySelectorAll('#cloud-profile-username, #cloud-profile-current-pass, #cloud-profile-next-pass')).forEach((field) => {
+        field.onkeydown = (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                runCloudProfileUpdate().catch(() => {});
+            }
+        };
+    });
+
+    document.getElementById('cloud-profile-username')?.focus();
 }
 
 async function disconnectCurrentCloudBoard(options = {}) {
@@ -2319,21 +2459,10 @@ async function renderCloudHome() {
     if (!collab.user) {
         const guestCloudPanel = `
             <div class="cloud-local-panel cloud-guest-panel">
-                <div class="cloud-guest-layout">
-                    <section class="cloud-guest-hero">
-                        <div class="cloud-guest-kicker">Mode invite</div>
-                        <div class="cloud-guest-title">Cloud verrouille</div>
-                        <div class="cloud-guest-copy">Tu gardes toutes les actions locales. Pour creer, ouvrir ou sauvegarder dans le cloud, reconnecte-toi avec ton mot de passe.</div>
-                        <div class="cloud-guest-pills">
-                            <span class="cloud-guest-pill">Local dispo</span>
-                            <span class="cloud-guest-pill">Map</span>
-                            <span class="cloud-guest-pill">Connexion requise</span>
-                        </div>
-                    </section>
                     <div class="modal-tool cloud-auth-shell cloud-auth-shell-inline cloud-auth-shell-guest">
                         <div class="cloud-auth-badge">Cloud</div>
-                        <h3 class="cloud-auth-title">Connexion au cloud</h3>
-                        <div class="cloud-auth-copy">Entre simplement un identifiant et un mot de passe. Si le compte n existe pas encore, tu peux le creer ici.</div>
+                        <h3 class="cloud-auth-title">Compte cloud</h3>
+                        <div class="cloud-auth-copy">Identifiant + mot de passe. Cree le compte ici si besoin.</div>
                         <div class="cloud-auth-grid">
                             <label class="cloud-auth-field">
                                 <span class="cloud-auth-label">Identifiant</span>
@@ -2344,15 +2473,11 @@ async function renderCloudHome() {
                                 <input id="cloud-auth-pass" type="password" placeholder="Mot de passe" class="cloud-auth-input modal-input-standalone" autocomplete="current-password" />
                             </label>
                         </div>
-                        <div class="cloud-auth-hint">Le meme compte fonctionne aussi sur la carte. Sans connexion, tu restes en local.</div>
+                        <div class="cloud-auth-hint">Le meme compte fonctionne sur Point et Map.</div>
                     </div>
-                </div>
             </div>
         `;
         const panelBody = localPanel === 'local' ? localRows : guestCloudPanel;
-        const panelShellClass = localPanel === 'cloud'
-            ? 'cloud-column cloud-panel-shell cloud-panel-shell-guest'
-            : 'cloud-column cloud-panel-shell';
 
         openCloudModal(
             'FICHIER',
@@ -2361,24 +2486,23 @@ async function renderCloudHome() {
                     <div class="cloud-home-head">
                         <div class="cloud-home-heading">
                             <div class="cloud-home-kicker">Fichier</div>
-                            <div class="cloud-home-title">Session invite</div>
+                            <div class="cloud-home-title">Cloud</div>
                         </div>
                         <div class="cloud-home-tab-group">
                             <button type="button" id="cloud-home-tab-cloud" class="cloud-home-tab ${localPanel === 'cloud' ? 'is-active' : ''}">Cloud</button>
                             <button type="button" id="cloud-home-tab-local" class="cloud-home-tab cloud-home-tab-alt ${localPanel === 'local' ? 'is-active' : ''}">Local</button>
                         </div>
                     </div>
-                    <div class="${panelShellClass}">${panelBody}</div>
+                    <div class="cloud-column cloud-panel-shell">${panelBody}</div>
                     <div class="cloud-status-bar">
-                        <span class="cloud-status-pill">Invite</span>
-                        <span id="cloudModalSyncInfo" class="cloud-status-pill">Connexion requise</span>
+                        <span class="cloud-status-pill">Mode local</span>
                     </div>
                 </div>
             `,
             localPanel === 'cloud'
                 ? `
-                    <button type="button" id="cloud-auth-register" class="btn-modal-cancel cloud-auth-secondary">Creer un compte</button>
-                    <button type="button" id="cloud-auth-login" class="btn-modal-confirm cloud-auth-primary">Se connecter</button>
+                    <button type="button" id="cloud-auth-register" class="btn-modal-cancel cloud-auth-secondary">Creer</button>
+                    <button type="button" id="cloud-auth-login" class="btn-modal-confirm cloud-auth-primary">Connexion</button>
                 `
                 : ''
         );
@@ -2400,14 +2524,13 @@ async function renderCloudHome() {
             });
         }
 
-        const passInput = document.getElementById('cloud-auth-pass');
-        if (passInput) {
-            passInput.onkeydown = (event) => {
+        Array.from(document.querySelectorAll('#cloud-auth-user, #cloud-auth-pass')).forEach((field) => {
+            field.onkeydown = (event) => {
                 if (event.key === 'Enter') {
                     runCloudAuth('login').catch(() => {});
                 }
             };
-        }
+        });
         return;
     }
 
@@ -2478,7 +2601,7 @@ async function renderCloudHome() {
                 </div>
                 <div class="cloud-column cloud-panel-shell">${panelBody}</div>
                 <div class="cloud-status-bar">
-                    <span class="cloud-status-pill">Connecte: ${escapeHtml(collab.user.username || '')}</span>
+                    <span class="cloud-status-pill">Compte: ${escapeHtml(collab.user.username || '')}</span>
                     <span id="cloudModalSyncInfo" class="cloud-status-pill ${isCloudBoardActive() ? 'cloud-status-active' : ''}">
                         ${getCloudModalStatusLabel()}
                     </span>
@@ -2489,9 +2612,13 @@ async function renderCloudHome() {
             ? `
                 <button type="button" id="cloud-create-board" class="btn-modal-confirm">Nouveau</button>
                 <button type="button" id="cloud-save-active" class="btn-modal-cancel">Sauvegarder</button>
+                <button type="button" id="cloud-open-profile" class="btn-modal-cancel cloud-auth-secondary">Profil</button>
                 <button type="button" id="cloud-logout" class="btn-modal-cancel">Deconnexion</button>
             `
-            : `<button type="button" id="cloud-logout" class="btn-modal-cancel">Deconnexion</button>`
+            : `
+                <button type="button" id="cloud-open-profile" class="btn-modal-cancel cloud-auth-secondary">Profil</button>
+                <button type="button" id="cloud-logout" class="btn-modal-cancel">Deconnexion</button>
+            `
     );
 
     const saveActiveBtn = document.getElementById('cloud-save-active');
@@ -2520,6 +2647,14 @@ async function renderCloudHome() {
         bindCloudActionButton(saveActiveBtn, async () => {
             await saveActiveCloudBoard({ manual: true, quiet: false });
             await renderCloudHome();
+        });
+    }
+
+    const profileBtn = document.getElementById('cloud-open-profile');
+    if (profileBtn) {
+        bindCloudActionButton(profileBtn, async () => {
+            clearCloudProfileFlash();
+            await renderCloudProfile();
         });
     }
 

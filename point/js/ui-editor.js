@@ -237,6 +237,24 @@ function isUltraWideEditorLayout() {
     return window.matchMedia('(min-width: 2560px) and (min-height: 1200px)').matches;
 }
 
+function readCssPxVariable(name, fallback = 0, source = document.documentElement) {
+    if (!source) return Number(fallback) || 0;
+    const value = Number.parseFloat(window.getComputedStyle(source).getPropertyValue(String(name || '')));
+    return Number.isFinite(value) ? value : Number(fallback) || 0;
+}
+
+function getDefaultEditorReservedRightGap(rightPanel = document.getElementById('right')) {
+    const sideClearance = readCssPxVariable('--editor-side-clearance', isUltraWideEditorLayout() ? 156 : 124);
+    const paddingRight = rightPanel ? readCssPxVariable('padding-right', 0, rightPanel) : 0;
+    return Math.max(8, sideClearance + paddingRight);
+}
+
+function getDefaultEditorTopOffset(rightPanel = document.getElementById('right')) {
+    const panelPaddingTop = rightPanel ? readCssPxVariable('padding-top', 0, rightPanel) : 0;
+    if (panelPaddingTop > 0) return 0;
+    return isUltraWideEditorLayout() ? 8 : 6;
+}
+
 function applyDefaultEditorPosition(editorPanel, rightPanel = document.getElementById('right')) {
     if (!editorPanel) return;
     if (isCompactLayout()) return;
@@ -246,8 +264,8 @@ function applyDefaultEditorPosition(editorPanel, rightPanel = document.getElemen
     const inset = isUltraWideEditorLayout() ? 28 : 18;
     const maxX = Math.max(inset, containerRect.width - editorPanel.offsetWidth - inset);
     const maxY = Math.max(inset, containerRect.height - editorPanel.offsetHeight - inset);
-    const desiredLeft = maxX;
-    const desiredTop = Math.max(inset, containerRect.height - editorPanel.offsetHeight - inset);
+    const desiredLeft = Math.max(inset, containerRect.width - editorPanel.offsetWidth - getDefaultEditorReservedRightGap(rightPanel));
+    const desiredTop = Math.min(Math.max(0, getDefaultEditorTopOffset(rightPanel)), maxY);
 
     editorPanel.style.left = `${Math.min(desiredLeft, maxX)}px`;
     editorPanel.style.top = `${Math.min(desiredTop, maxY)}px`;
@@ -791,7 +809,10 @@ function setupEditorListeners(n) {
 
         let target = resolveQuickLinkTarget();
         if (!target) {
-            target = ensureNode(selectedType, name);
+            target = ensureNode(selectedType, name, {
+                x: Number(n.x || 0) + 120,
+                y: Number(n.y || 0)
+            });
             logNodeAdded(target.name, n.name);
         }
 

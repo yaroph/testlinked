@@ -79,6 +79,57 @@ test('point guest file menu keeps local actions and auth-gated cloud access', as
     await expect(page.locator('#cloud-auth-pass')).toBeVisible();
 });
 
+test('point cloud profile editor updates the account username and password', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+    });
+
+    const api = await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        authPassword: 'secret123',
+        boards: [{
+            id: 'board-point-owner',
+            title: 'Point Owner',
+            role: 'owner',
+            page: 'point',
+            members: [{ userId: 'u-smoke', username: 'smoke-user', role: 'owner' }],
+        }],
+    });
+
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await page.click('#cloud-open-profile');
+
+    await expect(page.locator('#cloud-profile-username')).toBeVisible();
+    await page.fill('#cloud-profile-username', 'smoke-user-2');
+    await page.fill('#cloud-profile-current-pass', 'secret123');
+    await page.fill('#cloud-profile-next-pass', 'secret456');
+    await page.click('#cloud-profile-save');
+
+    await expect(page.locator('.cloud-profile-current-value')).toContainText('smoke-user-2');
+    await expect(page.locator('.cloud-profile-feedback')).toContainText('Profil mis a jour');
+
+    await page.click('#cloud-profile-back');
+    await expect(page.locator('.cloud-home-title')).toContainText('smoke-user-2');
+
+    await expect.poll(() => {
+        const lastRequest = [...api.requests]
+            .reverse()
+            .find((entry) => entry.endpoint === 'collab-auth' && entry.action === 'update_profile');
+        return lastRequest?.payload || null;
+    }).toMatchObject({
+        currentPassword: 'secret123',
+        nextUsername: 'smoke-user-2',
+        nextPassword: 'secret456',
+    });
+});
+
 test('point ai link panel stays compact on ultra-wide screens', async ({ page }) => {
     await installNetlifyMocks(page);
 
@@ -249,7 +300,7 @@ test('point editor stays open while panning and closes on a single empty click',
     await expect(page.locator('#editor')).toBeHidden();
 });
 
-test('point editor docks to the bottom right on ultra-wide screens', async ({ page }) => {
+test('point editor docks to the top right slot on ultra-wide screens', async ({ page }) => {
     await installNetlifyMocks(page);
 
     await page.setViewportSize({ width: 2560, height: 1440 });
@@ -268,9 +319,87 @@ test('point editor docks to the bottom right on ultra-wide screens', async ({ pa
     const rightBox = await page.locator('#right').boundingBox();
     const editorBox = await page.locator('#editor').boundingBox();
     if (!rightBox || !editorBox) throw new Error('Editor box unavailable');
-    expect((rightBox.x + rightBox.width) - (editorBox.x + editorBox.width)).toBeLessThanOrEqual(90);
-    expect((rightBox.y + rightBox.height) - (editorBox.y + editorBox.height)).toBeLessThanOrEqual(90);
+    const reservedRightGap = await page.evaluate(() => {
+        const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--editor-side-clearance'));
+        return Number.isFinite(value) ? value : 0;
+    });
+    const actualRightGap = (rightBox.x + rightBox.width) - (editorBox.x + editorBox.width);
+    const topGap = editorBox.y - rightBox.y;
+
+    expect(actualRightGap).toBeGreaterThanOrEqual(Math.max(120, reservedRightGap - 30));
+    expect(actualRightGap).toBeLessThanOrEqual(reservedRightGap + 60);
+    expect(topGap).toBeLessThanOrEqual(50);
     expect(editorBox.height).toBeLessThanOrEqual(920);
+});
+
+test('point empty cloud board keeps freshly linked nodes inside the viewport', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+        localStorage.setItem('pointPageState_v13', JSON.stringify({
+            nodes: [],
+            links: [],
+            view: { x: 180000, y: -140000, scale: 0.8 },
+            physicsSettings: {},
+            nextId: 1,
+        }));
+    });
+
+    await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        boards: [{
+            id: 'board-empty-cloud',
+            title: 'Board Empty',
+            role: 'owner',
+            page: 'point',
+            members: [{ userId: 'u-smoke', username: 'smoke-user', role: 'owner' }],
+            data: { meta: {}, physicsSettings: {}, nodes: [], links: [] },
+            presence: [],
+        }],
+    });
+
+    await page.goto('/point/?board=board-empty-cloud');
+    await waitForPointReady(page);
+    await page.waitForTimeout(250);
+
+    await page.click('#btnQuickCreate');
+    await page.fill('#quick-link-source', 'Alpha Spawn');
+    await page.fill('#quick-link-target', 'Bravo Spawn');
+    await page.click('#quick-link-apply');
+    await page.waitForTimeout(700);
+
+    const snapshot = await page.evaluate(() => {
+        const raw = localStorage.getItem('pointPageState_v13');
+        const data = raw ? JSON.parse(raw) : null;
+        const canvas = document.getElementById('graph');
+        const width = Number(canvas?.clientWidth || canvas?.width || 0);
+        const height = Number(canvas?.clientHeight || canvas?.height || 0);
+        return {
+            width,
+            height,
+            nodes: Array.isArray(data?.nodes) ? data.nodes.map((node) => ({
+                name: String(node?.name || ''),
+                screenX: (Number(node?.x || 0) * Number(data?.view?.scale || 1)) + Number(data?.view?.x || 0) + (width / 2),
+                screenY: (Number(node?.y || 0) * Number(data?.view?.scale || 1)) + Number(data?.view?.y || 0) + (height / 2),
+            })) : [],
+        };
+    });
+
+    const alpha = snapshot.nodes.find((node) => node.name === 'Alpha Spawn');
+    const bravo = snapshot.nodes.find((node) => node.name === 'Bravo Spawn');
+    expect(alpha).toBeTruthy();
+    expect(bravo).toBeTruthy();
+    expect(alpha.screenX).toBeGreaterThan(40);
+    expect(alpha.screenX).toBeLessThan(snapshot.width - 40);
+    expect(alpha.screenY).toBeGreaterThan(40);
+    expect(alpha.screenY).toBeLessThan(snapshot.height - 40);
+    expect(bravo.screenX).toBeGreaterThan(40);
+    expect(bravo.screenX).toBeLessThan(snapshot.width - 40);
+    expect(bravo.screenY).toBeGreaterThan(40);
+    expect(bravo.screenY).toBeLessThan(snapshot.height - 40);
 });
 
 test('point file merge keeps person and company separate when they only share a phone number', async ({ page }) => {
@@ -491,6 +620,36 @@ test('point owner can open the Gerer board panel', async ({ page }) => {
 
     await expect(page.locator('.cloud-board-manage-head')).toBeVisible();
     await expect(page.locator('.modal-tool-title')).toContainText('Gestion du board');
+});
+
+test('point board manager ne propose plus owner dans le partage', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+    });
+
+    await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        boards: [{
+            id: 'board-owner',
+            title: 'Board Owner',
+            role: 'owner',
+            page: 'point',
+            members: [{ userId: 'u-smoke', username: 'smoke-user', role: 'owner' }],
+            onlineUsers: ['u-smoke'],
+        }],
+    });
+
+    await page.goto('/point/');
+    await waitForPointReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await page.click('.cloud-manage-board');
+    await expect(page.locator('#cloud-share-role')).toBeVisible();
+    await expect(page.locator('#cloud-share-role option[value="owner"]')).toHaveCount(0);
 });
 
 test('point file modal only lists point boards', async ({ page }) => {
