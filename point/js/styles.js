@@ -2976,6 +2976,14 @@ export function injectStyles() {
         }
         #editorBody {
             pointer-events: none;
+            overflow: visible;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        #editorBody::-webkit-scrollbar {
+            width: 0;
+            height: 0;
+            display: none;
         }
         .editor-main-card *,
         .editor-side-group .mini-btn,
@@ -4548,6 +4556,7 @@ export function injectStyles() {
             }
             #editorBody {
                 max-height: none;
+                overflow: visible;
             }
             .editor-adv-primary-row,
             .editor-merge-row,
