@@ -6,7 +6,7 @@ import { gpsToPercentage } from './utils.js';
 import { renderAll, getMapPercentCoords } from './render.js';
 import { ICONS } from './constants.js';
 import { api } from './api.js';
-import { initCloudCollab, openCloudMenu, getCloudSaveModalOptions } from './cloud.js';
+import { initCloudCollab, openCloudMenu, getCloudSaveModalOptions, mapDebugLogger } from './cloud.js';
 import { initAlertPickerMode, loadAlertFromUrl } from './alerts.js';
 import { createMapGroup } from '../../shared/js/map-board.mjs';
 import { startDrawingCircle } from './zone-editor.js';
@@ -333,6 +333,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Chargement
     const localData = loadLocalState();
+    const groupsCount = Array.isArray(localData?.groups) ? localData.groups.length : 0;
+    let pointsCount = 0;
+    let zonesCount = 0;
+    (Array.isArray(localData?.groups) ? localData.groups : []).forEach((group) => {
+        pointsCount += Array.isArray(group?.points) ? group.points.length : 0;
+        zonesCount += Array.isArray(group?.zones) ? group.zones.length : 0;
+    });
+    mapDebugLogger.log('boot-local-state', {
+        hasData: Boolean(localData),
+        groups: groupsCount,
+        points: pointsCount,
+        zones: zonesCount,
+        fileName: String(localData?.currentFileName || state.currentFileName || '')
+    });
     if (localData && localData.groups) {
         applyMapBoardData(localData);
         if (localData.currentFileName) state.currentFileName = localData.currentFileName;
@@ -357,6 +371,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     await initCloudCollab();
+    mapDebugLogger.log('boot-cloud-init-finished', {
+        fileName: String(state.currentFileName || '')
+    });
     await loadAlertFromUrl();
 
     // Undo

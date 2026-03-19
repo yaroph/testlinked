@@ -34,6 +34,7 @@ import {
 import { createRealtimeBoardSession } from '../../shared/realtime/board-session.mjs';
 import { canUseRealtimeTransport } from '../../shared/realtime/config.mjs';
 import { canonicalizeMapPayload, diffMapOpsWithoutRealtimeText, applyMapOps, stripMapRealtimeTextFields } from '../../shared/realtime/map-doc.mjs';
+import { createBrowserDebugLogger } from '../../shared/js/browser-debug.mjs';
 import {
     MAP_SHARED_SNAPSHOT_STORAGE_KEY,
     clearSharedMapSnapshot,
@@ -103,6 +104,13 @@ const collab = {
     cursorLastSentAt: 0
 };
 
+export const mapDebugLogger = createBrowserDebugLogger({
+    namespace: 'map-diag',
+    queryParams: ['debugCloud', 'debugMap', 'debugMapCloud', 'debug'],
+    storageKeys: ['BNI_DEBUG_MAP', 'BNI_DEBUG_CLOUD', 'BNI_DEBUG_MAP_CLOUD'],
+    windowFlags: ['BNI_DEBUG_MAP', 'BNI_DEBUG_CLOUD']
+});
+
 const COLLAB_AUTOSAVE_DEBOUNCE_MS = 700;
 const COLLAB_AUTOSAVE_RETRY_MS = 250;
 const COLLAB_WATCH_TIMEOUT_MS = 7000;
@@ -144,6 +152,110 @@ function hasOwnField(source, key) {
 
 let realtimeTextTools = null;
 let realtimeTextToolsPromise = null;
+
+function nowDiagMs() {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        return performance.now();
+    }
+    return Date.now();
+}
+
+function elapsedDiagMs(startedAt) {
+    return Math.max(0, Math.round((nowDiagMs() - Number(startedAt || 0)) * 10) / 10);
+}
+
+function shortDiagId(value = '') {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (text.length <= 18) return text;
+    return `${text.slice(0, 8)}...${text.slice(-4)}`;
+}
+
+function getMapPayloadSummary(payload = null) {
+    const source = payload && typeof payload === 'object' ? payload : getCloudMapPayload();
+    const groups = Array.isArray(source?.groups) ? source.groups : [];
+    let points = 0;
+    let zones = 0;
+    let unnamedPoints = 0;
+    let unnamedZones = 0;
+    groups.forEach((group) => {
+        const groupPoints = Array.isArray(group?.points) ? group.points : [];
+        const groupZones = Array.isArray(group?.zones) ? group.zones : [];
+        points += groupPoints.length;
+        zones += groupZones.length;
+        unnamedPoints += groupPoints.reduce((count, point) => count + (String(point?.name || '').trim() ? 0 : 1), 0);
+        unnamedZones += groupZones.reduce((count, zone) => count + (String(zone?.name || '').trim() ? 0 : 1), 0);
+    });
+    return {
+        groups: groups.length,
+        points,
+        zones,
+        unnamedPoints,
+        unnamedZones,
+        tacticalLinks: Array.isArray(source?.tacticalLinks) ? source.tacticalLinks.length : 0,
+        fileName: String(state.currentFileName || '')
+    };
+}
+
+function getMapDiagState(extra = {}) {
+    return {
+        user: collab.user?.username || '',
+        hasToken: Boolean(collab.token),
+        boardId: shortDiagId(collab.activeBoardId),
+        boardTitle: collab.activeBoardTitle || '',
+        realtimeActive: isRealtimeCloudActive(),
+        realtimeFallbackActive: Boolean(collab.realtimeFallbackActive),
+        transportAvailable: canUseRealtimeTransport(),
+        localPersistenceEnabled: isLocalPersistenceEnabled(),
+        workspace: getMapPayloadSummary(),
+        ...extra
+    };
+}
+
+function summarizeMapCloudResponse(action, result = {}) {
+    if (action === 'me') {
+        return {
+            user: result?.user?.username || '',
+            hasUser: Boolean(result?.user)
+        };
+    }
+    if (action === 'list_boards') {
+        return {
+            boardCount: Array.isArray(result?.boards) ? result.boards.length : 0
+        };
+    }
+    if (action === 'watch_board') {
+        return {
+            changed: Boolean(result?.changed),
+            deleted: Boolean(result?.deleted),
+            revoked: Boolean(result?.revoked),
+            updatedAt: String(result?.updatedAt || ''),
+            presenceCount: Array.isArray(result?.presence) ? result.presence.length : 0
+        };
+    }
+    if (action === 'touch_presence' || action === 'clear_presence') {
+        return {
+            presenceCount: Array.isArray(result?.presence) ? result.presence.length : 0
+        };
+    }
+    if ((action === 'get_board' || action === 'save_board' || action === 'create_board') && result?.board) {
+        const payload = result.board.data ? normalizeOptionalMapBoardData(result.board.data) : null;
+        return {
+            boardId: shortDiagId(result.board.id || ''),
+            page: String(result.board.page || ''),
+            role: String(result.role || result.board.role || ''),
+            title: String(result.board.title || ''),
+            workspace: payload ? getMapPayloadSummary(payload) : null,
+            mergedConflict: Boolean(result?.mergedConflict)
+        };
+    }
+    return {};
+}
+
+if (typeof window !== 'undefined') {
+    window.__BNI_MAP_DEBUG__ = mapDebugLogger;
+    window.__BNI_MAP_DIAG_STATE__ = () => getMapDiagState();
+}
 
 function parseJsonSafe(value) {
     return parseStoredJsonSafe(value, null);
@@ -388,6 +500,10 @@ function syncSharedMapSnapshot(payload = null) {
 
 function hydrateCollabState() {
     collabStorage.hydrate(collab);
+    mapDebugLogger.log('hydrate-collab-state', getMapDiagState({
+        pendingBoardId: shortDiagId(collab.pendingBoardId),
+        storedUser: collab.user?.username || ''
+    }));
 }
 
 function syncCloudStatus() {
@@ -523,6 +639,16 @@ function setMapRealtimeFieldValue(entityType, entityId, fieldName, nextValue, op
     if (!target) return false;
     const textValue = String(nextValue || '');
     if (String(target[cleanField] || '') === textValue) return false;
+    const previousValue = String(target[cleanField] || '').trim();
+    if ((cleanField === 'name' || cleanField === 'type') && previousValue && !String(textValue || '').trim() && isCloudBoardActive()) {
+        mapDebugLogger.warn('realtime-map-field-became-empty', getMapDiagState({
+            entityType: cleanType,
+            entityId: shortDiagId(entityId),
+            field: cleanField,
+            previousValue,
+            origin: options.local ? 'local' : 'remote'
+        }));
+    }
     target[cleanField] = textValue;
 
     if (cleanType === 'point' && (cleanField === 'name' || cleanField === 'type')) {
@@ -701,12 +827,18 @@ async function activateCloudTransport() {
     stopCollabAutosave();
     stopCollabLiveSync();
     stopCollabPresence();
+    mapDebugLogger.log('activate-cloud-transport', getMapDiagState({
+        shouldUseRealtime: shouldUseRealtimeCloud()
+    }));
     if (!isCloudBoardActive() || !collab.user || !collab.token) {
         stopCollabRealtime();
         return false;
     }
 
     if (!shouldUseRealtimeCloud()) {
+        mapDebugLogger.warn('activate-cloud-transport-legacy', getMapDiagState({
+            reason: 'realtime-disabled'
+        }));
         startLegacyCloudTransport();
         return false;
     }
@@ -714,8 +846,15 @@ async function activateCloudTransport() {
     try {
         const started = await startCollabRealtime();
         if (started) return true;
-    } catch (e) {}
+    } catch (e) {
+        mapDebugLogger.error('activate-cloud-transport-error', getMapDiagState({
+            message: e?.message || 'Erreur realtime'
+        }));
+    }
 
+    mapDebugLogger.warn('activate-cloud-transport-fallback', getMapDiagState({
+        reason: 'realtime-start-failed'
+    }));
     startLegacyCloudTransport();
     return false;
 }
@@ -725,6 +864,9 @@ async function startCollabRealtime() {
     stopCollabRealtime();
     stopCollabPresence();
     await preloadRealtimeTextTools().catch(() => null);
+    mapDebugLogger.log('realtime-start-request', getMapDiagState({
+        localFlushMs: 90
+    }));
 
     const session = await createRealtimeBoardSession({
         page: 'map',
@@ -740,12 +882,27 @@ async function startCollabRealtime() {
             captureCloudSavedFingerprint();
         },
         onPresence: (presence) => updateMapPresence(presence || []),
-        onStatus: () => {},
-        onError: () => {},
+        onStatus: (status, detail = '') => {
+            mapDebugLogger.log('realtime-status', getMapDiagState({
+                status,
+                detail: String(detail || '')
+            }));
+        },
+        onError: (error) => {
+            mapDebugLogger.error('realtime-error', getMapDiagState({
+                message: error?.message || 'Erreur temps reel'
+            }));
+        },
         onTextUpdate: (payload) => {
             handleMapRealtimeTextUpdate(payload || {});
         },
         onClose: (meta = {}) => {
+            mapDebugLogger.warn('realtime-close', getMapDiagState({
+                code: Number(meta?.code || 0),
+                reason: String(meta?.reason || ''),
+                intentional: Boolean(meta?.intentional),
+                wasConnected: Boolean(meta?.wasConnected)
+            }));
             if (collab.realtimeSession === session) {
                 collab.realtimeSession = null;
             }
@@ -762,7 +919,11 @@ async function startCollabRealtime() {
                 }).catch(() => {});
             }
         },
-        onLocalAccepted: ({ snapshot }) => {
+        onLocalAccepted: ({ ops = [], snapshot }) => {
+            mapDebugLogger.log('realtime-local-accepted', getMapDiagState({
+                opCount: Array.isArray(ops) ? ops.length : 0,
+                shadow: snapshot ? getMapPayloadSummary(snapshot) : null
+            }));
             setCloudShadowData(snapshot);
             collab.lastSavedFingerprint = JSON.stringify(canonicalizeMapPayload(snapshot));
             syncSharedMapSnapshot(snapshot);
@@ -770,7 +931,8 @@ async function startCollabRealtime() {
         localFlushMs: 90,
         buildPresence: () => {
             return buildMapPresencePayload();
-        }
+        },
+        debug: mapDebugLogger
     });
 
     collab.realtimeSession = session;
@@ -1072,11 +1234,62 @@ function startCollabLiveSync() {
 }
 
 async function collabAuthRequest(action, payload = {}) {
-    return sharedCollabAuthRequest(action, payload);
+    const startedAt = nowDiagMs();
+    mapDebugLogger.log('auth-request', {
+        action,
+        hasToken: Boolean(collab.token),
+        username: action === 'me' || action === 'logout'
+            ? (collab.user?.username || '')
+            : String(payload?.username || '')
+    });
+    try {
+        const result = await sharedCollabAuthRequest(action, payload);
+        mapDebugLogger.log('auth-response', {
+            action,
+            ok: true,
+            durationMs: elapsedDiagMs(startedAt),
+            ...summarizeMapCloudResponse(action, result)
+        });
+        return result;
+    } catch (error) {
+        mapDebugLogger.error('auth-response', {
+            action,
+            ok: false,
+            durationMs: elapsedDiagMs(startedAt),
+            status: Number(error?.status || 0),
+            message: error?.message || 'Erreur auth'
+        });
+        throw error;
+    }
 }
 
 async function collabBoardRequest(action, payload = {}) {
-    return sharedCollabBoardRequest(action, payload);
+    const startedAt = nowDiagMs();
+    mapDebugLogger.log('board-request', {
+        action,
+        boardId: shortDiagId(payload?.boardId || collab.activeBoardId),
+        hasToken: Boolean(collab.token)
+    });
+    try {
+        const result = await sharedCollabBoardRequest(action, payload);
+        mapDebugLogger.log('board-response', {
+            action,
+            ok: true,
+            durationMs: elapsedDiagMs(startedAt),
+            ...summarizeMapCloudResponse(action, result)
+        });
+        return result;
+    } catch (error) {
+        mapDebugLogger.error('board-response', {
+            action,
+            ok: false,
+            durationMs: elapsedDiagMs(startedAt),
+            boardId: shortDiagId(payload?.boardId || collab.activeBoardId),
+            status: Number(error?.status || 0),
+            message: error?.message || 'Erreur cloud'
+        });
+        throw error;
+    }
 }
 
 function setActiveCloudBoardFromSummary(summary = null) {
@@ -1133,6 +1346,15 @@ function normalizeMapBoardData(rawData) {
 function applyCloudMapData(rawData) {
     return withoutCloudAutosave(() => {
         const normalized = normalizeMapBoardData(rawData);
+        const summary = getMapPayloadSummary(normalized);
+        mapDebugLogger.log('apply-cloud-board-data', getMapDiagState({
+            incoming: summary
+        }));
+        if (summary.unnamedPoints > 0 || summary.unnamedZones > 0) {
+            mapDebugLogger.warn('apply-cloud-board-data-unnamed', getMapDiagState({
+                incoming: summary
+            }));
+        }
         state.tacticalLinks = normalized.tacticalLinks;
         setGroups(normalized.groups);
         state.tacticalLinks = normalized.tacticalLinks;
@@ -1148,6 +1370,9 @@ function applyCloudMapData(rawData) {
 async function openCloudBoard(boardId, options = {}) {
     const targetId = String(boardId || '').trim();
     if (!targetId) throw new Error('Board cloud invalide.');
+    mapDebugLogger.log('open-cloud-board-start', getMapDiagState({
+        targetBoardId: shortDiagId(targetId)
+    }));
 
     const result = await collabBoardRequest('get_board', { boardId: targetId });
     if (!result.board || !result.board.data) throw new Error('Board cloud corrompu.');
@@ -1165,6 +1390,13 @@ async function openCloudBoard(boardId, options = {}) {
         updatedAt: result.board.updatedAt || ''
     };
 
+    mapDebugLogger.log('open-cloud-board-data', getMapDiagState({
+        targetBoardId: shortDiagId(targetId),
+        role: summary.role,
+        title: summary.title,
+        incoming: getMapPayloadSummary(normalizeOptionalMapBoardData(result.board.data))
+    }));
+
     setActiveCloudBoardFromSummary(summary);
     applyCloudMapData(result.board.data);
     updateMapPresence(result.presence || []);
@@ -1173,6 +1405,10 @@ async function openCloudBoard(boardId, options = {}) {
     captureCloudSavedFingerprint();
     setBoardQueryParam(summary.id);
     await activateCloudTransport();
+    mapDebugLogger.log('open-cloud-board-ready', getMapDiagState({
+        targetBoardId: shortDiagId(targetId),
+        presenceCount: Array.isArray(result?.presence) ? result.presence.length : 0
+    }));
 
     if (!options.quiet) {
         await customAlert('CLOUD', `☁️ Board ouvert : ${escapeHtml(summary.title)}`);
@@ -2638,22 +2874,31 @@ export function getCloudSaveModalOptions() {
 export async function initCloudCollab() {
     hydrateCollabState();
     syncCloudStatus();
+    mapDebugLogger.log('init-cloud-collab-start', getMapDiagState());
 
     try {
         const urlParams = new URLSearchParams(window.location.search);
         const boardFromUrl = String(urlParams.get('board') || '').trim();
         if (boardFromUrl) collab.pendingBoardId = boardFromUrl;
+        mapDebugLogger.log('init-cloud-collab-url', getMapDiagState({
+            boardFromUrl: shortDiagId(boardFromUrl)
+        }));
     } catch (e) {}
 
     if (!collab.token) {
         setActiveCloudBoardFromSummary(null);
+        mapDebugLogger.log('init-cloud-collab-no-token', getMapDiagState());
         return;
     }
 
     try {
         const me = await collabAuthRequest('me');
         collab.user = me.user || collab.user;
+        mapDebugLogger.log('init-cloud-collab-authenticated', getMapDiagState());
     } catch (e) {
+        mapDebugLogger.error('init-cloud-collab-auth-failed', getMapDiagState({
+            message: e?.message || 'Erreur auth'
+        }));
         await logoutCollab();
         return;
     }
@@ -2662,7 +2907,14 @@ export async function initCloudCollab() {
     if (preferredBoard) {
         try {
             await openCloudBoard(preferredBoard, { quiet: true });
+            mapDebugLogger.log('init-cloud-collab-opened-board', getMapDiagState({
+                preferredBoard: shortDiagId(preferredBoard)
+            }));
         } catch (e) {
+            mapDebugLogger.error('init-cloud-collab-open-board-failed', getMapDiagState({
+                preferredBoard: shortDiagId(preferredBoard),
+                message: e?.message || 'Erreur ouverture board'
+            }));
             setActiveCloudBoardFromSummary(null);
             setBoardQueryParam('');
         } finally {
@@ -2674,4 +2926,5 @@ export async function initCloudCollab() {
 
     syncCloudStatus();
     persistCollabState();
+    mapDebugLogger.log('init-cloud-collab-complete', getMapDiagState());
 }

@@ -36,6 +36,7 @@ import { canUseRealtimeTransport } from '../../shared/realtime/config.mjs';
 import { canonicalizePointPayload, diffPointOpsWithoutRealtimeText, applyPointOps, stripPointRealtimeTextFields } from '../../shared/realtime/point-doc.mjs';
 import { findPointSearchMatches } from '../../shared/js/point-search.mjs';
 import { bindAsyncActionButton } from '../../shared/js/ui-async.mjs';
+import { createBrowserDebugLogger } from '../../shared/js/browser-debug.mjs';
 import { clampPointCursorCoord, normalizePointCursorPresence } from '../../shared/js/collab-cursor-visuals.mjs';
 import { clearPointRemoteCursors, setPointRemoteCursors } from './collab-cursors.js';
 import { attachAsyncAutocomplete } from '../../shared/js/async-autocomplete.mjs';
@@ -124,6 +125,13 @@ const collab = {
     cursorLastSentAt: 0
 };
 
+const pointDebugLogger = createBrowserDebugLogger({
+    namespace: 'point-diag',
+    queryParams: ['debugCloud', 'debugPoint', 'debugPointCloud', 'debug'],
+    storageKeys: ['BNI_DEBUG_POINT', 'BNI_DEBUG_CLOUD', 'BNI_DEBUG_POINT_CLOUD'],
+    windowFlags: ['BNI_DEBUG_POINT', 'BNI_DEBUG_CLOUD']
+});
+
 const COLLAB_AUTOSAVE_DEBOUNCE_MS = 1600;
 const COLLAB_AUTOSAVE_RETRY_MS = 700;
 const COLLAB_WATCH_TIMEOUT_MS = 7000;
@@ -149,6 +157,105 @@ let actionLogs = [];
 let centerEmptyDismissed = false;
 let realtimeTextTools = null;
 let realtimeTextToolsPromise = null;
+
+function nowDiagMs() {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        return performance.now();
+    }
+    return Date.now();
+}
+
+function elapsedDiagMs(startedAt) {
+    return Math.max(0, Math.round((nowDiagMs() - Number(startedAt || 0)) * 10) / 10);
+}
+
+function shortDiagId(value = '') {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (text.length <= 18) return text;
+    return `${text.slice(0, 8)}...${text.slice(-4)}`;
+}
+
+function getPointPayloadSummary(payload = null) {
+    const source = payload && typeof payload === 'object'
+        ? payload
+        : {
+            nodes: state.nodes,
+            links: state.links,
+            meta: { projectName: state.projectName }
+        };
+    const health = getPointWorkspaceNameHealth(source);
+    return {
+        nodes: health.total,
+        unnamedNodes: health.unnamed,
+        unnamedRatio: Math.round((Number(health.ratio || 0) || 0) * 1000) / 1000,
+        links: Array.isArray(source?.links) ? source.links.length : 0,
+        projectName: String(source?.meta?.projectName || source?.projectName || state.projectName || '')
+    };
+}
+
+function getPointDiagState(extra = {}) {
+    return {
+        user: collab.user?.username || '',
+        hasToken: Boolean(collab.token),
+        boardId: shortDiagId(collab.activeBoardId),
+        boardTitle: collab.activeBoardTitle || '',
+        syncState: collab.syncState || '',
+        syncLabel: collab.syncLabel || '',
+        realtimeActive: isRealtimeCloudActive(),
+        realtimeFallbackActive: Boolean(collab.realtimeFallbackActive),
+        transportAvailable: canUseRealtimeTransport(),
+        localPersistenceEnabled: isLocalPersistenceEnabled(),
+        workspace: getPointPayloadSummary(),
+        ...extra
+    };
+}
+
+function summarizePointCloudResponse(action, result = {}) {
+    if (action === 'me') {
+        return {
+            user: result?.user?.username || '',
+            hasUser: Boolean(result?.user)
+        };
+    }
+    if (action === 'list_boards') {
+        return {
+            boardCount: Array.isArray(result?.boards) ? result.boards.length : 0
+        };
+    }
+    if (action === 'watch_board') {
+        return {
+            changed: Boolean(result?.changed),
+            deleted: Boolean(result?.deleted),
+            revoked: Boolean(result?.revoked),
+            updatedAt: String(result?.updatedAt || ''),
+            presenceCount: Array.isArray(result?.presence) ? result.presence.length : 0
+        };
+    }
+    if (action === 'touch_presence' || action === 'clear_presence') {
+        return {
+            presenceCount: Array.isArray(result?.presence) ? result.presence.length : 0
+        };
+    }
+    if ((action === 'get_board' || action === 'save_board' || action === 'create_board') && result?.board) {
+        const plain = result.board.data ? extractPlainPointPayloadFromCloud(result.board.data) : null;
+        return {
+            boardId: shortDiagId(result.board.id || ''),
+            page: String(result.board.page || ''),
+            role: String(result.role || result.board.role || ''),
+            title: String(result.board.title || ''),
+            workspace: plain ? getPointPayloadSummary(plain) : null,
+            mergedConflict: Boolean(result?.mergedConflict)
+        };
+    }
+    return {};
+}
+
+if (typeof window !== 'undefined') {
+    window.__BNI_POINT_DEBUG__ = pointDebugLogger;
+    window.__BNI_POINT_DIAG_STATE__ = () => getPointDiagState();
+}
+
 const INTEL_PRESETS = {
     quick: {
         mode: 'serieux',
@@ -522,6 +629,10 @@ function triggerFileInput(inputId) {
 
 function hydrateCollabState() {
     collabStorage.hydrate(collab);
+    pointDebugLogger.log('hydrate-collab-state', getPointDiagState({
+        pendingBoardId: shortDiagId(collab.pendingBoardId),
+        storedUser: collab.user?.username || ''
+    }));
 }
 
 function syncCloudStatus() {
@@ -763,9 +874,18 @@ function writeWorkspaceHealthWarningState(value = '') {
 }
 
 export function maybeRecoverDamagedLocalWorkspace() {
-    if (isCloudBoardActive()) return false;
+    if (isCloudBoardActive()) {
+        pointDebugLogger.log('local-workspace-health-skip', getPointDiagState({
+            reason: 'cloud-board-active'
+        }));
+        return false;
+    }
 
     const currentStats = getPointWorkspaceNameHealth();
+    pointDebugLogger.log('local-workspace-health-check', getPointDiagState({
+        workspaceHealth: currentStats,
+        damaged: isLikelyDamagedLocalWorkspace(currentStats)
+    }));
     if (!isLikelyDamagedLocalWorkspace(currentStats)) {
         writeWorkspaceHealthWarningState('');
         return false;
@@ -780,6 +900,11 @@ export function maybeRecoverDamagedLocalWorkspace() {
     const recoverySnapshot = pickRecoveryWorkspaceSnapshot(currentStats);
 
     if (recoverySnapshot?.payload) {
+        pointDebugLogger.warn('local-workspace-recovery-offered', getPointDiagState({
+            workspaceHealth: currentStats,
+            recoveryLabel: recoverySnapshot.label,
+            recoveryHealth: recoverySnapshot.stats || getPointWorkspaceNameHealth(recoverySnapshot.payload)
+        }));
         showCustomConfirm(
             `Le workspace local contient beaucoup de fiches sans nom (${currentStats.unnamed}/${currentStats.total}). Restaurer ${recoverySnapshot.label} ?`,
             () => {
@@ -797,6 +922,9 @@ export function maybeRecoverDamagedLocalWorkspace() {
         return true;
     }
 
+    pointDebugLogger.warn('local-workspace-damaged-no-backup', getPointDiagState({
+        workspaceHealth: currentStats
+    }));
     showCustomAlert(`Le workspace local contient beaucoup de fiches sans nom (${currentStats.unnamed}/${currentStats.total}). Cela vient souvent d'une fusion/import incomplet. Utilise Fichier > Reset ou reimporte une sauvegarde saine.`);
     return true;
 }
@@ -1230,8 +1358,16 @@ function setCloudSyncState(nextState, label = '') {
         error: 'Sync en attente'
     }[nextState] || 'Cloud');
     if (collab.syncState === nextState && collab.syncLabel === nextLabel) return;
+    const previousState = String(collab.syncState || '');
+    const previousLabel = String(collab.syncLabel || '');
     collab.syncState = nextState;
     collab.syncLabel = nextLabel;
+    pointDebugLogger.log('cloud-sync-state', getPointDiagState({
+        from: previousState,
+        fromLabel: previousLabel,
+        to: nextState,
+        toLabel: nextLabel
+    }));
     syncCloudStatus();
 }
 
@@ -1475,11 +1611,28 @@ function syncCloudLivePanels() {
 function applyCloudBoardData(rawData, options = {}) {
     const quiet = Boolean(options.quiet);
     const plain = extractPlainPointPayloadFromCloud(rawData);
+    const incomingSummary = getPointPayloadSummary(plain);
+    const localSummary = getPointPayloadSummary();
     const serverFingerprint = fingerprintFromPointPayload(plain);
     const localFingerprint = hasLocalCloudChanges()
         ? fingerprintFromPointPayload(generateExportData())
         : String(collab.lastSavedFingerprint || '');
     const shouldReloadLocalState = serverFingerprint !== localFingerprint;
+
+    pointDebugLogger.log('apply-cloud-board-data', getPointDiagState({
+        quiet,
+        projectName: String(options.projectName || ''),
+        shouldReloadLocalState,
+        incoming: incomingSummary,
+        localBefore: localSummary,
+        serverFingerprint: serverFingerprint.slice(0, 18),
+        localFingerprint: String(localFingerprint || '').slice(0, 18)
+    }));
+    if (incomingSummary.unnamedNodes > 0) {
+        pointDebugLogger.warn('apply-cloud-board-data-unnamed-nodes', getPointDiagState({
+            incoming: incomingSummary
+        }));
+    }
 
     if (shouldReloadLocalState) {
         withoutCloudAutosave(() => processData(plain, 'load', { silent: true }));
@@ -1561,8 +1714,17 @@ function setPointRealtimeFieldValue(nodeId, fieldName, nextValue, options = {}) 
         node.description = textValue;
         node.notes = textValue;
     } else if (field === 'name') {
+        const previousName = String(node.name || '').trim();
         const cleanName = textValue.replace(/\s+/g, ' ').trim();
         if (String(node.name || '') === cleanName) return false;
+        if (previousName && !cleanName && isCloudBoardActive()) {
+            pointDebugLogger.warn('realtime-name-became-empty', getPointDiagState({
+                nodeId: shortDiagId(nodeId),
+                previousName,
+                origin: options.local ? 'local' : 'remote',
+                realtimeActive: isRealtimeCloudActive()
+            }));
+        }
         node.name = cleanName;
         const headName = document.querySelector('.editor-sheet-name');
         if (headName) headName.textContent = cleanName || 'Sans nom';
@@ -1675,12 +1837,18 @@ async function activateCloudTransport() {
     stopCollabAutosave();
     stopCollabLiveSync();
     stopCollabPresence();
+    pointDebugLogger.log('activate-cloud-transport', getPointDiagState({
+        shouldUseRealtime: shouldUseRealtimeCloud()
+    }));
     if (!isCloudBoardActive() || !collab.user || !collab.token) {
         stopCollabRealtime();
         return false;
     }
 
     if (!shouldUseRealtimeCloud()) {
+        pointDebugLogger.warn('activate-cloud-transport-legacy', getPointDiagState({
+            reason: 'realtime-disabled'
+        }));
         startLegacyCloudTransport();
         return false;
     }
@@ -1689,9 +1857,15 @@ async function activateCloudTransport() {
         const started = await startCollabRealtime();
         if (started) return true;
     } catch (e) {
+        pointDebugLogger.error('activate-cloud-transport-error', getPointDiagState({
+            message: e?.message || 'Erreur realtime'
+        }));
         appendActionLog(`cloud: fallback legacy (${sanitizeLogText(e?.message, 'temps reel indisponible')})`);
     }
 
+    pointDebugLogger.warn('activate-cloud-transport-fallback', getPointDiagState({
+        reason: 'realtime-start-failed'
+    }));
     startLegacyCloudTransport();
     setCloudSyncState('session', 'Fallback cloud actif');
     return false;
@@ -1701,6 +1875,9 @@ async function startCollabRealtime() {
     if (!shouldUseRealtimeCloud()) return false;
     stopCollabRealtime();
     await preloadRealtimeTextTools().catch(() => null);
+    pointDebugLogger.log('realtime-start-request', getPointDiagState({
+        localFlushMs: 120
+    }));
 
     const session = await createRealtimeBoardSession({
         page: 'point',
@@ -1718,7 +1895,11 @@ async function startCollabRealtime() {
             });
         },
         onPresence: (presence) => updateCollabPresence(presence || []),
-        onStatus: (status) => {
+        onStatus: (status, detail = '') => {
+            pointDebugLogger.log('realtime-status', getPointDiagState({
+                status,
+                detail: String(detail || '')
+            }));
             if (status === 'connected') {
                 setCloudSyncState('live', 'Temps reel actif');
             } else if (status === 'connecting') {
@@ -1726,12 +1907,21 @@ async function startCollabRealtime() {
             }
         },
         onError: (error) => {
+            pointDebugLogger.error('realtime-error', getPointDiagState({
+                message: error?.message || 'Erreur temps reel'
+            }));
             setCloudSyncState('error', error?.message || 'Erreur temps reel');
         },
         onTextUpdate: (payload) => {
             handleCollabRealtimeTextUpdate(payload || {});
         },
         onClose: (meta = {}) => {
+            pointDebugLogger.warn('realtime-close', getPointDiagState({
+                code: Number(meta?.code || 0),
+                reason: String(meta?.reason || ''),
+                intentional: Boolean(meta?.intentional),
+                wasConnected: Boolean(meta?.wasConnected)
+            }));
             if (collab.realtimeSession === session) {
                 collab.realtimeSession = null;
             }
@@ -1747,14 +1937,19 @@ async function startCollabRealtime() {
                 renderEditor();
             }
         },
-        onLocalAccepted: () => {
+        onLocalAccepted: ({ ops = [], snapshot = null } = {}) => {
+            pointDebugLogger.log('realtime-local-accepted', getPointDiagState({
+                opCount: Array.isArray(ops) ? ops.length : 0,
+                shadow: snapshot ? getPointPayloadSummary(snapshot) : null
+            }));
             const currentSnapshot = generateExportData();
             setCloudShadowData(buildCloudBoardPayload(currentSnapshot));
             captureCloudSavedState(collab.localChangeSeq, fingerprintFromPointPayload(currentSnapshot));
             setCloudSyncState('live', 'Temps reel actif');
         },
         localFlushMs: 120,
-        buildPresence: (extra = {}) => buildPointPresencePayload(extra)
+        buildPresence: (extra = {}) => buildPointPresencePayload(extra),
+        debug: pointDebugLogger
     });
 
     collab.realtimeSession = session;
@@ -2078,11 +2273,62 @@ function startCollabLiveSync() {
 }
 
 async function collabAuthRequest(action, payload = {}) {
-    return sharedCollabAuthRequest(action, payload);
+    const startedAt = nowDiagMs();
+    pointDebugLogger.log('auth-request', {
+        action,
+        hasToken: Boolean(collab.token),
+        username: action === 'me' || action === 'logout'
+            ? (collab.user?.username || '')
+            : String(payload?.username || '')
+    });
+    try {
+        const result = await sharedCollabAuthRequest(action, payload);
+        pointDebugLogger.log('auth-response', {
+            action,
+            ok: true,
+            durationMs: elapsedDiagMs(startedAt),
+            ...summarizePointCloudResponse(action, result)
+        });
+        return result;
+    } catch (error) {
+        pointDebugLogger.error('auth-response', {
+            action,
+            ok: false,
+            durationMs: elapsedDiagMs(startedAt),
+            status: Number(error?.status || 0),
+            message: error?.message || 'Erreur auth'
+        });
+        throw error;
+    }
 }
 
 async function collabBoardRequest(action, payload = {}) {
-    return sharedCollabBoardRequest(action, payload);
+    const startedAt = nowDiagMs();
+    pointDebugLogger.log('board-request', {
+        action,
+        boardId: shortDiagId(payload?.boardId || collab.activeBoardId),
+        hasToken: Boolean(collab.token)
+    });
+    try {
+        const result = await sharedCollabBoardRequest(action, payload);
+        pointDebugLogger.log('board-response', {
+            action,
+            ok: true,
+            durationMs: elapsedDiagMs(startedAt),
+            ...summarizePointCloudResponse(action, result)
+        });
+        return result;
+    } catch (error) {
+        pointDebugLogger.error('board-response', {
+            action,
+            ok: false,
+            durationMs: elapsedDiagMs(startedAt),
+            boardId: shortDiagId(payload?.boardId || collab.activeBoardId),
+            status: Number(error?.status || 0),
+            message: error?.message || 'Erreur cloud'
+        });
+        throw error;
+    }
 }
 
 function setActiveCloudBoardFromSummary(summary = null) {
@@ -2131,9 +2377,14 @@ async function openCloudBoard(boardId, options = {}) {
     const targetId = String(boardId || '').trim();
     if (!targetId) throw new Error('Board cloud invalide.');
 
+    let localWorkspaceRemembered = false;
     if (!isCloudBoardActive()) {
-        rememberCurrentLocalWorkspace();
+        localWorkspaceRemembered = rememberCurrentLocalWorkspace();
     }
+    pointDebugLogger.log('open-cloud-board-start', getPointDiagState({
+        targetBoardId: shortDiagId(targetId),
+        rememberedLocalWorkspace: localWorkspaceRemembered
+    }));
 
     const result = await collabBoardRequest('get_board', { boardId: targetId });
     if (!result.board || !result.board.data) throw new Error('Board cloud corrompu.');
@@ -2149,11 +2400,22 @@ async function openCloudBoard(boardId, options = {}) {
         updatedAt: result.board.updatedAt || ''
     };
 
+    pointDebugLogger.log('open-cloud-board-data', getPointDiagState({
+        targetBoardId: shortDiagId(targetId),
+        role: summary.role,
+        title: summary.title,
+        incoming: getPointPayloadSummary(extractPlainPointPayloadFromCloud(result.board.data))
+    }));
+
     setActiveCloudBoardFromSummary(summary);
     updateCollabPresence(result?.presence || []);
     applyCloudBoardData(result.board.data, { quiet: true, projectName: summary.title });
     setBoardQueryParam(summary.id);
     await activateCloudTransport();
+    pointDebugLogger.log('open-cloud-board-ready', getPointDiagState({
+        targetBoardId: shortDiagId(targetId),
+        presenceCount: Array.isArray(result?.presence) ? result.presence.length : 0
+    }));
     setCloudWorkspaceBusy(false);
 
     if (!options.quiet) {
@@ -3227,15 +3489,20 @@ export async function initCloudCollab() {
     hydrateCollabState();
     bindCloudStatusQuickDisconnect();
     syncCloudStatus();
+    pointDebugLogger.log('init-cloud-collab-start', getPointDiagState());
 
     try {
         const urlParams = new URLSearchParams(window.location.search);
         const boardFromUrl = String(urlParams.get('board') || '').trim();
         if (boardFromUrl) collab.pendingBoardId = boardFromUrl;
+        pointDebugLogger.log('init-cloud-collab-url', getPointDiagState({
+            boardFromUrl: shortDiagId(boardFromUrl)
+        }));
     } catch (e) {}
 
     if (!collab.token) {
         setActiveCloudBoardFromSummary(null);
+        pointDebugLogger.log('init-cloud-collab-no-token', getPointDiagState());
         return;
     }
 
@@ -3244,7 +3511,11 @@ export async function initCloudCollab() {
         collab.user = me.user || collab.user;
         startCollabSessionHeartbeat();
         setCloudSyncState(collab.activeBoardId ? 'live' : 'session');
+        pointDebugLogger.log('init-cloud-collab-authenticated', getPointDiagState());
     } catch (e) {
+        pointDebugLogger.error('init-cloud-collab-auth-failed', getPointDiagState({
+            message: e?.message || 'Erreur auth'
+        }));
         await logoutCollab();
         return;
     }
@@ -3253,7 +3524,14 @@ export async function initCloudCollab() {
     if (preferredBoard) {
         try {
             await openCloudBoard(preferredBoard, { quiet: true });
+            pointDebugLogger.log('init-cloud-collab-opened-board', getPointDiagState({
+                preferredBoard: shortDiagId(preferredBoard)
+            }));
         } catch (e) {
+            pointDebugLogger.error('init-cloud-collab-open-board-failed', getPointDiagState({
+                preferredBoard: shortDiagId(preferredBoard),
+                message: e?.message || 'Erreur ouverture board'
+            }));
             setActiveCloudBoardFromSummary(null);
             setBoardQueryParam('');
         } finally {
@@ -3263,6 +3541,7 @@ export async function initCloudCollab() {
 
     syncCloudStatus();
     persistCollabState();
+    pointDebugLogger.log('init-cloud-collab-complete', getPointDiagState());
 }
 
 function updateIntelButtonLockVisual() {
@@ -3378,7 +3657,7 @@ function showLinkGuide() {
 }
 
 // EXPORTS
-export { renderEditor, showSettings, showContextMenu, hideContextMenu };
+export { renderEditor, showSettings, showContextMenu, hideContextMenu, pointDebugLogger };
 
 // --- MODALES PERSONNALISÉES ---
 

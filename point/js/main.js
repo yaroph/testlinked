@@ -1,6 +1,6 @@
 import { loadState, state, pushHistory } from './state.js';
 import { restartSim } from './physics.js';
-import { initUI, refreshLists, selectNode, initCloudCollab, maybeRecoverDamagedLocalWorkspace } from './ui.js'; 
+import { initUI, refreshLists, selectNode, initCloudCollab, maybeRecoverDamagedLocalWorkspace, pointDebugLogger } from './ui.js'; 
 import { updatePersonColors } from './logic.js'; 
 import { resizeCanvas, draw } from './render.js';
 
@@ -22,6 +22,17 @@ window.addEventListener('load', () => {
 
     // 2. Données
     const hasData = loadState();
+    const unnamedNodes = state.nodes.reduce((count, node) => {
+        const name = String(node?.name || '').trim();
+        return count + (name === '' || name === 'Sans nom' ? 1 : 0);
+    }, 0);
+    pointDebugLogger.log('boot-local-state', {
+        hasData,
+        nodes: state.nodes.length,
+        links: state.links.length,
+        unnamedNodes,
+        projectName: String(state.projectName || '')
+    });
     if (!hasData) {
         pushHistory();
         state.nodes = [];
@@ -36,7 +47,10 @@ window.addEventListener('load', () => {
     initCloudCollab()
         .catch(() => {})
         .finally(() => {
-            maybeRecoverDamagedLocalWorkspace();
+            const recovered = maybeRecoverDamagedLocalWorkspace();
+            pointDebugLogger.log('boot-cloud-init-finished', {
+                recoveredLocalWorkspace: Boolean(recovered)
+            });
         });
 
     // 4. Correction affichage resize
@@ -58,7 +72,10 @@ window.addEventListener('load', () => {
         const targetNode = state.nodes.find(n => n.id === focusId);
 
         if (targetNode) {
-            console.log("🕸️ Retour Map détecté. Cible :", targetNode.name);
+            pointDebugLogger.log('map-focus-return', {
+                focusId,
+                targetName: String(targetNode.name || '')
+            });
 
             // 1. Centrage Physique (La caméra se déplace)
             state.view.x = -targetNode.x * state.view.scale;
