@@ -577,7 +577,7 @@ function syncCloudStatus() {
     statusEl.dataset.hoverDisconnect = '0';
     statusEl.classList.remove('is-clickable');
     statusEl.title = '';
-    renderStatus('session', 'Session cloud', collab.user.username || 'Connecte');
+    renderStatus('local', 'Local', collab.user.username || 'Connecte');
     syncCloudLivePanels();
 }
 
@@ -1221,7 +1221,7 @@ function withoutCloudAutosave(fn) {
 function setCloudSyncState(nextState, label = '') {
     const nextLabel = label || ({
         local: 'Local',
-        session: 'Session cloud',
+        session: 'Mode local',
         live: 'Synchro live active',
         pending: 'Modifs locales en attente',
         saving: 'Enregistrement cloud...',
@@ -1468,7 +1468,7 @@ function syncCloudLivePanels() {
     if (modalPresenceEl) {
         modalPresenceEl.innerHTML = isCloudBoardActive()
             ? (renderCloudPresenceChips(collab.presence, { includeSelf: true }) || `<div class="cloud-presence-empty">${escapeHtml(presenceLabel || 'Board prive')}</div>`)
-            : `<div class="cloud-presence-empty">Session cloud</div>`;
+            : `<div class="cloud-presence-empty">Mode local</div>`;
     }
 }
 
@@ -2840,7 +2840,7 @@ async function runCloudAuth(action) {
         collab.user = res.user || null;
         persistCollabState();
         startCollabSessionHeartbeat();
-        setCloudSyncState('session', 'Session cloud');
+        setCloudSyncState('session', 'Mode local');
         if (collab.pendingBoardId) {
             const targetBoard = collab.pendingBoardId;
             collab.pendingBoardId = '';

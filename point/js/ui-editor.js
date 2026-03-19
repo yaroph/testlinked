@@ -246,7 +246,7 @@ function applyDefaultEditorPosition(editorPanel, rightPanel = document.getElemen
     const inset = isUltraWideEditorLayout() ? 28 : 18;
     const maxX = Math.max(inset, containerRect.width - editorPanel.offsetWidth - inset);
     const maxY = Math.max(inset, containerRect.height - editorPanel.offsetHeight - inset);
-    const desiredLeft = inset;
+    const desiredLeft = maxX;
     const desiredTop = Math.max(inset, containerRect.height - editorPanel.offsetHeight - inset);
 
     editorPanel.style.left = `${Math.min(desiredLeft, maxX)}px`;

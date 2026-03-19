@@ -28,13 +28,16 @@ window.addEventListener('load', () => {
     }
     updatePersonColors();
     refreshLists();
-    maybeRecoverDamagedLocalWorkspace();
     
     // 3. Physique
     restartSim();
 
     // 3.1 Session cloud (optionnel, non bloquant)
-    initCloudCollab().catch(() => {});
+    initCloudCollab()
+        .catch(() => {})
+        .finally(() => {
+            maybeRecoverDamagedLocalWorkspace();
+        });
 
     // 4. Correction affichage resize
     const centerDiv = document.getElementById('center');

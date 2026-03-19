@@ -249,7 +249,7 @@ test('point editor stays open while panning and closes on a single empty click',
     await expect(page.locator('#editor')).toBeHidden();
 });
 
-test('point editor docks to the bottom left on ultra-wide screens', async ({ page }) => {
+test('point editor docks to the bottom right on ultra-wide screens', async ({ page }) => {
     await installNetlifyMocks(page);
 
     await page.setViewportSize({ width: 2560, height: 1440 });
@@ -268,7 +268,7 @@ test('point editor docks to the bottom left on ultra-wide screens', async ({ pag
     const rightBox = await page.locator('#right').boundingBox();
     const editorBox = await page.locator('#editor').boundingBox();
     if (!rightBox || !editorBox) throw new Error('Editor box unavailable');
-    expect(editorBox.x - rightBox.x).toBeLessThanOrEqual(90);
+    expect((rightBox.x + rightBox.width) - (editorBox.x + editorBox.width)).toBeLessThanOrEqual(90);
     expect((rightBox.y + rightBox.height) - (editorBox.y + editorBox.height)).toBeLessThanOrEqual(90);
     expect(editorBox.height).toBeLessThanOrEqual(920);
 });
@@ -441,7 +441,7 @@ test('point session summary hides the extra cloud box until a board is opened', 
     await page.goto('/point/');
     await waitForPointReady(page);
 
-    await expect(page.locator('#cloudStatus')).toContainText('Session');
+    await expect(page.locator('#cloudStatus')).toContainText('Local');
     await expect(page.locator('#cloudStatus')).toContainText('dutch');
     await expect(page.locator('#cloudLiveInfo')).toBeHidden();
 });
