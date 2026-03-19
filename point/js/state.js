@@ -1,5 +1,6 @@
 import { restartSim } from './physics.js';
 import { getId, uid, sanitizeNodeColor, normalizePersonStatus } from './utils.js';
+import { cloneDefaultPointPhysicsSettings } from '../../shared/js/point-physics-settings.mjs';
 
 export const state = {
     nodes: [],
@@ -20,16 +21,7 @@ export const state = {
     pathfinding: { startId: null, active: false, pathNodes: new Set(), pathLinks: new Set() },
     activeFilter: 'ALL',
     globeMode: true,
-    physicsSettings: {
-        repulsion: 1200, gravity: 0.005, linkLength: 220, friction: 0.3,
-        collision: 50, enemyForce: 300, structureRepulsion: 0.1, curveStrength: 1.0,
-        socialLinkStrength: 0.34, socialLinkDistanceMult: 0.78,
-        businessLinkStrength: 0.26, businessLinkDistanceMult: 1.08,
-        companyChargeMultiplier: 5, groupChargeMultiplier: 3,
-        companyTerritoryRadius: 450, groupTerritoryRadius: 350,
-        enemyDistanceMultiplier: 1.0,
-        presetId: 'standard'
-    },
+    physicsSettings: cloneDefaultPointPhysicsSettings(),
     history: [], tempLink: null, labelMode: 1, showLinkTypes: false, 
     performance: false, view: { x: 0, y: 0, scale: 0.8 }, forceSimulation: false,
     projectName: null, // AJOUT DU NOM DU PROJET

@@ -1,4 +1,5 @@
 import { cloneJson, sortById, valuesEqual } from './utils.mjs';
+import { normalizePointPhysicsSettings } from '../js/point-physics-settings.mjs';
 
 const POINT_REALTIME_TEXT_FIELDS = ['name', 'num', 'accountNumber', 'citizenNumber', 'description', 'notes'];
 
@@ -62,9 +63,11 @@ export function canonicalizePointPayload(payload = {}) {
     const raw = payload && typeof payload === 'object' ? payload : {};
     return {
         meta: normalizeMeta(raw.meta),
-        physicsSettings: raw.physicsSettings && typeof raw.physicsSettings === 'object'
-            ? cloneJson(raw.physicsSettings, {})
-            : {},
+        physicsSettings: normalizePointPhysicsSettings(
+            raw.physicsSettings && typeof raw.physicsSettings === 'object'
+                ? cloneJson(raw.physicsSettings, {})
+                : {}
+        ),
         nodes: sortById((Array.isArray(raw.nodes) ? raw.nodes : []).map(normalizeNode).filter(Boolean)),
         links: sortById((Array.isArray(raw.links) ? raw.links : []).map(normalizeLink).filter(Boolean))
     };

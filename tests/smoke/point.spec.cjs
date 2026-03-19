@@ -382,6 +382,8 @@ test('point empty cloud board keeps freshly linked nodes inside the viewport', a
             height,
             nodes: Array.isArray(data?.nodes) ? data.nodes.map((node) => ({
                 name: String(node?.name || ''),
+                x: node?.x,
+                y: node?.y,
                 screenX: (Number(node?.x || 0) * Number(data?.view?.scale || 1)) + Number(data?.view?.x || 0) + (width / 2),
                 screenY: (Number(node?.y || 0) * Number(data?.view?.scale || 1)) + Number(data?.view?.y || 0) + (height / 2),
             })) : [],
@@ -392,6 +394,10 @@ test('point empty cloud board keeps freshly linked nodes inside the viewport', a
     const bravo = snapshot.nodes.find((node) => node.name === 'Bravo Spawn');
     expect(alpha).toBeTruthy();
     expect(bravo).toBeTruthy();
+    expect(Number.isFinite(alpha.x)).toBeTruthy();
+    expect(Number.isFinite(alpha.y)).toBeTruthy();
+    expect(Number.isFinite(bravo.x)).toBeTruthy();
+    expect(Number.isFinite(bravo.y)).toBeTruthy();
     expect(alpha.screenX).toBeGreaterThan(40);
     expect(alpha.screenX).toBeLessThan(snapshot.width - 40);
     expect(alpha.screenY).toBeGreaterThan(40);

@@ -2,32 +2,12 @@ import { state, pushHistory, scheduleSave, linkHasNode } from './state.js';
 import { restartSim } from './physics.js'; // CORRECTION : Import depuis physics.js
 import { calculateHVT } from './logic.js';
 import { draw } from './render.js';
+import { cloneDefaultPointPhysicsSettings, normalizePointPhysicsSettings } from '../../shared/js/point-physics-settings.mjs';
 // On importe depuis ui.js les fonctions nécessaires
 import { selectNode, renderEditor, updatePathfindingPanel, refreshLists, showCustomConfirm, refreshHvt } from './ui.js';
 
 let settingsPanel = null;
 let contextMenu = null;
-
-const DEFAULT_PHYSICS_SETTINGS = {
-    repulsion: 1200,
-    gravity: 0.005,
-    linkLength: 220,
-    friction: 0.3,
-    collision: 50,
-    enemyForce: 300,
-    structureRepulsion: 0.1,
-    curveStrength: 1.0,
-    socialLinkStrength: 0.34,
-    socialLinkDistanceMult: 0.78,
-    businessLinkStrength: 0.26,
-    businessLinkDistanceMult: 1.08,
-    companyChargeMultiplier: 5,
-    groupChargeMultiplier: 3,
-    companyTerritoryRadius: 450,
-    groupTerritoryRadius: 350,
-    enemyDistanceMultiplier: 1.0,
-    presetId: 'standard'
-};
 
 const PHYSICS_PRESETS = [
     {
@@ -117,15 +97,8 @@ const PHYSICS_PRESETS = [
     }
 ];
 
-function cloneDefaultPhysicsSettings() {
-    return { ...DEFAULT_PHYSICS_SETTINGS };
-}
-
 function ensurePhysicsSettingsShape() {
-    const nextSettings = {
-        ...cloneDefaultPhysicsSettings(),
-        ...(state.physicsSettings && typeof state.physicsSettings === 'object' ? state.physicsSettings : {})
-    };
+    const nextSettings = normalizePointPhysicsSettings(state.physicsSettings);
     const presetId = String(nextSettings.presetId || 'custom');
     nextSettings.presetId = PHYSICS_PRESETS.some((entry) => entry.id === presetId) ? presetId : 'custom';
     state.physicsSettings = nextSettings;
@@ -157,7 +130,7 @@ function applyPhysicsPreset(presetId) {
     const preset = PHYSICS_PRESETS.find((entry) => entry.id === presetId);
     if (!preset) return;
     state.physicsSettings = {
-        ...cloneDefaultPhysicsSettings(),
+        ...cloneDefaultPointPhysicsSettings(),
         ...preset.patch,
         presetId: preset.id
     };
@@ -368,7 +341,7 @@ function updateSettingsUI() {
 }
 
 function resetPhysicsDefaults() {
-    state.physicsSettings = cloneDefaultPhysicsSettings();
+    state.physicsSettings = cloneDefaultPointPhysicsSettings();
     state.globeMode = true;
     updateSettingsUI();
     restartSim();

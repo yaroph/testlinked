@@ -46,6 +46,21 @@ test('point realtime ops rebuild the target snapshot', async () => {
     );
 });
 
+test('point realtime canonicalization restores default physics settings for sparse payloads', async () => {
+    const { canonicalizePointPayload } = await loadModule('shared/realtime/point-doc.mjs');
+
+    const normalized = canonicalizePointPayload({
+        physicsSettings: { friction: 0.42 },
+        nodes: [],
+        links: []
+    });
+
+    assert.equal(normalized.physicsSettings.friction, 0.42);
+    assert.equal(normalized.physicsSettings.linkLength, 220);
+    assert.equal(normalized.physicsSettings.gravity, 0.005);
+    assert.equal(normalized.physicsSettings.presetId, 'standard');
+});
+
 test('point realtime delete_node also removes dangling links', async () => {
     const { applyPointOps } = await loadModule('shared/realtime/point-doc.mjs');
 

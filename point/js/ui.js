@@ -38,6 +38,7 @@ import { findPointSearchMatches } from '../../shared/js/point-search.mjs';
 import { bindAsyncActionButton } from '../../shared/js/ui-async.mjs';
 import { createBrowserDebugLogger } from '../../shared/js/browser-debug.mjs';
 import { clampPointCursorCoord, normalizePointCursorPresence } from '../../shared/js/collab-cursor-visuals.mjs';
+import { normalizePointPhysicsSettings } from '../../shared/js/point-physics-settings.mjs';
 import { clearPointRemoteCursors, setPointRemoteCursors } from './collab-cursors.js';
 import { attachAsyncAutocomplete } from '../../shared/js/async-autocomplete.mjs';
 
@@ -1323,9 +1324,7 @@ function extractPlainPointPayloadFromCloud(rawData) {
         }));
     return {
         meta: normalized.meta && typeof normalized.meta === 'object' ? { ...normalized.meta } : {},
-        physicsSettings: normalized.physicsSettings && typeof normalized.physicsSettings === 'object'
-            ? cloneJson(normalized.physicsSettings, {})
-            : {},
+        physicsSettings: normalizePointPhysicsSettings(normalized.physicsSettings),
         nodes,
         links
     };
@@ -1874,6 +1873,7 @@ async function activateCloudTransport() {
 
 async function startCollabRealtime() {
     if (!shouldUseRealtimeCloud()) return false;
+    ensureCollabAutosaveListener();
     stopCollabRealtime();
     await preloadRealtimeTextTools().catch(() => null);
     pointDebugLogger.log('realtime-start-request', getPointDiagState({
@@ -4430,9 +4430,7 @@ function normalizePointPayloadForLoad(d) {
 
     return {
         meta: d.meta && typeof d.meta === 'object' ? cloneJson(d.meta, {}) : {},
-        physicsSettings: d.physicsSettings && typeof d.physicsSettings === 'object'
-            ? cloneJson(d.physicsSettings, {})
-            : {},
+        physicsSettings: normalizePointPhysicsSettings(d.physicsSettings),
         nodes,
         links
     };
@@ -6024,7 +6022,7 @@ function processData(d, mode, options = {}) {
                 return true;
             });
 
-        if (d.physicsSettings) state.physicsSettings = d.physicsSettings;
+        state.physicsSettings = normalizePointPhysicsSettings(d.physicsSettings);
         if (d.meta && d.meta.projectName) state.projectName = d.meta.projectName;
         else state.projectName = null;
         intelSuggestions = [];
