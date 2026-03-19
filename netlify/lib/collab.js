@@ -7,6 +7,14 @@ const ROLE_EDITOR = "editor";
 const ROLE_VIEWER = "viewer";
 const ALLOWED_ROLES = new Set([ROLE_OWNER, ROLE_EDITOR, ROLE_VIEWER]);
 
+function readFirstEnvValue(...names) {
+  for (const name of names) {
+    const value = String(process.env[name] || "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
 function jsonResponse(statusCode, payload) {
   return {
     statusCode,
@@ -127,8 +135,54 @@ function userBoardsKey(userId) {
   return `user-boards/${userId}`;
 }
 
+function resolveStoreClientEnvOptions() {
+  const siteID = readFirstEnvValue(
+    "BNI_NETLIFY_SITE_ID",
+    "NETLIFY_BLOBS_SITE_ID",
+    "NETLIFY_SITE_ID",
+    "SITE_ID"
+  );
+  const token = readFirstEnvValue(
+    "BNI_NETLIFY_AUTH_TOKEN",
+    "BNI_NETLIFY_TOKEN",
+    "NETLIFY_BLOBS_TOKEN",
+    "NETLIFY_AUTH_TOKEN",
+    "NETLIFY_TOKEN"
+  );
+
+  if (!siteID || !token) {
+    return {};
+  }
+
+  return { siteID, token };
+}
+
+function describeStoreClientConfig() {
+  const siteID = readFirstEnvValue(
+    "BNI_NETLIFY_SITE_ID",
+    "NETLIFY_BLOBS_SITE_ID",
+    "NETLIFY_SITE_ID",
+    "SITE_ID"
+  );
+  const token = readFirstEnvValue(
+    "BNI_NETLIFY_AUTH_TOKEN",
+    "BNI_NETLIFY_TOKEN",
+    "NETLIFY_BLOBS_TOKEN",
+    "NETLIFY_AUTH_TOKEN",
+    "NETLIFY_TOKEN"
+  );
+  return {
+    external: Boolean(siteID && token),
+    siteIDPresent: Boolean(siteID),
+    tokenPresent: Boolean(token),
+  };
+}
+
 function getStoreClient() {
-  return getStore(STORE_NAME);
+  const options = resolveStoreClientEnvOptions();
+  return Object.keys(options).length
+    ? getStore(STORE_NAME, options)
+    : getStore(STORE_NAME);
 }
 
 async function getUserByUsername(store, username) {
@@ -340,6 +394,7 @@ module.exports = {
   nowIso,
   newId,
   getStoreClient,
+  describeStoreClientConfig,
   getUserByUsername,
   getUserById,
   createSession,
@@ -360,4 +415,8 @@ module.exports = {
   withoutMember,
   boardSummary,
   ALLOWED_ROLES,
+  __test: {
+    resolveStoreClientEnvOptions,
+    describeStoreClientConfig,
+  },
 };

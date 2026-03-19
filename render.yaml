@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: bni-linked-realtime
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --omit=dev
+    startCommand: npm run realtime:server
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: BNI_REALTIME_SECRET
+        sync: false
+      - key: NETLIFY_SITE_ID
+        sync: false
+      - key: NETLIFY_AUTH_TOKEN
+        sync: false

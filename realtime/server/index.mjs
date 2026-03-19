@@ -33,11 +33,13 @@ const {
     getStoreClient,
     getRoleForUser,
     canEditBoard,
-    nowIso
+    nowIso,
+    describeStoreClientConfig
 } = collabLib;
 
 const PORT = Number(process.env.PORT || 8787);
 const REALTIME_SECRET = String(process.env.BNI_REALTIME_SECRET || process.env.REALTIME_SECRET || 'bni-linked-dev-realtime-secret');
+const USING_DEFAULT_REALTIME_SECRET = !String(process.env.BNI_REALTIME_SECRET || process.env.REALTIME_SECRET || '').trim();
 const ROOM_IDLE_TTL_MS = 120000;
 const PERSIST_DEBOUNCE_MS = 450;
 
@@ -535,6 +537,18 @@ class BoardRoom {
 const store = getStoreClient();
 const rooms = new Map();
 
+async function probeStoreConnectivity() {
+    try {
+        await store.get('__realtime__/healthcheck', { type: 'json' });
+        return { ok: true };
+    } catch (error) {
+        return {
+            ok: false,
+            error: String(error?.message || error || 'Store probe failed')
+        };
+    }
+}
+
 async function loadBoard(boardId) {
     if (!boardId) return null;
     return store.get(boardKey(boardId), { type: 'json' });
@@ -571,10 +585,26 @@ function parseJsonSafe(value) {
     }
 }
 
-const server = http.createServer((request, response) => {
+const server = http.createServer(async (request, response) => {
     if (request.url === '/health') {
-        response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+        const storeProbe = await probeStoreConnectivity();
+        const storeConfig = describeStoreClientConfig();
+        const payload = {
+            ok: !USING_DEFAULT_REALTIME_SECRET && storeProbe.ok,
+            service: 'bni-linked-realtime',
+            rooms: rooms.size,
+            wsPath: '/ws',
+            secretConfigured: !USING_DEFAULT_REALTIME_SECRET,
+            store: {
+                ...storeConfig,
+                reachable: storeProbe.ok
+            }
+        };
+        if (!storeProbe.ok) {
+            payload.store.error = storeProbe.error;
+        }
+        response.writeHead(payload.ok ? 200 : 503, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify(payload));
         return;
     }
 

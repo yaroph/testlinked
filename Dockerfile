@@ -1,0 +1,15 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY netlify ./netlify
+COPY realtime ./realtime
+COPY shared ./shared
+
+ENV PORT=8787
+EXPOSE 8787
+
+CMD ["npm", "run", "realtime:server"]
