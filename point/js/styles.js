@@ -4591,6 +4591,39 @@ export function injectStyles() {
                 border-radius: 16px;
             }
         }
+    
+        /* --- FIX BOUTONS TOUJOURS VISIBLES --- */
+        .editor-side-group-bottom {
+            position: sticky !important;
+            bottom: 0 !important;
+            z-index: 100 !important;
+            padding-bottom: 10px !important;
+        }
+        @media (max-width: 900px) {
+            .editor-side-group-bottom {
+                position: fixed !important;
+                bottom: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                display: flex !important;
+                flex-direction: row !important;
+                background: rgba(3, 9, 22, 0.98) !important;
+                padding: 12px 16px 20px !important;
+                border-top: 1px solid rgba(102, 243, 255, 0.25) !important;
+                box-shadow: 0 -10px 40px rgba(0,0,0,0.9) !important;
+                z-index: 2147483647 !important;
+            }
+            .editor-side-group-bottom .mini-btn {
+                flex: 1 !important;
+                min-height: 48px !important;
+                font-size: 0.85rem !important;
+                margin: 0 !important;
+            }
+            .editor-main-card {
+                padding-bottom: 90px !important;
+            }
+        }
+
     `;
     document.head.appendChild(style);
 }
