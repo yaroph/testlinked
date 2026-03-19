@@ -66,6 +66,7 @@ const POINT_LOCAL_CHANGE_EVENT = 'bni:point-local-change';
 const ACTION_LOG_STORAGE_KEY = 'bniLinkedActionLog_v1';
 const ACTION_LOG_MAX = 80;
 const LOCAL_WORKSPACE_BACKUP_KEY = 'bniLinkedPointLocalWorkspace_v1';
+const LOCAL_WORKSPACE_HEALTHY_BACKUP_KEY = 'bniLinkedPointHealthyWorkspace_v1';
 const LOCAL_WORKSPACE_HEALTH_WARNED_KEY = 'bniLinkedPointWorkspaceHealthWarned_v1';
 const COLLAB_NODE_FIELDS = ['name', 'type', 'color', 'manualColor', 'personStatus', 'num', 'accountNumber', 'citizenNumber', 'linkedMapPointId', 'description', 'notes', 'x', 'y', 'fixed'];
 const COLLAB_LINK_FIELDS = ['source', 'target', 'kind'];
@@ -612,11 +613,11 @@ function cloneJson(value, fallback = null) {
     }
 }
 
-function persistLastLocalWorkspaceSnapshot(payload = generateExportData()) {
+function persistWorkspaceSnapshot(storageKey, payload = generateExportData()) {
     try {
         const normalized = normalizePointPayloadForLoad(payload);
         if (!normalized) return false;
-        localStorage.setItem(LOCAL_WORKSPACE_BACKUP_KEY, JSON.stringify({
+        localStorage.setItem(String(storageKey || ''), JSON.stringify({
             savedAt: Date.now(),
             payload: normalized
         }));
@@ -626,9 +627,9 @@ function persistLastLocalWorkspaceSnapshot(payload = generateExportData()) {
     }
 }
 
-function readLastLocalWorkspaceSnapshot() {
+function readWorkspaceSnapshot(storageKey) {
     try {
-        const raw = localStorage.getItem(LOCAL_WORKSPACE_BACKUP_KEY);
+        const raw = localStorage.getItem(String(storageKey || ''));
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         return normalizePointPayloadForLoad(parsed?.payload || parsed);
@@ -637,9 +638,33 @@ function readLastLocalWorkspaceSnapshot() {
     }
 }
 
+function persistLastLocalWorkspaceSnapshot(payload = generateExportData()) {
+    return persistWorkspaceSnapshot(LOCAL_WORKSPACE_BACKUP_KEY, payload);
+}
+
+function persistHealthyLocalWorkspaceSnapshot(payload = generateExportData()) {
+    const normalized = normalizePointPayloadForLoad(payload);
+    if (!normalized) return false;
+    if (isLikelyDamagedLocalWorkspace(getPointWorkspaceNameHealth(normalized))) {
+        return false;
+    }
+    return persistWorkspaceSnapshot(LOCAL_WORKSPACE_HEALTHY_BACKUP_KEY, normalized);
+}
+
+function readLastLocalWorkspaceSnapshot() {
+    return readWorkspaceSnapshot(LOCAL_WORKSPACE_BACKUP_KEY);
+}
+
+function readHealthyLocalWorkspaceSnapshot() {
+    return readWorkspaceSnapshot(LOCAL_WORKSPACE_HEALTHY_BACKUP_KEY);
+}
+
 function rememberCurrentLocalWorkspace() {
     if (isCloudBoardActive()) return false;
-    return persistLastLocalWorkspaceSnapshot(generateExportData());
+    const payload = generateExportData();
+    const savedLast = persistLastLocalWorkspaceSnapshot(payload);
+    const savedHealthy = persistHealthyLocalWorkspaceSnapshot(payload);
+    return savedLast || savedHealthy;
 }
 
 function restoreLastLocalWorkspace(options = {}) {
@@ -692,6 +717,31 @@ function isBackupHealthier(currentStats, backupStats) {
     return Number(backupStats.ratio || 0) <= Math.max(0.06, Number(currentStats.ratio || 0) - 0.15);
 }
 
+function pickRecoveryWorkspaceSnapshot(currentStats) {
+    const candidates = [
+        {
+            payload: readHealthyLocalWorkspaceSnapshot(),
+            label: 'derniere sauvegarde locale saine'
+        },
+        {
+            payload: readLastLocalWorkspaceSnapshot(),
+            label: 'derniere sauvegarde locale'
+        }
+    ].map((entry) => ({
+        ...entry,
+        stats: entry.payload ? getPointWorkspaceNameHealth(entry.payload) : null
+    })).filter((entry) => entry.payload && isBackupHealthier(currentStats, entry.stats));
+
+    if (!candidates.length) return null;
+    candidates.sort((left, right) => {
+        const leftRatio = Number(left.stats?.ratio || 0);
+        const rightRatio = Number(right.stats?.ratio || 0);
+        if (leftRatio !== rightRatio) return leftRatio - rightRatio;
+        return Number(left.stats?.unnamed || 0) - Number(right.stats?.unnamed || 0);
+    });
+    return candidates[0] || null;
+}
+
 function readWorkspaceHealthWarningState() {
     try {
         if (typeof sessionStorage === 'undefined') return '';
@@ -727,14 +777,13 @@ export function maybeRecoverDamagedLocalWorkspace() {
     }
     writeWorkspaceHealthWarningState(warningFingerprint);
 
-    const backupPayload = readLastLocalWorkspaceSnapshot();
-    const backupStats = backupPayload ? getPointWorkspaceNameHealth(backupPayload) : null;
+    const recoverySnapshot = pickRecoveryWorkspaceSnapshot(currentStats);
 
-    if (backupPayload && isBackupHealthier(currentStats, backupStats)) {
+    if (recoverySnapshot?.payload) {
         showCustomConfirm(
-            `Le workspace local semble endommage (${currentStats.unnamed}/${currentStats.total} fiches sans nom). Restaurer la derniere sauvegarde locale saine ?`,
+            `Le workspace local contient beaucoup de fiches sans nom (${currentStats.unnamed}/${currentStats.total}). Restaurer ${recoverySnapshot.label} ?`,
             () => {
-                withoutCloudAutosave(() => processData(backupPayload, 'load', { silent: true }));
+                withoutCloudAutosave(() => processData(recoverySnapshot.payload, 'load', { silent: true }));
                 state.selection = null;
                 renderEditor();
                 updatePathfindingPanel();
@@ -748,7 +797,7 @@ export function maybeRecoverDamagedLocalWorkspace() {
         return true;
     }
 
-    showCustomAlert(`Le workspace local semble endommage (${currentStats.unnamed}/${currentStats.total} fiches sans nom). Utilise Fichier > Reset ou reimporte une sauvegarde saine.`);
+    showCustomAlert(`Le workspace local contient beaucoup de fiches sans nom (${currentStats.unnamed}/${currentStats.total}). Cela vient souvent d'une fusion/import incomplet. Utilise Fichier > Reset ou reimporte une sauvegarde saine.`);
     return true;
 }
 
@@ -5522,6 +5571,11 @@ function handleFileProcess(file, mode) {
 
 function processData(d, mode, options = {}) {
     const silent = Boolean(options && options.silent);
+    const shouldCapturePreMutationBackup = !silent && !isCloudBoardActive() && (state.nodes.length || state.links.length);
+
+    if ((mode === 'load' || mode === 'merge') && shouldCapturePreMutationBackup) {
+        rememberCurrentLocalWorkspace();
+    }
 
     if (mode === 'load') {
         if (!d || !Array.isArray(d.nodes) || !Array.isArray(d.links)) {
