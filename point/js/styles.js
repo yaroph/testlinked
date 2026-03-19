@@ -4479,15 +4479,34 @@ export function injectStyles() {
                 width: 100%;
                 min-height: 0;
                 display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-columns: repeat(3, minmax(0, 1fr));
                 gap: 8px;
             }
             .editor-side-group {
                 display: contents;
             }
             .editor-side-group-bottom {
-                margin-top: 0;
-                padding-top: 0;
+                display: flex !important;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                margin: 0;
+                padding: 12px 16px 24px;
+                flex-direction: row;
+                gap: 12px;
+                z-index: 10000;
+                background: rgba(3, 9, 22, 0.98);
+                border-top: 1px solid rgba(102, 243, 255, 0.25);
+                box-shadow: 0 -10px 40px rgba(0,0,0,0.8);
+            }
+            .editor-side-group-bottom .mini-btn {
+                flex: 1;
+                min-height: 48px;
+                font-size: 0.85rem !important;
+            }
+            .editor-main-card {
+                padding-bottom: 90px !important;
             }
             .editor-side-group .mini-btn {
                 min-height: 40px;
