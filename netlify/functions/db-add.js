@@ -1,4 +1,4 @@
-const { getStore, connectLambda } = require("@netlify/blobs");
+const { getStore, connectLambda } = require("../lib/blob-store");
 const crypto = require("crypto");
 const { MAX_SCAN_FILES, appendIndexEntry, normalizePage } = require("../lib/db-index");
 const {

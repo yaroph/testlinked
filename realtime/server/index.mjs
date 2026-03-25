@@ -1,5 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 import jwt from 'jsonwebtoken';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
@@ -27,6 +28,16 @@ import {
     REALTIME_PAGE_MAP,
     REALTIME_PAGE_POINT
 } from '../../shared/realtime/protocol.mjs';
+
+const require = createRequire(import.meta.url);
+const collabAuthFunction = require('../../netlify/functions/collab-auth.js');
+const collabBoardFunction = require('../../netlify/functions/collab-board.js');
+const collabRealtimeTokenFunction = require('../../netlify/functions/collab-realtime-token.js');
+const alertsFunction = require('../../netlify/functions/alerts.js');
+const dbAddFunction = require('../../netlify/functions/db-add.js');
+const dbGetFunction = require('../../netlify/functions/db-get.js');
+const dbListFunction = require('../../netlify/functions/db-list.js');
+const dbDeleteFunction = require('../../netlify/functions/db-delete.js');
 
 const {
     boardKey,
@@ -591,8 +602,85 @@ function parseJsonSafe(value) {
     }
 }
 
+function collectRequestBody(request) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        request.on('data', (chunk) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        request.on('end', () => {
+            resolve(Buffer.concat(chunks).toString('utf8'));
+        });
+        request.on('error', reject);
+    });
+}
+
+function getQueryStringParameters(urlObject) {
+    const query = {};
+    urlObject.searchParams.forEach((value, key) => {
+        query[key] = value;
+    });
+    return query;
+}
+
+function buildServerlessEvent(request, targetUrl, body = '') {
+    return {
+        httpMethod: String(request.method || 'GET').toUpperCase(),
+        headers: { ...(request.headers || {}) },
+        body,
+        queryStringParameters: getQueryStringParameters(targetUrl),
+        path: targetUrl.pathname,
+        rawUrl: targetUrl.toString(),
+    };
+}
+
+function sendServerlessResponse(response, result = {}) {
+    const statusCode = Number(result?.statusCode || 200);
+    const headers = result?.headers && typeof result.headers === 'object'
+        ? result.headers
+        : { 'Content-Type': 'application/json; charset=utf-8' };
+    const body = result?.body === undefined || result?.body === null ? '' : String(result.body);
+    response.writeHead(statusCode, headers);
+    response.end(body);
+}
+
+function resolveServerlessHandler(pathname = '') {
+    const cleanPath = String(pathname || '').replace(/\/+$/, '') || '/';
+    const routeMap = {
+        '/api/collab-auth': collabAuthFunction.handler,
+        '/api/collab-board': collabBoardFunction.handler,
+        '/api/realtime/token': collabRealtimeTokenFunction.handler,
+        '/api/alerts': alertsFunction.handler,
+        '/api/db-add': dbAddFunction.handler,
+        '/api/db-get': dbGetFunction.handler,
+        '/api/db-list': dbListFunction.handler,
+        '/api/db-delete': dbDeleteFunction.handler,
+        '/.netlify/functions/collab-auth': collabAuthFunction.handler,
+        '/.netlify/functions/collab-board': collabBoardFunction.handler,
+        '/.netlify/functions/collab-realtime-token': collabRealtimeTokenFunction.handler,
+        '/.netlify/functions/alerts': alertsFunction.handler,
+        '/.netlify/functions/db-add': dbAddFunction.handler,
+        '/.netlify/functions/db-get': dbGetFunction.handler,
+        '/.netlify/functions/db-list': dbListFunction.handler,
+        '/.netlify/functions/db-delete': dbDeleteFunction.handler,
+    };
+    return routeMap[cleanPath] || null;
+}
+
+async function handleServerlessRoute(handler, request, response, targetUrl) {
+    const method = String(request.method || 'GET').toUpperCase();
+    const body = method === 'GET' || method === 'HEAD'
+        ? ''
+        : await collectRequestBody(request);
+    const event = buildServerlessEvent(request, targetUrl, body);
+    const result = await handler(event);
+    sendServerlessResponse(response, result);
+}
+
 const server = http.createServer(async (request, response) => {
-    if (request.url === '/health') {
+    const targetUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+
+    if (targetUrl.pathname === '/health' || targetUrl.pathname === '/api/health') {
         const storeProbe = await probeStoreConnectivity();
         const storeConfig = describeStoreClientConfig();
         const payload = {
@@ -611,6 +699,21 @@ const server = http.createServer(async (request, response) => {
         }
         response.writeHead(payload.ok ? 200 : 503, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(payload));
+        return;
+    }
+
+    const serverlessHandler = resolveServerlessHandler(targetUrl.pathname);
+    if (serverlessHandler) {
+        try {
+            await handleServerlessRoute(serverlessHandler, request, response, targetUrl);
+        } catch (error) {
+            console.error('[api] route failed', targetUrl.pathname, error);
+            response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+            response.end(JSON.stringify({
+                ok: false,
+                error: 'Internal server error'
+            }));
+        }
         return;
     }
 

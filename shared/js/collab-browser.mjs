@@ -16,7 +16,7 @@ export async function readResponseSafe(response, fallback = {}) {
 
 export function endpointHintMessage(statusCode, domain) {
     if (statusCode === 404 || statusCode === 405) {
-        return `${domain} indisponible (${statusCode}). Lance le site avec "npx netlify dev".`;
+        return `${domain} indisponible (${statusCode}). Lance le backend local et le serveur statique du projet.`;
     }
     return '';
 }

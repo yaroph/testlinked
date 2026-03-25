@@ -1,6 +1,7 @@
 # Dependances et caches locaux
 /node_modules/
 /.netlify/
+/.firebase/
 .npm/
 npm-debug.log*
 yarn-debug.log*

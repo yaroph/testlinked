@@ -1,6 +1,13 @@
 # BNI Linked V3
 
-BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet rassemble un graphe relationnel, une carte tactique, une console staff, une vue base de donnees, des fonctions Netlify et une couche collaborative temps reel.
+BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet rassemble un graphe relationnel, une carte tactique, une console staff, une vue base de donnees, un backend Node de collaboration temps reel et un stockage Firebase.
+
+## Production
+
+- frontend public : `https://bni-linked.web.app`
+- hebergement statique : Firebase Hosting
+- backend API + websocket : Cloud Run
+- stockage runtime : Firebase Realtime Database
 
 ## Vue d'ensemble
 
@@ -8,8 +15,8 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 - `map/` : carte tactique, points, zones, liaisons terrain, import, fusion et cloud.
 - `staff/` : console d'administration et de publication des alertes.
 - `database/` : lecture et controle des donnees sauvegardees.
-- `netlify/functions/` : endpoints cloud, alertes, auth et persistence.
-- `realtime/server/` : serveur Node pour les sessions collaboratives locales et prod.
+- `netlify/functions/` : logique backend legacy, reusee par le serveur Cloud Run.
+- `realtime/server/` : serveur Node unique pour les sessions collaboratives, les endpoints API et le websocket.
 - `shared/` : contrats, logique commune et outils de collaboration.
 - `tests/` : tests Node et smoke tests Playwright.
 
@@ -32,12 +39,15 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 - la recherche mot-cle analyse nom, numero, description, notes et champs associes
 - `Recherche rapide` reste volontairement limitee au nom
 - la couleur HVT continue visuellement vers les noeuds relies
+- `map/carte.jpg` a ete recompressee pour reduire fortement le poids au chargement
 
 ## Stack
 
 - frontend statique HTML / CSS / JavaScript
-- Netlify Functions
+- Firebase Hosting
+- Firebase Realtime Database via Admin SDK
 - Node.js
+- Cloud Run
 - WebSocket `ws`
 - Yjs
 - Playwright
@@ -55,13 +65,14 @@ npm install
 
 ## Lancement local
 
-Serveur temps reel :
+Backend local Cloud Run style :
 
 ```bash
 npm run realtime:server
 ```
 
-Serveur statique simple pour la navigation locale ou les smoke tests :
+Serveur statique simple pour la navigation locale ou les smoke tests.
+Il proxifie `/.netlify/functions/**`, `/api/**` et `/health` vers `http://127.0.0.1:8787` par defaut :
 
 ```bash
 node tests/smoke/static-server.cjs --port 4173
@@ -80,91 +91,114 @@ npm test
 npm run test:smoke
 npm run test:verify
 npm run realtime:server
-npm run realtime:verify -- --site https://bni-linked.netlify.app --realtime https://realtime.example.com
+npm run realtime:verify -- --site https://your-project.web.app --realtime https://bni-linked-backend-xxxxx-ew.a.run.app
 ```
 
 ## Variables d'environnement utiles
 
-Netlify :
+Backend Cloud Run :
 
 - `BNI_LINKED_KEY`
 - `BNI_LINKED_REQUIRE_AUTH`
+- `FIREBASE_DATABASE_URL`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_SERVICE_ACCOUNT_JSON` optionnelle en local
 - `BNI_REALTIME_SECRET`
 - `BNI_REALTIME_HTTP_URL`
 - `BNI_REALTIME_WS_URL`
-
-Serveur realtime externe :
-
-- `BNI_REALTIME_SECRET`
-- `REALTIME_SECRET`
-- `NETLIFY_SITE_ID`
-- `NETLIFY_AUTH_TOKEN`
-- `BNI_NETLIFY_SITE_ID`
-- `BNI_NETLIFY_AUTH_TOKEN`
 - `PORT`
 - `PLAYWRIGHT_PORT`
 
 Un exemple complet est fourni dans [.env.example](./.env.example).
 
-## Mise en prod du websocket
+## Deploiement cible
 
-Le websocket realtime ne doit pas tourner sur le domaine Netlify principal. Le flux recommande :
+Architecture recommandee :
 
-1. Deployer le serveur Node `realtime/server/index.mjs` sur un host long-running.
-2. Lui donner le meme `BNI_REALTIME_SECRET` que les Functions Netlify.
-3. Configurer Netlify pour renvoyer `BNI_REALTIME_HTTP_URL` et `BNI_REALTIME_WS_URL`.
-4. Donner au serveur externe l'acces Netlify Blobs avec `NETLIFY_SITE_ID` et `NETLIFY_AUTH_TOKEN`.
-5. Redepoyer Netlify apres ajout des variables.
-6. Verifier le healthcheck, le token endpoint et le handshake websocket.
+1. Deployer le frontend statique sur Firebase Hosting avec [firebase.json](./firebase.json).
+2. Deployer [realtime/server/index.mjs](./realtime/server/index.mjs) sur Cloud Run.
+3. Configurer Cloud Run avec `--max-instances=1` au debut pour garder une coherence simple.
+4. Configurer Firebase Realtime Database pour stocker :
+   - boards collaboratifs
+   - sessions auth
+   - presence
+   - alertes
+   - archives `db-*`
+5. Faire pointer Firebase Hosting vers Cloud Run via les rewrites `/.netlify/functions/**` et `/api/**`.
 
 Fichiers ajoutes pour accelerer ce setup :
 
 - [Dockerfile](./Dockerfile) pour un deploiement container standard
-- [render.yaml](./render.yaml) pour Render
-- [railway.json](./railway.json) pour Railway
+- [firebase.json](./firebase.json) pour Firebase Hosting
+- [scripts/deploy-cloudrun.ps1](./scripts/deploy-cloudrun.ps1) pour `gcloud builds submit` puis `gcloud run deploy`
+- [scripts/migrate-netlify-to-firebase.mjs](./scripts/migrate-netlify-to-firebase.mjs) pour copier les stores Netlify existants vers Firebase
 - [scripts/verify-realtime-prod.mjs](./scripts/verify-realtime-prod.mjs) pour verifier la chaine prod
 
-### Variables Netlify
+### Cloud Run
 
-Configurer ces variables dans le dashboard Netlify du site statique :
+Exemple de deploiement :
 
-```text
-BNI_REALTIME_SECRET=<meme secret que le serveur websocket>
-BNI_REALTIME_HTTP_URL=https://realtime.bni-linked.app
-BNI_REALTIME_WS_URL=wss://realtime.bni-linked.app
+```powershell
+./scripts/deploy-cloudrun.ps1 `
+  -ProjectId your-project-id `
+  -Region europe-west1 `
+  -ServiceName bni-linked-backend `
+  -DatabaseUrl https://your-project-id-default-rtdb.europe-west1.firebasedatabase.app `
+  -RealtimeSecret <long-random-secret>
 ```
 
-### Variables du serveur realtime
+### Firebase Hosting
 
-Configurer ces variables sur Render, Railway, Fly.io ou autre host Node :
+Le fichier [firebase.json](./firebase.json) :
 
-```text
-BNI_REALTIME_SECRET=<meme secret que Netlify>
-NETLIFY_SITE_ID=<site id Netlify>
-NETLIFY_AUTH_TOKEN=<personal access token Netlify>
-PORT=8787
+- publie le front statique
+- recrit `/.netlify/functions/**` vers le service Cloud Run `bni-linked-backend`
+- recrit `/api/**` vers le meme service
+- garde `/health` accessible
+
+Deploiement :
+
+```bash
+firebase deploy --only hosting
 ```
 
-Le serveur realtime sait aussi lire `BNI_NETLIFY_SITE_ID` et `BNI_NETLIFY_AUTH_TOKEN` si vous preferez des noms dedies.
+### Migration des donnees
+
+Pour copier les stores Netlify Blobs existants vers Firebase avant la coupure :
+
+```bash
+npm run migrate:netlify
+```
+
+Par defaut, le script migre :
+
+- `bni-linked-collab`
+- `bni-linked-alerts`
+- `bni-linked-db`
+
+Options utiles :
+
+- `npm run migrate:netlify -- --wipe` pour vider d abord la cible Firebase
+- `npm run migrate:netlify -- --stores bni-linked-collab,bni-linked-alerts` pour limiter la copie
 
 ### Verification
 
 Verification healthcheck seule :
 
 ```bash
-npm run realtime:verify -- --site https://bni-linked.netlify.app --realtime https://realtime.bni-linked.app
+npm run realtime:verify -- --site https://your-project.web.app --realtime https://bni-linked-backend-xxxxx-ew.a.run.app
 ```
 
 Verification complete avec session cloud et handshake websocket :
 
 ```bash
-npm run realtime:verify -- --site https://bni-linked.netlify.app --realtime https://realtime.bni-linked.app --collabToken <session_token> --boardId <board_id> --page point
+npm run realtime:verify -- --site https://your-project.web.app --realtime https://bni-linked-backend-xxxxx-ew.a.run.app --collabToken <session_token> --boardId <board_id> --page point
 ```
 
 Le healthcheck du serveur websocket repond sur `/health` et valide maintenant :
 
 - presence d'un secret non-par-defaut
-- accessibilite du store Netlify Blobs
+- accessibilite du store Firebase
 - chemin websocket `/ws`
 
 ## Structure rapide
@@ -189,6 +223,14 @@ Derniere verification locale validee :
 
 - `npm test`
 - `npm run test:smoke`
+
+Verification deploiement Firebase validee :
+
+- `https://bni-linked.web.app/`
+- `https://bni-linked.web.app/point/`
+- `https://bni-linked.web.app/map/`
+- `https://bni-linked.web.app/health`
+- creation d'un compte, creation d'un board, token realtime et handshake websocket
 
 ## Version
 
