@@ -1,7 +1,14 @@
-const { getFirebaseDatabase } = require("./firebase-admin");
+const { getFirebaseApp, getFirebaseDatabase } = require("./firebase-admin");
 
 const ROOT_PREFIX = "stores";
 const BLOB_SENTINEL = "__bni_blob";
+const DEFAULT_LIST_PAGE_SIZE = 400;
+const MAX_LIST_PAGE_SIZE = 1000;
+
+let cachedAccessToken = {
+  value: "",
+  expiresAt: 0,
+};
 
 function connectLambda() {}
 
@@ -57,23 +64,120 @@ function unwrapBlobValue(value) {
   return value.value === undefined ? null : value.value;
 }
 
-function flattenBlobTree(value, prefix = "") {
-  if (isBlobNode(value)) {
-    return prefix ? [{ key: prefix }] : [];
+function trimSlashes(value) {
+  return String(value || "").trim().replace(/^\/+|\/+$/g, "");
+}
+
+function encodeRestPath(path) {
+  return trimSlashes(path)
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function readDatabaseUrl() {
+  const app = getFirebaseApp();
+  const databaseURL = String(app?.options?.databaseURL || "").trim();
+  if (!databaseURL) {
+    throw new Error("Firebase Database URL manquante. Configure FIREBASE_DATABASE_URL.");
+  }
+  return databaseURL.replace(/\/+$/, "");
+}
+
+async function getDatabaseAccessToken() {
+  const now = Date.now();
+  if (cachedAccessToken.value && now < (cachedAccessToken.expiresAt - 60 * 1000)) {
+    return cachedAccessToken.value;
   }
 
-  if (!value || typeof value !== "object") {
-    return [];
+  const app = getFirebaseApp();
+  const credential = app?.options?.credential;
+  if (!credential || typeof credential.getAccessToken !== "function") {
+    throw new Error("Credential Firebase invalide pour les requetes RTDB.");
   }
 
-  const entries = [];
-  for (const [rawKey, childValue] of Object.entries(value)) {
-    const childKey = String(rawKey || "").trim();
-    if (!childKey) continue;
-    const nextPrefix = prefix ? `${prefix}/${childKey}` : childKey;
-    entries.push(...flattenBlobTree(childValue, nextPrefix));
+  const token = await credential.getAccessToken();
+  cachedAccessToken = {
+    value: String(token?.access_token || ""),
+    expiresAt: Number(token?.expiry_date || 0) || 0,
+  };
+  if (!cachedAccessToken.value) {
+    throw new Error("Impossible d'obtenir un token Firebase RTDB.");
   }
-  return entries;
+  return cachedAccessToken.value;
+}
+
+function buildRestUrl(path, query = null) {
+  const databaseURL = readDatabaseUrl();
+  const encodedPath = encodeRestPath(path);
+  const baseUrl = encodedPath ? `${databaseURL}/${encodedPath}.json` : `${databaseURL}/.json`;
+  const queryText = query ? String(query) : "";
+  return queryText ? `${baseUrl}?${queryText}` : baseUrl;
+}
+
+async function fetchRestJson(path, query = null) {
+  const accessToken = await getDatabaseAccessToken();
+  const response = await fetch(buildRestUrl(path, query), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Firebase RTDB list failed (${response.status}).`);
+  }
+  return response.json();
+}
+
+function normalizePageSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size)) return DEFAULT_LIST_PAGE_SIZE;
+  return Math.max(1, Math.min(MAX_LIST_PAGE_SIZE, Math.floor(size)));
+}
+
+async function listDirectStoreEntries(storeName, rawPrefix = "", options = {}) {
+  const cleanPrefix = trimSlashes(rawPrefix);
+  const cursor = String(options.cursor || "").trim();
+  const pageSize = normalizePageSize(options.limit);
+  const query = new URLSearchParams();
+  query.set("shallow", "true");
+
+  const payload = await fetchRestJson(buildStorePath(storeName, cleanPrefix), query.toString());
+  if (!payload || typeof payload !== "object") {
+    return { blobs: [], cursor: null };
+  }
+
+  const payloadKeys = Object.keys(payload);
+  if (payloadKeys.includes(BLOB_SENTINEL)) {
+    return {
+      blobs: cleanPrefix ? [{ key: cleanPrefix }] : [],
+      cursor: null,
+    };
+  }
+
+  let childKeys = payloadKeys
+    .map((key) => String(key || "").trim())
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+
+  if (cursor) {
+    const cursorIndex = childKeys.indexOf(cursor);
+    if (cursorIndex >= 0) {
+      childKeys = childKeys.slice(cursorIndex + 1);
+    } else {
+      childKeys = childKeys.filter((key) => key.localeCompare(cursor) > 0);
+    }
+  }
+
+  const hasMore = childKeys.length > pageSize;
+  const pageKeys = hasMore ? childKeys.slice(0, pageSize) : childKeys;
+  return {
+    blobs: pageKeys.map((childKey) => ({
+      key: cleanPrefix ? `${cleanPrefix}/${childKey}` : childKey,
+    })),
+    cursor: hasMore && pageKeys.length ? pageKeys[pageKeys.length - 1] : null,
+  };
 }
 
 function getStore(storeName) {
@@ -99,20 +203,7 @@ function getStore(storeName) {
     },
 
     async list(options = {}) {
-      const prefix = String(options.prefix || "").trim().replace(/\/+$/, "");
-      const ref = database.ref(buildStorePath(normalizedStoreName, prefix));
-      const snapshot = await ref.get();
-      if (!snapshot.exists()) {
-        return { blobs: [], cursor: null };
-      }
-
-      const baseValue = snapshot.val();
-      const blobs = flattenBlobTree(baseValue, prefix);
-      blobs.sort((left, right) => String(left.key || "").localeCompare(String(right.key || "")));
-      return {
-        blobs,
-        cursor: null,
-      };
+      return listDirectStoreEntries(normalizedStoreName, options.prefix || "", options);
     },
   };
 }
@@ -123,11 +214,12 @@ module.exports = {
   getStore,
   __test: {
     buildStorePath,
-    flattenBlobTree,
     isBlobNode,
     normalizeStoreName,
+    normalizePageSize,
     readStoreNamespace,
     splitKey,
+    trimSlashes,
     unwrapBlobValue,
     wrapBlobValue,
   },

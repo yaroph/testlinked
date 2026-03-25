@@ -16,6 +16,7 @@ param(
     [long]$SessionMaxIdleMs = 2592000000,
     [long]$PresenceTtlMs = 120000,
     [long]$ExportRetentionDays = 45,
+    [string]$Memory = "512Mi",
     [int]$MaxInstances = 1,
     [int]$MinInstances = 0,
     [int]$Concurrency = 80
@@ -62,6 +63,7 @@ $deployArgs = @(
     "--platform", "managed",
     "--allow-unauthenticated",
     "--port", "8787",
+    "--memory", $Memory,
     "--max-instances", $MaxInstances.ToString(),
     "--min-instances", $MinInstances.ToString(),
     "--concurrency", $Concurrency.ToString()
@@ -118,6 +120,7 @@ $updateArgs = @(
     "run", "services", "update", $ServiceName,
     "--project", $ProjectId,
     "--region", $Region,
+    "--memory", $Memory,
     "--max-instances", $MaxInstances.ToString(),
     "--min-instances", $MinInstances.ToString(),
     "--concurrency", $Concurrency.ToString()

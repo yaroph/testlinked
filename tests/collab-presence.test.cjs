@@ -137,6 +137,21 @@ test('touchBoardPresence conserve les coordonnees de curseur partagees', async (
   assert.equal(presence[0].cursorMapY, 24.4);
 });
 
+test('clearBoardPresence supprime aussi les presences multi-clients aplaties', async () => {
+  const store = new MemoryStore();
+  await store.setJSON('presence/board-flat/user-1', { userId: 'user-1' });
+  await store.setJSON('presence/board-flat/user-1~rtc_a', { userId: 'user-1' });
+  await store.setJSON('presence/board-flat/user-1~rtc_b', { userId: 'user-1' });
+  await store.setJSON('presence/board-flat/user-2~rtc_c', { userId: 'user-2' });
+
+  await __test.clearBoardPresence(store, 'board-flat', 'user-1');
+
+  assert.equal(await store.get('presence/board-flat/user-1'), null);
+  assert.equal(await store.get('presence/board-flat/user-1~rtc_a'), null);
+  assert.equal(await store.get('presence/board-flat/user-1~rtc_b'), null);
+  assert.deepEqual(await store.get('presence/board-flat/user-2~rtc_c'), { userId: 'user-2' });
+});
+
 test('getPresenceCursorDetail privilegie le champ edite puis la cible active', async () => {
   const { getPresenceCursorDetail } = await import('../shared/js/collab-cursor-visuals.mjs');
 

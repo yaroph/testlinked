@@ -51,9 +51,23 @@ async function listKeysByPrefix(store, prefix, maxItems = DEFAULT_SCAN_LIMIT) {
     return keys.slice(0, maxItems);
 }
 
+async function listPresenceKeys(store, maxItems = DEFAULT_SCAN_LIMIT) {
+    const keys = [];
+    const boardKeys = await listKeysByPrefix(store, 'presence/', maxItems);
+
+    for (const boardKey of boardKeys) {
+        if (keys.length >= maxItems) break;
+        const remaining = Math.max(1, maxItems - keys.length);
+        const childKeys = await listKeysByPrefix(store, `${String(boardKey || '').replace(/\/+$/, '')}/`, remaining);
+        keys.push(...childKeys);
+    }
+
+    return keys.slice(0, maxItems);
+}
+
 async function purgePresence(store, nowMs, options = {}) {
     const presenceTtlMs = readNumber(options.presenceTtlMs, DEFAULT_PRESENCE_TTL_MS, 60 * 1000);
-    const keys = await listKeysByPrefix(store, 'presence/', readNumber(options.scanLimit, DEFAULT_SCAN_LIMIT, 100));
+    const keys = await listPresenceKeys(store, readNumber(options.scanLimit, DEFAULT_SCAN_LIMIT, 100));
     const deletedKeys = [];
 
     for (const key of keys) {

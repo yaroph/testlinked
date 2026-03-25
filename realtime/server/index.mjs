@@ -71,9 +71,10 @@ function cloneJson(value, fallback = null) {
 }
 
 function presenceStorageKey(boardId, userId, clientId = '') {
+    const cleanUserId = String(userId || '').trim();
     const cleanClientId = String(clientId || '').trim();
-    const baseKey = `presence/${boardId}/${userId}`;
-    return cleanClientId ? `${baseKey}/${cleanClientId}` : baseKey;
+    const baseKey = `presence/${boardId}/${cleanUserId}`;
+    return cleanClientId ? `${baseKey}~${cleanClientId}` : baseKey;
 }
 
 function canonicalizeBoardData(page, data) {

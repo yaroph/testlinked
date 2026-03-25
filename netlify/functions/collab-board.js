@@ -1171,8 +1171,9 @@ async function searchUsersForBoard(store, board, requesterId, query, options = {
     String(board.ownerId || ""),
     ...(Array.isArray(board.members) ? board.members.map((member) => String(member?.userId || "")) : []),
   ].filter(Boolean));
-  const exactKeys = await listKeysByPrefix(store, `users/by-name/${safeQuery}`, limit);
-  let candidateKeys = [...exactKeys];
+  const exactKey = `users/by-name/${safeQuery}`;
+  const exactMatch = await store.get(exactKey, { type: "json" }).catch(() => null);
+  let candidateKeys = exactMatch ? [exactKey] : [];
 
   if (safeQuery.length >= 2 && candidateKeys.length < limit) {
     const broadKeys = await listKeysByPrefix(store, "users/by-name/", 180);
@@ -1208,7 +1209,15 @@ async function searchUsersForBoard(store, board, requesterId, query, options = {
 
 async function clearBoardPresence(store, boardId, userId) {
   if (!boardId || !userId) return;
-  await store.delete(presenceKey(boardId, userId)).catch(() => {});
+  const baseKey = presenceKey(boardId, userId);
+  const prefix = `${presencePrefix(boardId)}${String(userId || "")}`;
+  await store.delete(baseKey).catch(() => {});
+  const keys = await listKeysByPrefix(store, presencePrefix(boardId), PRESENCE_MAX_ITEMS).catch(() => []);
+  await Promise.all(
+    keys
+      .filter((key) => key !== baseKey && String(key || "").startsWith(`${prefix}~`))
+      .map((key) => store.delete(key).catch(() => {}))
+  );
 }
 
 function sanitizeShareRole(inputRole) {
@@ -1263,7 +1272,7 @@ exports.handler = async (event) => {
     const index = await getUserBoardIndex(store, user.id);
     let loadedBoards = [];
 
-    if (index.hydrated) {
+    if (index.boardIds.length > 0 || index.hydrated) {
       loadedBoards = await Promise.all(
         index.boardIds.map((boardId) => loadBoard(store, boardId).catch(() => null))
       );
@@ -1825,5 +1834,6 @@ exports.__test = {
   getUnsupportedShareRoleMessage,
   listBoardPresence,
   touchBoardPresence,
+  clearBoardPresence,
   searchUsersForBoard,
 };
