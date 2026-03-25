@@ -734,9 +734,16 @@ export function unbindMapRealtimeTextFields() {
 
 export async function updateMapCloudPresence(extra = {}) {
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
-    if (!isRealtimeCloudActive()) return false;
     const payload = buildMapPresencePayload(extra);
-    return collab.realtimeSession?.updatePresence(payload) || false;
+    if (isRealtimeCloudActive()) {
+        return collab.realtimeSession?.updatePresence(payload) || false;
+    }
+    const result = await collabBoardRequest('touch_presence', {
+        boardId: collab.activeBoardId,
+        ...payload
+    });
+    updateMapPresence(result?.presence || []);
+    return Boolean(result?.ok);
 }
 
 async function flushMapCursorPresence() {
@@ -797,9 +804,8 @@ function startCheckpointCloudTransport() {
     stopCollabRealtime();
     collab.realtimeFallbackActive = true;
     startCollabAutosave();
-    stopCollabLiveSync();
-    stopCollabPresence();
-    updateMapPresence([]);
+    startCollabLiveSync();
+    startCollabPresence();
 }
 
 async function activateCloudTransport() {
@@ -1025,9 +1031,31 @@ async function clearCollabPresence(boardId = collab.activeBoardId) {
 async function touchCollabPresence(loopToken = collab.presenceLoopToken, options = {}) {
     if (collab.presenceLoopToken !== loopToken && !options.force) return false;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
-    if (!isRealtimeCloudActive()) return false;
-    const payload = buildMapPresencePayload(options.extra || {});
-    return collab.realtimeSession.updatePresence(payload);
+    const isRealtime = isRealtimeCloudActive();
+
+    try {
+        const sent = await updateMapCloudPresence(options.extra || {});
+        if (!isRealtime && (collab.presenceLoopToken === loopToken || options.force)) {
+            collab.presenceRetryMs = COLLAB_PRESENCE_RETRY_MS;
+            scheduleNextPresenceTick(loopToken, COLLAB_PRESENCE_HEARTBEAT_MS);
+        }
+        return sent;
+    } catch (e) {
+        if (!isRealtime && (collab.presenceLoopToken === loopToken || options.force)) {
+            const status = Number(e?.status || 0);
+            if (status === 401 || status === 403 || status === 404) {
+                collab.presenceLoopRunning = false;
+                stopCollabPresence();
+                updateMapPresence([]);
+                return false;
+            }
+            collab.presenceRetryMs = collab.presenceRetryMs
+                ? Math.min(COLLAB_WATCH_RETRY_MAX_MS, collab.presenceRetryMs * 2)
+                : COLLAB_PRESENCE_RETRY_MS;
+            scheduleNextPresenceTick(loopToken, collab.presenceRetryMs);
+        }
+        throw e;
+    }
 }
 
 function startCollabPresence() {
@@ -1036,10 +1064,15 @@ function startCollabPresence() {
         updateMapPresence([]);
         return;
     }
+    const loopToken = collab.presenceLoopToken + 1;
+    collab.presenceLoopToken = loopToken;
+    collab.presenceLoopRunning = true;
+    collab.presenceRetryMs = COLLAB_PRESENCE_RETRY_MS;
     if (isRealtimeCloudActive()) {
-        touchCollabPresence(collab.presenceLoopToken, { force: true }).catch(() => {});
+        touchCollabPresence(loopToken, { force: true }).catch(() => {});
         return;
     }
+    touchCollabPresence(loopToken, { force: true }).catch(() => {});
 }
 
 function scheduleNextWatchTick(loopToken, delayMs = 0) {

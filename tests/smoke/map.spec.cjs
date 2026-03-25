@@ -60,7 +60,7 @@ test('map keeps a single interaction controller for draw mode and exposes the mo
     await expect(page.locator('#map-interaction-mode')).toBeHidden();
 });
 
-test('map checkpoint fallback does not restart HTTP polling loops', async ({ page }) => {
+test('map checkpoint fallback restarts HTTP sync loops when realtime is unavailable', async ({ page }) => {
     await page.addInitScript(() => {
         localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
             token: 'smoke-token',
@@ -99,10 +99,10 @@ test('map checkpoint fallback does not restart HTTP polling loops', async ({ pag
 
     expect(
         api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'touch_presence').length
-    ).toBe(0);
+    ).toBeGreaterThan(0);
     expect(
         api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'watch_board').length
-    ).toBe(0);
+    ).toBeGreaterThan(0);
 });
 
 test('map local tab does not relaunch board listing', async ({ page }) => {

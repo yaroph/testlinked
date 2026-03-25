@@ -19,7 +19,8 @@ param(
     [string]$Memory = "512Mi",
     [int]$MaxInstances = 1,
     [int]$MinInstances = 0,
-    [int]$Concurrency = 80
+    [int]$Concurrency = 200,
+    [int]$TimeoutSeconds = 3600
 )
 
 function Resolve-GcloudCommand {
@@ -66,7 +67,8 @@ $deployArgs = @(
     "--memory", $Memory,
     "--max-instances", $MaxInstances.ToString(),
     "--min-instances", $MinInstances.ToString(),
-    "--concurrency", $Concurrency.ToString()
+    "--concurrency", $Concurrency.ToString(),
+    "--timeout", $TimeoutSeconds.ToString()
 )
 
 $baseEnvVars = @()
@@ -123,7 +125,8 @@ $updateArgs = @(
     "--memory", $Memory,
     "--max-instances", $MaxInstances.ToString(),
     "--min-instances", $MinInstances.ToString(),
-    "--concurrency", $Concurrency.ToString()
+    "--concurrency", $Concurrency.ToString(),
+    "--timeout", $TimeoutSeconds.ToString()
 )
 if ($finalEnvVars.Count -gt 0) {
     $updateArgs += @("--set-env-vars", ($finalEnvVars -join ","))
