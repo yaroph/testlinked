@@ -3,6 +3,7 @@ import {
     REALTIME_MSG_HELLO,
     REALTIME_MSG_HELLO_ACK,
     REALTIME_MSG_OPS,
+    REALTIME_MSG_OPS_ACK,
     REALTIME_MSG_PRESENCE,
     REALTIME_MSG_SNAPSHOT,
     REALTIME_MSG_SNAPSHOT_REQUEST,
@@ -128,6 +129,18 @@ export class RealtimeRoomClient {
                     serverSeq: this.serverSeq,
                     senderClientId: String(message.senderClientId || ''),
                     actor: message.actor || null
+                });
+                return;
+            }
+
+            if (type === REALTIME_MSG_OPS_ACK) {
+                this.serverSeq = Math.max(this.serverSeq, Number(message.serverSeq || 0));
+                this.onRemoteOps(Array.isArray(message.ops) ? message.ops : [], {
+                    serverSeq: this.serverSeq,
+                    senderClientId: this.clientId,
+                    actor: message.actor || null,
+                    acknowledged: true,
+                    clientSeq: Number(message.clientSeq || 0)
                 });
                 return;
             }

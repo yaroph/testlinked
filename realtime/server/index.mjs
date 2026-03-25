@@ -8,6 +8,7 @@ import * as Y from 'yjs';
 import collabLib from '../../netlify/lib/collab.js';
 import { runRuntimeMaintenance } from '../../shared/ops/runtime-maintenance.mjs';
 import { runRealtimeDatabaseBackup } from '../../shared/ops/runtime-backup.mjs';
+import { buildRealtimeEventsPath } from '../../shared/ops/realtime-runtime.mjs';
 import { canonicalizePointPayload, applyPointOps, preservePointRealtimeTextInOps } from '../../shared/realtime/point-doc.mjs';
 import { canonicalizeMapPayload, applyMapOps, preserveMapRealtimeTextInOps } from '../../shared/realtime/map-doc.mjs';
 import {
@@ -23,6 +24,7 @@ import {
     REALTIME_MSG_HELLO,
     REALTIME_MSG_HELLO_ACK,
     REALTIME_MSG_OPS,
+    REALTIME_MSG_OPS_ACK,
     REALTIME_MSG_PRESENCE,
     REALTIME_MSG_SNAPSHOT,
     REALTIME_MSG_SNAPSHOT_REQUEST,
@@ -33,6 +35,7 @@ import {
 } from '../../shared/realtime/protocol.mjs';
 
 const require = createRequire(import.meta.url);
+const blobStoreLib = require('../../netlify/lib/blob-store.js');
 const collabAuthFunction = require('../../netlify/functions/collab-auth.js');
 const collabBoardFunction = require('../../netlify/functions/collab-board.js');
 const collabRealtimeTokenFunction = require('../../netlify/functions/collab-realtime-token.js');
@@ -41,8 +44,10 @@ const dbAddFunction = require('../../netlify/functions/db-add.js');
 const dbGetFunction = require('../../netlify/functions/db-get.js');
 const dbListFunction = require('../../netlify/functions/db-list.js');
 const dbDeleteFunction = require('../../netlify/functions/db-delete.js');
+const firebaseAdminLib = require('../../netlify/lib/firebase-admin.js');
 
 const {
+    STORE_NAME,
     boardKey,
     getStoreClient,
     getRoleForUser,
@@ -50,6 +55,13 @@ const {
     nowIso,
     describeStoreClientConfig
 } = collabLib;
+const { buildStorePath, unwrapBlobValue, wrapBlobValue } = blobStoreLib;
+const { getFirebaseDatabase } = firebaseAdminLib;
+const {
+    appendBoardActivity,
+    normalizeBoardActivity,
+    summarizeBoardDeltaByPage
+} = collabBoardFunction.__test || {};
 
 const PORT = Number(process.env.PORT || 8787);
 const REALTIME_SECRET = String(process.env.BNI_REALTIME_SECRET || process.env.REALTIME_SECRET || 'bni-linked-dev-realtime-secret');
@@ -57,6 +69,10 @@ const USING_DEFAULT_REALTIME_SECRET = !String(process.env.BNI_REALTIME_SECRET ||
 const MAINTENANCE_SECRET = String(process.env.BNI_MAINTENANCE_SECRET || process.env.MAINTENANCE_SECRET || '').trim();
 const ROOM_IDLE_TTL_MS = 120000;
 const PERSIST_DEBOUNCE_MS = 450;
+const BACKPLANE_EVENT_GRACE_MS = 2000;
+const BACKPLANE_EVENT_SCAN_LIMIT = 200;
+const SERVER_ID = `srv_${crypto.randomUUID()}`;
+const database = getFirebaseDatabase();
 
 function makeClientId() {
     return `rtc_${crypto.randomUUID()}`;
@@ -123,6 +139,80 @@ function readPresenceFlag(value, fallback = false) {
     return Boolean(value);
 }
 
+function timeValue(value) {
+    const parsed = Date.parse(String(value || ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeServerSeq(value, fallback = 0) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return Math.max(0, Number(fallback) || 0);
+    return Math.max(0, Math.floor(parsed));
+}
+
+function collabStoreRef(key = '') {
+    return database.ref(buildStorePath(STORE_NAME, key));
+}
+
+function presenceRef(boardId) {
+    return collabStoreRef(`presence/${boardId}`);
+}
+
+function eventsRef(boardId) {
+    return database.ref(buildRealtimeEventsPath(boardId));
+}
+
+function normalizePresenceRow(rawValue, fallbackBoardId = '') {
+    const row = unwrapBlobValue(rawValue);
+    if (!row || typeof row !== 'object' || !row.userId) return null;
+    const cursorVisible = readPresenceFlag(row.cursorVisible, false);
+    return {
+        boardId: String(row.boardId || fallbackBoardId || ''),
+        userId: String(row.userId || ''),
+        username: String(row.username || ''),
+        role: String(row.role || ''),
+        activeNodeId: String(row.activeNodeId || row.activePointId || ''),
+        activeNodeName: String(row.activeNodeName || row.activeLabel || ''),
+        activeTextKey: String(row.activeTextKey || ''),
+        activeTextLabel: String(row.activeTextLabel || ''),
+        mode: String(row.mode || 'editing'),
+        cursorVisible,
+        cursorWorldX: cursorVisible ? clampPresenceNumber(row.cursorWorldX, 0, -250000, 250000) : 0,
+        cursorWorldY: cursorVisible ? clampPresenceNumber(row.cursorWorldY, 0, -250000, 250000) : 0,
+        cursorMapX: cursorVisible ? clampPresenceNumber(row.cursorMapX, 50, 0, 100) : 50,
+        cursorMapY: cursorVisible ? clampPresenceNumber(row.cursorMapY, 50, 0, 100) : 50,
+        lastAt: String(row.lastAt || '')
+    };
+}
+
+function collapsePresenceRows(rawValue, boardId) {
+    const latestByUser = new Map();
+    const source = rawValue && typeof rawValue === 'object' ? rawValue : {};
+    Object.values(source).forEach((entry) => {
+        const row = normalizePresenceRow(entry, boardId);
+        if (!row) return;
+        const previous = latestByUser.get(row.userId);
+        if (!previous || timeValue(row.lastAt) >= timeValue(previous.lastAt)) {
+            latestByUser.set(row.userId, row);
+        }
+    });
+    return [...latestByUser.values()]
+        .sort((left, right) => String(left.username || '').localeCompare(String(right.username || '')));
+}
+
+async function publishRealtimeEvent(boardId, payload = {}) {
+    const nowMs = Date.now();
+    const ref = eventsRef(boardId).push();
+    await ref.set({
+        ...cloneJson(payload, payload),
+        boardId: String(boardId || ''),
+        serverId: SERVER_ID,
+        createdAt: new Date(nowMs).toISOString(),
+        createdMs: nowMs
+    });
+    return ref.key || '';
+}
+
 class BoardRoom {
     constructor(store, board, roleResolver) {
         this.store = store;
@@ -131,7 +221,7 @@ class BoardRoom {
         this.snapshot = canonicalizeBoardData(this.page, board.data || {});
         this.clients = new Map();
         this.presence = new Map();
-        this.serverSeq = 0;
+        this.serverSeq = normalizeServerSeq(board.realtimeSeq, 0);
         this.lastEditedBy = {
             userId: String(board.lastEditedBy?.userId || board.ownerId || ''),
             username: String(board.lastEditedBy?.username || board.ownerName || ''),
@@ -141,6 +231,12 @@ class BoardRoom {
         this.persistTimer = null;
         this.cleanupTimer = null;
         this.roleResolver = roleResolver;
+        this.eventsQuery = null;
+        this.eventsStartedAtMs = Date.now();
+        this.eventsSeen = [];
+        this.eventsSeenSet = new Set();
+        this.presenceQuery = null;
+        this.backplaneStarted = false;
     }
 
     scheduleCleanup(registry) {
@@ -148,9 +244,42 @@ class BoardRoom {
         if (this.clients.size > 0) return;
         this.cleanupTimer = setTimeout(() => {
             if (this.clients.size === 0) {
+                this.dispose();
                 registry.delete(this.boardId);
             }
         }, ROOM_IDLE_TTL_MS);
+    }
+
+    rememberEvent(eventId) {
+        const cleanEventId = String(eventId || '').trim();
+        if (!cleanEventId) return false;
+        if (this.eventsSeenSet.has(cleanEventId)) return false;
+        this.eventsSeen.push(cleanEventId);
+        this.eventsSeenSet.add(cleanEventId);
+        while (this.eventsSeen.length > BACKPLANE_EVENT_SCAN_LIMIT * 4) {
+            const dropped = this.eventsSeen.shift();
+            if (dropped) this.eventsSeenSet.delete(dropped);
+        }
+        return true;
+    }
+
+    dispose() {
+        if (this.cleanupTimer) {
+            clearTimeout(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
+        if (this.persistTimer) {
+            clearTimeout(this.persistTimer);
+            this.persistTimer = null;
+        }
+        if (this.eventsQuery) {
+            this.eventsQuery.off();
+            this.eventsQuery = null;
+        }
+        if (this.presenceQuery) {
+            this.presenceQuery.off();
+            this.presenceQuery = null;
+        }
     }
 
     listPresence() {
@@ -194,6 +323,117 @@ class BoardRoom {
         );
     }
 
+    async ensureBackplane() {
+        if (this.backplaneStarted) return;
+        this.backplaneStarted = true;
+        this.presenceQuery = presenceRef(this.boardId);
+        this.presenceQuery.on('value', (snapshot) => {
+            this.applyPresenceSnapshot(snapshot.val());
+        }, (error) => {
+            console.error('[realtime] presence listener failed', this.boardId, error);
+        });
+
+        this.eventsQuery = eventsRef(this.boardId)
+            .orderByChild('createdMs')
+            .startAt(Math.max(0, this.eventsStartedAtMs - BACKPLANE_EVENT_GRACE_MS));
+        this.eventsQuery.on('child_added', (snapshot) => {
+            this.handleBackplaneEvent(snapshot.key, snapshot.val()).catch((error) => {
+                console.error('[realtime] event listener failed', this.boardId, error);
+            });
+        }, (error) => {
+            console.error('[realtime] event subscription failed', this.boardId, error);
+        });
+    }
+
+    applyPresenceSnapshot(rawValue) {
+        const rows = collapsePresenceRows(rawValue, this.boardId);
+        const nextPresence = new Map(rows.map((entry) => [String(entry.userId || ''), entry]));
+        const previous = JSON.stringify(this.listPresence());
+        this.presence = nextPresence;
+        const current = JSON.stringify(this.listPresence());
+        if (previous !== current) {
+            this.broadcast(REALTIME_MSG_PRESENCE, { presence: this.listPresence() });
+        }
+    }
+
+    async handleBackplaneEvent(eventId, rawEvent) {
+        if (!this.rememberEvent(eventId)) return;
+        const event = rawEvent && typeof rawEvent === 'object' ? rawEvent : {};
+        if (String(event.serverId || '') === SERVER_ID) return;
+        if (String(event.boardId || '') !== this.boardId) return;
+
+        const eventType = String(event.type || '').trim();
+        if (eventType === REALTIME_MSG_OPS) {
+            const safeOps = Array.isArray(event.ops) ? event.ops : [];
+            if (!safeOps.length) return;
+            const targetSeq = normalizeServerSeq(event.serverSeq, this.serverSeq);
+            if (targetSeq <= this.serverSeq) return;
+            if (targetSeq !== this.serverSeq + 1) {
+                await this.refreshFromBoard();
+                this.broadcast(REALTIME_MSG_SNAPSHOT, {
+                    boardId: this.boardId,
+                    page: this.page,
+                    serverSeq: this.serverSeq,
+                    snapshot: this.snapshot,
+                    presence: this.listPresence(),
+                    reason: 'backplane-refresh'
+                });
+                return;
+            }
+
+            this.snapshot = applyBoardOps(this.page, this.snapshot, safeOps);
+            this.serverSeq = targetSeq;
+            this.lastEditedBy = {
+                userId: String(event.actor?.userId || this.lastEditedBy.userId || ''),
+                username: String(event.actor?.username || this.lastEditedBy.username || ''),
+                at: String(event.at || nowIso())
+            };
+            this.syncTextDocsFromSnapshot({
+                userId: this.lastEditedBy.userId,
+                username: this.lastEditedBy.username,
+                backplane: true
+            });
+            this.broadcast(REALTIME_MSG_OPS, {
+                boardId: this.boardId,
+                page: this.page,
+                serverSeq: this.serverSeq,
+                senderClientId: String(event.senderClientId || ''),
+                actor: event.actor || null,
+                ops: safeOps
+            });
+            return;
+        }
+
+        if (eventType === REALTIME_MSG_Y_UPDATE) {
+            const key = this.normalizeTextKey(event.key || '');
+            if (!key) return;
+            const entry = this.ensureTextDoc(key);
+            if (!entry) return;
+            await applyYUpdate(entry.doc, String(event.update || ''), {
+                backplane: true,
+                clientId: String(event.senderClientId || ''),
+                userId: String(event.actor?.userId || ''),
+                username: String(event.actor?.username || '')
+            }).catch(() => false);
+            return;
+        }
+
+        if (eventType === REALTIME_MSG_SNAPSHOT) {
+            const targetSeq = normalizeServerSeq(event.serverSeq, this.serverSeq);
+            if (targetSeq <= this.serverSeq) return;
+            const refresh = await this.refreshFromBoard();
+            if (!refresh.ok) return;
+            this.broadcast(REALTIME_MSG_SNAPSHOT, {
+                boardId: this.boardId,
+                page: this.page,
+                serverSeq: this.serverSeq,
+                snapshot: this.snapshot,
+                presence: this.listPresence(),
+                reason: String(event.reason || 'backplane-snapshot')
+            });
+        }
+    }
+
     async persistPresenceEntry(clientState, presence = {}) {
         const now = nowIso();
         const cursorVisible = readPresenceFlag(presence.cursorVisible, false);
@@ -229,6 +469,7 @@ class BoardRoom {
     }
 
     async attachClient(socket, user, role) {
+        await this.ensureBackplane();
         const clientState = {
             clientId: makeClientId(),
             socket,
@@ -257,6 +498,7 @@ class BoardRoom {
         this.clients.delete(clientState.clientId);
         await this.clearPresenceEntry(clientState);
         this.broadcast(REALTIME_MSG_PRESENCE, { presence: this.listPresence() });
+        this.scheduleCleanup(rooms);
     }
 
     async updatePresence(clientState, presence = {}) {
@@ -290,14 +532,15 @@ class BoardRoom {
         }
 
         const nextSnapshot = canonicalizeBoardData(this.page, sourceBoard.data || {});
+        const nextServerSeq = normalizeServerSeq(sourceBoard.realtimeSeq, this.serverSeq);
         if (!valuesEqual(nextSnapshot, this.snapshot)) {
             this.snapshot = nextSnapshot;
-            this.serverSeq += 1;
             this.syncTextDocsFromSnapshot({
                 userId: String(sourceBoard.lastEditedBy?.userId || sourceBoard.ownerId || ''),
                 username: String(sourceBoard.lastEditedBy?.username || sourceBoard.ownerName || '')
             });
         }
+        this.serverSeq = nextServerSeq;
 
         this.lastEditedBy = {
             userId: String(sourceBoard.lastEditedBy?.userId || sourceBoard.ownerId || ''),
@@ -468,6 +711,7 @@ class BoardRoom {
 
         const entry = { key: cleanKey, doc, text };
         doc.on('update', (update, origin) => {
+            const isBackplane = Boolean(origin?.backplane);
             const nextValue = text.toString();
             const didChangeSnapshot = this.writeTextValue(cleanKey, nextValue);
             if (didChangeSnapshot) {
@@ -476,7 +720,24 @@ class BoardRoom {
                     username: String(origin?.username || this.lastEditedBy.username || ''),
                     at: nowIso()
                 };
-                this.schedulePersist();
+                if (!isBackplane) {
+                    this.schedulePersist();
+                }
+            }
+
+            if (!isBackplane) {
+                publishRealtimeEvent(this.boardId, {
+                    type: REALTIME_MSG_Y_UPDATE,
+                    key: cleanKey,
+                    update: Buffer.from(update).toString('base64'),
+                    senderClientId: String(origin?.clientId || ''),
+                    actor: origin?.userId ? {
+                        userId: origin.userId,
+                        username: origin.username
+                    } : null
+                }).catch((error) => {
+                    console.error('[realtime] text backplane publish failed', this.boardId, cleanKey, error);
+                });
             }
 
             this.broadcast(REALTIME_MSG_Y_UPDATE, {
@@ -540,20 +801,59 @@ class BoardRoom {
         });
     }
 
+    async transactBoard(updateFn) {
+        const ref = collabStoreRef(boardKey(this.boardId));
+        let transactionError = null;
+        const result = await ref.transaction((wrappedBoard) => {
+            if (transactionError) return undefined;
+            const currentBoard = unwrapBlobValue(wrappedBoard);
+            try {
+                const nextBoard = updateFn(
+                    currentBoard ? cloneJson(currentBoard, currentBoard) : null,
+                    currentBoard
+                );
+                if (nextBoard === undefined) return undefined;
+                return wrapBlobValue(nextBoard);
+            } catch (error) {
+                transactionError = error;
+                return undefined;
+            }
+        }, undefined, false);
+        if (transactionError) throw transactionError;
+        return {
+            committed: Boolean(result?.committed),
+            board: result?.snapshot?.exists() ? unwrapBlobValue(result.snapshot.val()) : null
+        };
+    }
+
     async persistSnapshot() {
         this.persistTimer = null;
-        const board = await this.store.get(boardKey(this.boardId), { type: 'json' });
-        if (!board) return;
-
-        board.data = cloneJson(this.snapshot, this.snapshot);
-        board.updatedAt = nowIso();
-        board.lastEditedBy = {
-            userId: this.lastEditedBy.userId,
-            username: this.lastEditedBy.username,
-            at: board.updatedAt
-        };
-
-        await this.store.setJSON(boardKey(this.boardId), board);
+        const result = await this.transactBoard((board) => {
+            if (!board) return undefined;
+            const updatedAt = nowIso();
+            board.data = cloneJson(this.snapshot, this.snapshot);
+            board.updatedAt = updatedAt;
+            board.realtimeSeq = normalizeServerSeq(board.realtimeSeq, this.serverSeq) + 1;
+            board.lastEditedBy = {
+                userId: this.lastEditedBy.userId,
+                username: this.lastEditedBy.username,
+                at: updatedAt
+            };
+            return board;
+        });
+        if (!result.committed || !result.board) return;
+        await this.refreshFromBoard(result.board);
+        await publishRealtimeEvent(this.boardId, {
+            type: REALTIME_MSG_SNAPSHOT,
+            serverSeq: this.serverSeq,
+            reason: 'text-persist',
+            actor: {
+                userId: this.lastEditedBy.userId,
+                username: this.lastEditedBy.username
+            }
+        }).catch((error) => {
+            console.error('[realtime] snapshot backplane publish failed', this.boardId, error);
+        });
     }
 
     schedulePersist() {
@@ -565,44 +865,78 @@ class BoardRoom {
         }, PERSIST_DEBOUNCE_MS);
     }
 
-    async applyClientOps(clientState, ops = []) {
+    async applyClientOps(clientState, ops = [], metadata = {}) {
         const access = await this.refreshAccess(clientState, { requireEdit: true });
         if (!access.ok) {
             await this.revokeClient(clientState);
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: access.message || 'Board en lecture seule.' });
             return false;
         }
-        await this.refreshFromBoard(access.board);
-        const safeOps = preserveBoardRealtimeTextInOps(this.page, this.snapshot, Array.isArray(ops) ? ops.slice(0, 200) : []);
-        if (!safeOps.length) return false;
+        const requestedOps = Array.isArray(ops) ? ops.slice(0, 200) : [];
+        if (!requestedOps.length) return false;
 
-        const nextSnapshot = applyBoardOps(this.page, this.snapshot, safeOps);
-        if (valuesEqual(nextSnapshot, this.snapshot)) return false;
+        let blockedError = null;
+        let appliedOps = [];
+        let deltaSummary = 'modification';
+        const result = await this.transactBoard((board) => {
+            if (!board) {
+                blockedError = { status: 404, message: 'Board introuvable.' };
+                return undefined;
+            }
+            const liveRole = getRoleForUser(board, clientState.userId);
+            if (!canEditBoard(liveRole)) {
+                blockedError = { status: 403, message: 'Board en lecture seule.' };
+                return undefined;
+            }
+            if (String(board.page || REALTIME_PAGE_POINT) !== this.page) {
+                blockedError = { status: 400, message: 'Page realtime invalide.' };
+                return undefined;
+            }
 
-        this.snapshot = nextSnapshot;
-        this.serverSeq += 1;
-        this.lastEditedBy = {
-            userId: clientState.userId,
-            username: clientState.username,
-            at: nowIso()
-        };
-        this.schedulePersist();
-        this.broadcast(REALTIME_MSG_OPS, {
-            boardId: this.boardId,
-            page: this.page,
-            serverSeq: this.serverSeq,
-            senderClientId: clientState.clientId,
-            actor: {
+            const previousSnapshot = canonicalizeBoardData(this.page, board.data || {});
+            const safeOps = preserveBoardRealtimeTextInOps(this.page, previousSnapshot, requestedOps);
+            if (!safeOps.length) {
+                blockedError = { status: 204, message: 'Aucune operation realtime valide.' };
+                return undefined;
+            }
+
+            const nextSnapshot = applyBoardOps(this.page, previousSnapshot, safeOps);
+            if (valuesEqual(nextSnapshot, previousSnapshot)) {
+                blockedError = { status: 204, message: 'Aucun changement realtime.' };
+                return undefined;
+            }
+
+            const updatedAt = nowIso();
+            board.data = cloneJson(nextSnapshot, nextSnapshot);
+            board.updatedAt = updatedAt;
+            board.realtimeSeq = normalizeServerSeq(board.realtimeSeq, this.serverSeq) + 1;
+            board.lastEditedBy = {
                 userId: clientState.userId,
-                username: clientState.username
-            },
-            ops: safeOps
-        }, {
-            exceptClientId: clientState.clientId
+                username: clientState.username,
+                at: updatedAt
+            };
+            if (typeof appendBoardActivity === 'function') {
+                deltaSummary = typeof summarizeBoardDeltaByPage === 'function'
+                    ? summarizeBoardDeltaByPage(this.page, previousSnapshot, nextSnapshot, { mergedConflict: false })
+                    : 'modification temps reel';
+                appendBoardActivity(board, { id: clientState.userId, username: clientState.username }, 'save', `a modifie le board (${deltaSummary})`);
+            }
+            appliedOps = safeOps;
+            return board;
         });
 
+        if (blockedError?.status === 403 || blockedError?.status === 404) {
+            await this.revokeClient(clientState);
+            this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: blockedError.message || 'Acces refuse.' });
+            return false;
+        }
+        if (!result.committed || !result.board || !appliedOps.length) {
+            return false;
+        }
+
+        await this.refreshFromBoard(result.board);
         if (this.page === REALTIME_PAGE_POINT) {
-            safeOps.forEach((operation) => {
+            appliedOps.forEach((operation) => {
                 const type = String(operation?.type || '').trim();
                 if (type === 'delete_node') {
                     const nodeId = String(operation.id || '').trim();
@@ -611,9 +945,8 @@ class BoardRoom {
                 }
             });
         }
-
         if (this.page === REALTIME_PAGE_MAP) {
-            safeOps.forEach((operation) => {
+            appliedOps.forEach((operation) => {
                 const type = String(operation?.type || '').trim();
                 if (type === 'delete_group') {
                     const groupId = String(operation.id || '').trim();
@@ -627,6 +960,45 @@ class BoardRoom {
             clientId: clientState.clientId,
             userId: clientState.userId,
             username: clientState.username
+        });
+        this.sendToClient(clientState, REALTIME_MSG_OPS_ACK, {
+            boardId: this.boardId,
+            page: this.page,
+            serverSeq: this.serverSeq,
+            clientSeq: Number(metadata?.clientSeq || 0),
+            actor: {
+                userId: clientState.userId,
+                username: clientState.username
+            },
+            ops: appliedOps
+        });
+        this.broadcast(REALTIME_MSG_OPS, {
+            boardId: this.boardId,
+            page: this.page,
+            serverSeq: this.serverSeq,
+            senderClientId: clientState.clientId,
+            actor: {
+                userId: clientState.userId,
+                username: clientState.username
+            },
+            ops: appliedOps
+        }, {
+            exceptClientId: clientState.clientId
+        });
+        await publishRealtimeEvent(this.boardId, {
+            type: REALTIME_MSG_OPS,
+            serverSeq: this.serverSeq,
+            senderClientId: clientState.clientId,
+            actor: {
+                userId: clientState.userId,
+                username: clientState.username
+            },
+            activity: typeof normalizeBoardActivity === 'function' ? normalizeBoardActivity(result.board) : [],
+            deltaSummary,
+            at: String(result.board.updatedAt || nowIso()),
+            ops: appliedOps
+        }).catch((error) => {
+            console.error('[realtime] ops backplane publish failed', this.boardId, error);
         });
         return true;
     }
@@ -788,6 +1160,7 @@ async function handleAdminRoute(request, response, targetUrl) {
             presenceTtlMs: process.env.BNI_PRESENCE_TTL_MS,
             sessionMaxIdleMs: process.env.BNI_SESSION_MAX_IDLE_MS,
             exportRetentionDays: process.env.BNI_EXPORT_RETENTION_DAYS,
+            realtimeEventRetentionMs: process.env.BNI_REALTIME_EVENT_RETENTION_MS,
         });
         sendJsonResponse(response, 200, {
             ok: true,
@@ -949,7 +1322,9 @@ wss.on('connection', (socket) => {
         }
 
         if (type === REALTIME_MSG_OPS) {
-            const applied = await room.applyClientOps(clientState, message.ops || []);
+            const applied = await room.applyClientOps(clientState, message.ops || [], {
+                clientSeq: Number(message.clientSeq || 0)
+            });
             if (!applied && socket.readyState === 1 && !room.clients.has(clientState.clientId)) {
                 closeWithRealtimeError('Session realtime fermee.', 4003, 'room-missing');
             }

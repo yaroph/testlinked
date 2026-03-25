@@ -210,8 +210,12 @@ function getStore(storeName) {
 
 module.exports = {
   BLOB_SENTINEL,
+  buildStorePath,
   connectLambda,
   getStore,
+  readStoreNamespace,
+  unwrapBlobValue,
+  wrapBlobValue,
   __test: {
     buildStorePath,
     isBlobNode,

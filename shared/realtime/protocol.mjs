@@ -5,6 +5,7 @@ export const REALTIME_MSG_HELLO = 'hello';
 export const REALTIME_MSG_HELLO_ACK = 'hello_ack';
 export const REALTIME_MSG_SNAPSHOT = 'snapshot';
 export const REALTIME_MSG_OPS = 'ops';
+export const REALTIME_MSG_OPS_ACK = 'ops_ack';
 export const REALTIME_MSG_PRESENCE = 'presence';
 export const REALTIME_MSG_ERROR = 'error';
 export const REALTIME_MSG_SNAPSHOT_REQUEST = 'snapshot_request';

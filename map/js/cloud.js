@@ -114,11 +114,11 @@ export const mapDebugLogger = createBrowserDebugLogger({
 
 const COLLAB_AUTOSAVE_DEBOUNCE_MS = 700;
 const COLLAB_AUTOSAVE_RETRY_MS = 250;
-const COLLAB_WATCH_TIMEOUT_MS = 7000;
-const COLLAB_WATCH_RETRY_MIN_MS = 500;
-const COLLAB_WATCH_RETRY_MAX_MS = 4000;
-const COLLAB_PRESENCE_HEARTBEAT_MS = 6500;
-const COLLAB_PRESENCE_RETRY_MS = 3200;
+const COLLAB_WATCH_TIMEOUT_MS = 12000;
+const COLLAB_WATCH_RETRY_MIN_MS = 1000;
+const COLLAB_WATCH_RETRY_MAX_MS = 8000;
+const COLLAB_PRESENCE_HEARTBEAT_MS = 12000;
+const COLLAB_PRESENCE_RETRY_MS = 5000;
 const COLLAB_CURSOR_REALTIME_MS = 80;
 const COLLAB_CURSOR_LEGACY_MS = 180;
 const collabStorage = createStoredCollabStateBridge({
@@ -850,7 +850,9 @@ async function startCollabRealtime() {
     stopCollabPresence();
     await preloadRealtimeTextTools().catch(() => null);
     mapDebugLogger.log('realtime-start-request', getMapDiagState({
-        localFlushMs: 90
+        localFlushMs: 90,
+        presenceHeartbeatMs: 12000,
+        snapshotRefreshMs: 120000
     }));
 
     const session = await createRealtimeBoardSession({
@@ -881,6 +883,10 @@ async function startCollabRealtime() {
         onTextUpdate: (payload) => {
             handleMapRealtimeTextUpdate(payload || {});
         },
+        presenceHeartbeatMs: 12000,
+        snapshotRefreshMs: 120000,
+        reconnectBaseMs: 1500,
+        reconnectMaxMs: 20000,
         onClose: (meta = {}) => {
             mapDebugLogger.warn('realtime-close', getMapDiagState({
                 code: Number(meta?.code || 0),

@@ -347,6 +347,7 @@ function boardSummary(board, role) {
 }
 
 module.exports = {
+  STORE_NAME,
   ROLE_OWNER,
   ROLE_EDITOR,
   ROLE_VIEWER,

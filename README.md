@@ -42,10 +42,11 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 - la couleur HVT continue visuellement vers les noeuds relies
 - `map/carte.jpg` a ete recompressee pour reduire fortement le poids au chargement
 - `map/carte.webp` sert maintenant de fond prioritaire pour couper encore le trafic Hosting
-- le front ne relance plus les boucles HTTP `watch_board`, `touch_presence` et `clear_presence`
-- la synchro realtime passe par websocket avec snapshots, presence keepalive et reconnexion
+- la synchro realtime utilise maintenant un backplane RTDB pour propager `ops`, textes Yjs et presence entre instances
+- le fallback checkpoint reste disponible, mais avec des timeouts et heartbeats moins agressifs
 - les secrets Cloud Run passent par Secret Manager
-- backups RTDB, cleanup des sessions/presences et budget mensuel sont maintenant automatises
+- backups RTDB, cleanup des sessions/presences/evenements realtime et budget mensuel sont maintenant automatises
+- des metriques de logs et des alertes Cloud Monitoring peuvent etre provisionnees depuis le repo
 
 ## Stack
 
@@ -119,6 +120,7 @@ Backend Cloud Run :
 - `BNI_SESSION_MAX_IDLE_MS`
 - `BNI_PRESENCE_TTL_MS`
 - `BNI_EXPORT_RETENTION_DAYS`
+- `BNI_REALTIME_EVENT_RETENTION_MS`
 - `PORT`
 - `PLAYWRIGHT_PORT`
 
@@ -130,7 +132,7 @@ Architecture recommandee :
 
 1. Deployer le frontend statique sur Firebase Hosting avec [firebase.json](./firebase.json).
 2. Deployer [realtime/server/index.mjs](./realtime/server/index.mjs) sur Cloud Run.
-3. Configurer Cloud Run avec `--max-instances=1` au debut pour garder une coherence simple.
+3. Configurer Cloud Run avec `--max-instances=1` au debut, puis ouvrir horizontalement apres validation du backplane RTDB.
 4. Configurer Firebase Realtime Database pour stocker :
    - boards collaboratifs
    - sessions auth
@@ -145,7 +147,8 @@ Fichiers ajoutes pour accelerer ce setup :
 - [firebase.json](./firebase.json) pour Firebase Hosting
 - [firebase.staging.json](./firebase.staging.json) pour les preview channels relies au backend staging
 - [scripts/deploy-cloudrun.ps1](./scripts/deploy-cloudrun.ps1) pour `gcloud builds submit` puis `gcloud run deploy`
-- [scripts/setup-firebase-ops.ps1](./scripts/setup-firebase-ops.ps1) pour Secrets Manager, bucket de backup, Scheduler et budget
+- [scripts/setup-firebase-ops.ps1](./scripts/setup-firebase-ops.ps1) pour Secrets Manager, bucket de backup, Scheduler, budget et setup monitoring
+- [scripts/setup-cloud-monitoring.ps1](./scripts/setup-cloud-monitoring.ps1) pour les metriques de logs et les alertes Cloud Monitoring
 - [scripts/deploy-firebase-staging.ps1](./scripts/deploy-firebase-staging.ps1) pour publier un preview channel Firebase
 - [scripts/migrate-netlify-to-firebase.mjs](./scripts/migrate-netlify-to-firebase.mjs) pour copier les stores Netlify existants vers Firebase
 - [scripts/verify-realtime-prod.mjs](./scripts/verify-realtime-prod.mjs) pour verifier la chaine prod
@@ -175,6 +178,7 @@ Le script suivant cree ou met a jour automatiquement :
 - un job Scheduler horaire pour le cleanup
 - un job Scheduler quotidien pour les backups
 - un budget mensuel GCP avec seuils `50%`, `80%`, `100%` et `120% forecast`
+- des alertes Cloud Monitoring basees sur les logs Cloud Run (`runtime failures`, `http 5xx`)
 
 Exemple :
 
@@ -186,6 +190,14 @@ Exemple :
   -SchedulerLocation europe-west1 `
   -ServiceName bni-linked-backend `
   -BudgetAmount 20
+```
+
+Provisionnement monitoring seul :
+
+```powershell
+./scripts/setup-cloud-monitoring.ps1 `
+  -ProjectId bni-linked `
+  -ServiceName bni-linked-backend
 ```
 
 ### Firebase Hosting
@@ -305,11 +317,7 @@ Verification deploiement Firebase validee :
 
 ## Limite actuelle
 
-Le service realtime reste volontairement en `max instances = 1`. Les rooms websocket sont encore maintenues en memoire dans Cloud Run. Si le trafic monte fort, il faudra introduire un backplane externe pour scaler horizontalement sans casser la coherence :
-
-- Redis ou Pub/Sub pour relayer presence, ops et invalidations entre instances
-- persistance de room state hors memoire
-- repartition multi-instances seulement apres cette extraction
+Le code supporte maintenant un backplane RTDB pour propager les evenements realtime entre instances, mais le deploiement reste volontairement prudent en `max instances = 1` tant que la charge prod n'a pas valide ce chemin. Si le trafic monte fort, la prochaine etape sera d'extraire encore plus l'etat chaud hors memoire Cloud Run pour reduire le cout et la pression RAM.
 
 ## Version
 

@@ -153,8 +153,8 @@ export async function createRealtimeBoardSession(options = {}) {
     const localFlushMs = Math.max(40, Number(options.localFlushMs) || 140);
     const reconnectBaseMs = Math.max(500, Number(options.reconnectBaseMs) || 1000);
     const reconnectMaxMs = Math.max(reconnectBaseMs, Number(options.reconnectMaxMs) || 15000);
-    const presenceHeartbeatMs = Math.max(5000, Number(options.presenceHeartbeatMs) || 10000);
-    const snapshotRefreshMs = Math.max(10000, Number(options.snapshotRefreshMs) || 45000);
+    const presenceHeartbeatMs = Math.max(5000, Number(options.presenceHeartbeatMs) || 12000);
+    const snapshotRefreshMs = Math.max(15000, Number(options.snapshotRefreshMs) || 120000);
     const buildPresence = typeof options.buildPresence === 'function' ? options.buildPresence : () => ({});
     const debug = resolveDebugLogger(options.debug);
 
@@ -164,7 +164,8 @@ export async function createRealtimeBoardSession(options = {}) {
         throw new Error('Configuration realtime incomplete.');
     }
 
-    let shadowSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
+    let committedShadowSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
+    let shadowSnapshot = committedShadowSnapshot;
     let flushTimer = null;
     let reconnectTimer = null;
     let presenceTimer = null;
@@ -402,7 +403,8 @@ export async function createRealtimeBoardSession(options = {}) {
                 if (activeClient !== client) return;
                 const incomingSnapshot = canonicalizeSnapshot(snapshot || {});
                 const currentSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
-                const hadPendingLocalChanges = !valuesEqual(currentSnapshot, shadowSnapshot);
+                const hadPendingLocalChanges = !valuesEqual(currentSnapshot, committedShadowSnapshot);
+                committedShadowSnapshot = incomingSnapshot;
                 shadowSnapshot = incomingSnapshot;
                 writeDebug(debug, 'log', 'realtime-snapshot', {
                     page,
@@ -412,7 +414,7 @@ export async function createRealtimeBoardSession(options = {}) {
                     reason: String(meta?.reason || ''),
                     summary: summarizeSnapshot(incomingSnapshot)
                 });
-                if (!(meta?.initial && hadPendingLocalChanges)) {
+                if (!hadPendingLocalChanges) {
                     applySnapshot(shadowSnapshot, meta || {});
                 } else {
                     writeDebug(debug, 'warn', 'realtime-initial-snapshot-delayed', {
@@ -438,6 +440,19 @@ export async function createRealtimeBoardSession(options = {}) {
             },
             onRemoteOps: (ops, meta) => {
                 if (activeClient !== client) return;
+                const isAcknowledgedLocalOps = String(meta?.senderClientId || '') === String(client.clientId || '');
+                committedShadowSnapshot = applyOps(committedShadowSnapshot, ops || []);
+                if (isAcknowledgedLocalOps) {
+                    writeDebug(debug, 'log', 'realtime-local-ops-ack', {
+                        page,
+                        boardId: shortDebugId(boardId),
+                        opCount: Array.isArray(ops) ? ops.length : 0,
+                        serverSeq: Number(meta?.serverSeq || 0),
+                        clientSeq: Number(meta?.clientSeq || 0)
+                    });
+                    scheduleSnapshotRefresh(snapshotRefreshMs);
+                    return;
+                }
                 if (flushTimer) {
                     clearFlushTimer();
                     flushLocalChanges().catch(() => {});

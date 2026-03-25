@@ -6,6 +6,7 @@ param(
     [string]$ServiceName = "bni-linked-backend",
     [string]$BudgetDisplayName = "bni-linked-monthly-guardrail",
     [decimal]$BudgetAmount = 20,
+    [string]$NotificationEmail = "",
     [string]$RealtimeSecretName = "bni-linked-realtime-secret",
     [string]$MaintenanceSecretName = "bni-linked-maintenance-secret",
     [string]$BackupBucket = "",
@@ -14,6 +15,7 @@ param(
     [long]$ExportRetentionDays = 45,
     [long]$SessionMaxIdleMs = 2592000000,
     [long]$PresenceTtlMs = 120000,
+    [long]$RealtimeEventRetentionMs = 86400000,
     [string]$DatabaseUrl = ""
 )
 
@@ -201,6 +203,8 @@ Ensure-ServiceEnabled @(
     "artifactregistry.googleapis.com",
     "secretmanager.googleapis.com",
     "cloudscheduler.googleapis.com",
+    "monitoring.googleapis.com",
+    "logging.googleapis.com",
     "billingbudgets.googleapis.com",
     "storage.googleapis.com"
 )
@@ -252,7 +256,8 @@ Invoke-Gcloud @("storage", "buckets", "add-iam-policy-binding", "gs://$BackupBuc
     -MaintenanceSecretName $MaintenanceSecretName `
     -SessionMaxIdleMs $SessionMaxIdleMs `
     -PresenceTtlMs $PresenceTtlMs `
-    -ExportRetentionDays $ExportRetentionDays
+    -ExportRetentionDays $ExportRetentionDays `
+    -RealtimeEventRetentionMs $RealtimeEventRetentionMs
 if ($LASTEXITCODE -ne 0) {
     throw "Le deploiement Cloud Run a echoue."
 }
@@ -265,6 +270,10 @@ if (-not $serviceUrl) {
 Ensure-SchedulerJob "bni-linked-maintenance-hourly" "17 * * * *" "$serviceUrl/api/admin/maintenance/run" $maintenanceSecretValue
 Ensure-SchedulerJob "bni-linked-rtdb-backup-daily" "15 3 * * *" "$serviceUrl/api/admin/backups/run" $maintenanceSecretValue
 Ensure-Budget $projectNumber
+& (Join-Path $PSScriptRoot "setup-cloud-monitoring.ps1") `
+    -ProjectId $ProjectId `
+    -ServiceName $ServiceName `
+    -NotificationEmail $NotificationEmail | Out-Null
 
 [PSCustomObject]@{
     ProjectId = $ProjectId

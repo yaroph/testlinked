@@ -72,8 +72,8 @@ const LOCAL_WORKSPACE_HEALTHY_BACKUP_KEY = 'bniLinkedPointHealthyWorkspace_v1';
 const LOCAL_WORKSPACE_HEALTH_WARNED_KEY = 'bniLinkedPointWorkspaceHealthWarned_v1';
 const COLLAB_NODE_FIELDS = ['name', 'type', 'color', 'manualColor', 'personStatus', 'num', 'accountNumber', 'citizenNumber', 'linkedMapPointId', 'description', 'notes', 'x', 'y', 'fixed'];
 const COLLAB_LINK_FIELDS = ['source', 'target', 'kind'];
-const COLLAB_PRESENCE_HEARTBEAT_MS = 6500;
-const COLLAB_PRESENCE_RETRY_MS = 3200;
+const COLLAB_PRESENCE_HEARTBEAT_MS = 12000;
+const COLLAB_PRESENCE_RETRY_MS = 5000;
 const COLLAB_SESSION_HEARTBEAT_MS = 18000;
 const COLLAB_SESSION_RETRY_MS = 5000;
 
@@ -136,9 +136,9 @@ const pointDebugLogger = createBrowserDebugLogger({
 
 const COLLAB_AUTOSAVE_DEBOUNCE_MS = 1600;
 const COLLAB_AUTOSAVE_RETRY_MS = 700;
-const COLLAB_WATCH_TIMEOUT_MS = 7000;
-const COLLAB_WATCH_RETRY_MIN_MS = 300;
-const COLLAB_WATCH_RETRY_MAX_MS = 4000;
+const COLLAB_WATCH_TIMEOUT_MS = 12000;
+const COLLAB_WATCH_RETRY_MIN_MS = 1000;
+const COLLAB_WATCH_RETRY_MAX_MS = 8000;
 const COLLAB_CURSOR_REALTIME_MS = 80;
 const COLLAB_CURSOR_LEGACY_MS = 180;
 const collabStorage = createStoredCollabStateBridge({
@@ -1862,7 +1862,9 @@ async function startCollabRealtime() {
     stopCollabRealtime();
     await preloadRealtimeTextTools().catch(() => null);
     pointDebugLogger.log('realtime-start-request', getPointDiagState({
-        localFlushMs: 120
+        localFlushMs: 120,
+        presenceHeartbeatMs: 12000,
+        snapshotRefreshMs: 120000
     }));
 
     const session = await createRealtimeBoardSession({
@@ -1901,6 +1903,10 @@ async function startCollabRealtime() {
         onTextUpdate: (payload) => {
             handleCollabRealtimeTextUpdate(payload || {});
         },
+        presenceHeartbeatMs: 12000,
+        snapshotRefreshMs: 120000,
+        reconnectBaseMs: 1500,
+        reconnectMaxMs: 20000,
         onClose: (meta = {}) => {
             pointDebugLogger.warn('realtime-close', getPointDiagState({
                 code: Number(meta?.code || 0),

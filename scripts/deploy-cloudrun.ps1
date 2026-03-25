@@ -16,9 +16,10 @@ param(
     [long]$SessionMaxIdleMs = 2592000000,
     [long]$PresenceTtlMs = 120000,
     [long]$ExportRetentionDays = 45,
-    [string]$Memory = "512Mi",
+    [long]$RealtimeEventRetentionMs = 86400000,
+    [string]$Memory = "1Gi",
     [int]$MaxInstances = 1,
-    [int]$MinInstances = 0,
+    [int]$MinInstances = 1,
     [int]$Concurrency = 200,
     [int]$TimeoutSeconds = 3600
 )
@@ -79,6 +80,7 @@ if ($BackupPrefix) { $baseEnvVars += "BNI_BACKUP_PREFIX=$BackupPrefix" }
 if ($SessionMaxIdleMs -gt 0) { $baseEnvVars += "BNI_SESSION_MAX_IDLE_MS=$SessionMaxIdleMs" }
 if ($PresenceTtlMs -gt 0) { $baseEnvVars += "BNI_PRESENCE_TTL_MS=$PresenceTtlMs" }
 if ($ExportRetentionDays -gt 0) { $baseEnvVars += "BNI_EXPORT_RETENTION_DAYS=$ExportRetentionDays" }
+if ($RealtimeEventRetentionMs -gt 0) { $baseEnvVars += "BNI_REALTIME_EVENT_RETENTION_MS=$RealtimeEventRetentionMs" }
 if ($RealtimeSecret -and -not $RealtimeSecretName) { $baseEnvVars += "BNI_REALTIME_SECRET=$RealtimeSecret" }
 if ($MaintenanceSecret -and -not $MaintenanceSecretName) { $baseEnvVars += "BNI_MAINTENANCE_SECRET=$MaintenanceSecret" }
 if ($baseEnvVars.Count -gt 0) {
@@ -115,6 +117,7 @@ if ($BackupPrefix) { $finalEnvVars += "BNI_BACKUP_PREFIX=$BackupPrefix" }
 if ($SessionMaxIdleMs -gt 0) { $finalEnvVars += "BNI_SESSION_MAX_IDLE_MS=$SessionMaxIdleMs" }
 if ($PresenceTtlMs -gt 0) { $finalEnvVars += "BNI_PRESENCE_TTL_MS=$PresenceTtlMs" }
 if ($ExportRetentionDays -gt 0) { $finalEnvVars += "BNI_EXPORT_RETENTION_DAYS=$ExportRetentionDays" }
+if ($RealtimeEventRetentionMs -gt 0) { $finalEnvVars += "BNI_REALTIME_EVENT_RETENTION_MS=$RealtimeEventRetentionMs" }
 if ($RealtimeSecret -and -not $RealtimeSecretName) { $finalEnvVars += "BNI_REALTIME_SECRET=$RealtimeSecret" }
 if ($MaintenanceSecret -and -not $MaintenanceSecretName) { $finalEnvVars += "BNI_MAINTENANCE_SECRET=$MaintenanceSecret" }
 

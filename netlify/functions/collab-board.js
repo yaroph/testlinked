@@ -1442,10 +1442,10 @@ exports.handler = async (event) => {
 
     const requestedTimeoutMs = Number(body.timeoutMs);
     const timeoutMs = Number.isFinite(requestedTimeoutMs)
-      ? Math.max(1200, Math.min(9000, requestedTimeoutMs))
-      : 7000;
+      ? Math.max(3000, Math.min(15000, requestedTimeoutMs))
+      : 12000;
 
-    const pollEveryMs = 450;
+    const pollEveryMs = 1200;
     const deadline = Date.now() + timeoutMs;
     let latestBoard = board;
     let latestRole = role;
@@ -1830,6 +1830,9 @@ exports.__test = {
   mergeMapBoardPayload,
   normalizeBoardPayload,
   mergeBoardPayload,
+  normalizeBoardActivity,
+  appendBoardActivity,
+  summarizeBoardDeltaByPage,
   sanitizeShareRole,
   getUnsupportedShareRoleMessage,
   listBoardPresence,
