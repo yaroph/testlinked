@@ -7,6 +7,14 @@ const ROLE_OWNER = "owner";
 const ROLE_EDITOR = "editor";
 const ROLE_VIEWER = "viewer";
 const ALLOWED_ROLES = new Set([ROLE_OWNER, ROLE_EDITOR, ROLE_VIEWER]);
+const SESSION_MAX_IDLE_MS = Math.max(
+  60 * 1000,
+  Number(
+    process.env.BNI_SESSION_MAX_IDLE_MS ||
+    process.env.SESSION_MAX_IDLE_MS ||
+    30 * 24 * 60 * 60 * 1000
+  ) || (30 * 24 * 60 * 60 * 1000)
+);
 
 function jsonResponse(statusCode, payload) {
   return {
@@ -102,6 +110,11 @@ function newToken() {
   return `${crypto.randomUUID()}${crypto.randomBytes(8).toString("hex")}`;
 }
 
+function timeValue(value) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function userKey(userId) {
   return `users/${userId}`;
 }
@@ -189,6 +202,11 @@ async function resolveAuth(event, body = null) {
   const session = await getSession(store, token);
   if (!session) {
     return { ok: false, statusCode: 401, error: "Session invalide." };
+  }
+  const sessionAge = Date.now() - Math.max(timeValue(session.lastAt), timeValue(session.createdAt));
+  if (sessionAge > SESSION_MAX_IDLE_MS) {
+    await deleteSession(store, token).catch(() => {});
+    return { ok: false, statusCode: 401, error: "Session expiree." };
   }
 
   const user = await getUserById(store, session.userId);
@@ -369,5 +387,7 @@ module.exports = {
   __test: {
     describeStoreClientConfig,
     resolveFirebaseOptions: firebaseTest.resolveFirebaseOptions,
+    SESSION_MAX_IDLE_MS,
+    timeValue,
   },
 };

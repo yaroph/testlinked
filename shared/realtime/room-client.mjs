@@ -4,6 +4,7 @@ import {
     REALTIME_MSG_HELLO_ACK,
     REALTIME_MSG_OPS,
     REALTIME_MSG_PRESENCE,
+    REALTIME_MSG_SNAPSHOT,
     REALTIME_MSG_SNAPSHOT_REQUEST,
     REALTIME_MSG_Y_SUBSCRIBE,
     REALTIME_MSG_Y_UPDATE,
@@ -103,6 +104,21 @@ export class RealtimeRoomClient {
                 });
                 this.onPresence(Array.isArray(message.presence) ? message.presence : []);
                 this.flushPendingMessages();
+                return;
+            }
+
+            if (type === REALTIME_MSG_SNAPSHOT) {
+                this.serverSeq = Math.max(this.serverSeq, Number(message.serverSeq || 0));
+                this.onSnapshot(message.snapshot || null, {
+                    serverSeq: this.serverSeq,
+                    role: String(message.role || ''),
+                    initial: false,
+                    reason: String(message.reason || 'snapshot'),
+                    presence: Array.isArray(message.presence) ? message.presence : []
+                });
+                if (Array.isArray(message.presence)) {
+                    this.onPresence(message.presence);
+                }
                 return;
             }
 

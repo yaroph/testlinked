@@ -60,7 +60,7 @@ test('map keeps a single interaction controller for draw mode and exposes the mo
     await expect(page.locator('#map-interaction-mode')).toBeHidden();
 });
 
-test('map legacy cloud fallback keeps presence alive without user interaction', async ({ page }) => {
+test('map checkpoint fallback does not restart HTTP polling loops', async ({ page }) => {
     await page.addInitScript(() => {
         localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
             token: 'smoke-token',
@@ -95,14 +95,14 @@ test('map legacy cloud fallback keeps presence alive without user interaction', 
     await page.goto('/map/?board=board-map-legacy');
     await waitForMapReady(page);
 
-    await expect.poll(() =>
-        api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'touch_presence').length
-    ).toBeGreaterThanOrEqual(1);
+    await page.waitForTimeout(2200);
 
-    await expect.poll(() =>
-        api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'touch_presence').length,
-        { timeout: 14000 }
-    ).toBeGreaterThanOrEqual(2);
+    expect(
+        api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'touch_presence').length
+    ).toBe(0);
+    expect(
+        api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'watch_board').length
+    ).toBe(0);
 });
 
 test('map local tab does not relaunch board listing', async ({ page }) => {

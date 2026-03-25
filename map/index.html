@@ -153,7 +153,10 @@
 
         <div id="viewport">
             <div id="map-world">
-                <img id="map-image" src="carte.jpg" alt="Carte Tactique">
+                <picture class="map-image-shell">
+                    <source srcset="carte.webp" type="image/webp">
+                    <img id="map-image" src="carte.jpg" alt="Carte Tactique" fetchpriority="high" decoding="async">
+                </picture>
                 <svg style="position:absolute; width:0; height:0; overflow:hidden;">
                     <defs>
                         <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">

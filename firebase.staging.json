@@ -52,28 +52,28 @@
       {
         "source": "/api/**",
         "run": {
-          "serviceId": "bni-linked-backend",
+          "serviceId": "bni-linked-backend-staging",
           "region": "europe-west1"
         }
       },
       {
         "source": "/.netlify/functions/**",
         "run": {
-          "serviceId": "bni-linked-backend",
+          "serviceId": "bni-linked-backend-staging",
           "region": "europe-west1"
         }
       },
       {
         "source": "/health",
         "run": {
-          "serviceId": "bni-linked-backend",
+          "serviceId": "bni-linked-backend-staging",
           "region": "europe-west1"
         }
       },
       {
         "source": "/api/health",
         "run": {
-          "serviceId": "bni-linked-backend",
+          "serviceId": "bni-linked-backend-staging",
           "region": "europe-west1"
         }
       }

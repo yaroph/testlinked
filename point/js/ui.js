@@ -1402,52 +1402,24 @@ function buildPointPresencePayload(extra = {}) {
 
 async function updatePointCloudPresence(extra = {}) {
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (!isRealtimeCloudActive()) return false;
     const payload = buildPointPresencePayload(extra);
-
-    if (isRealtimeCloudActive()) {
-        return collab.realtimeSession?.updatePresence(payload) || false;
-    }
-
-    if (collab.presenceInFlight) return false;
-
-    collab.presenceInFlight = true;
-    try {
-        const response = await collabBoardRequest('touch_presence', {
-            boardId: collab.activeBoardId,
-            ...payload
-        });
-        updateCollabPresence(response?.presence || []);
-        return true;
-    } catch (e) {
-        return false;
-    } finally {
-        collab.presenceInFlight = false;
-    }
+    return collab.realtimeSession?.updatePresence(payload) || false;
 }
 
 async function flushPointCursorPresence() {
     clearPointCursorSyncTimer();
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (!isRealtimeCloudActive()) return false;
 
-    const realtimeActive = isRealtimeCloudActive();
     const sent = await updatePointCloudPresence();
-    if (realtimeActive) {
-        collab.cursorLastSentAt = Date.now();
-        return sent;
-    }
-    if (sent) {
-        collab.cursorLastSentAt = Date.now();
-        return true;
-    }
-    if (isCloudBoardActive() && collab.user && collab.token) {
-        schedulePointCursorPresenceSync(COLLAB_CURSOR_LEGACY_MS);
-    }
-    return false;
+    if (sent) collab.cursorLastSentAt = Date.now();
+    return sent;
 }
 
 function schedulePointCursorPresenceSync(delayMs = null) {
-    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
-    const interval = isRealtimeCloudActive() ? COLLAB_CURSOR_REALTIME_MS : COLLAB_CURSOR_LEGACY_MS;
+    if (!isCloudBoardActive() || !collab.user || !collab.token || !isRealtimeCloudActive()) return false;
+    const interval = COLLAB_CURSOR_REALTIME_MS;
     const now = Date.now();
     const elapsed = Math.max(0, now - Number(collab.cursorLastSentAt || 0));
     const hasExplicitDelay = delayMs !== null && delayMs !== undefined;
@@ -1819,16 +1791,19 @@ export function unbindRealtimePointFields() {
     stopCollabRealtimeText();
 }
 
-function startLegacyCloudTransport() {
+function startCheckpointCloudTransport(options = {}) {
     stopCollabRealtime();
     collab.realtimeFallbackActive = true;
     startCollabAutosave();
-    startCollabLiveSync();
-    startCollabPresence();
+    stopCollabLiveSync();
+    stopCollabPresence();
+    updateCollabPresence([]);
     if (!collab.saveInFlight && !hasLocalCloudChanges()) {
         setCloudSyncState(
-            canEditCloudBoard() ? 'live' : 'session',
-            canEditCloudBoard() ? 'Synchro live active' : 'Lecture live active'
+            'session',
+            String(options.label || (canEditCloudBoard()
+                ? 'Mode degrade: checkpoint uniquement'
+                : 'Lecture cloud sans temps reel'))
         );
     }
 }
@@ -1849,7 +1824,11 @@ async function activateCloudTransport() {
         pointDebugLogger.warn('activate-cloud-transport-legacy', getPointDiagState({
             reason: 'realtime-disabled'
         }));
-        startLegacyCloudTransport();
+        startCheckpointCloudTransport({
+            label: canEditCloudBoard()
+                ? 'Cloud sans temps reel'
+                : 'Lecture cloud sans temps reel'
+        });
         return false;
     }
 
@@ -1866,8 +1845,8 @@ async function activateCloudTransport() {
     pointDebugLogger.warn('activate-cloud-transport-fallback', getPointDiagState({
         reason: 'realtime-start-failed'
     }));
-    startLegacyCloudTransport();
-    setCloudSyncState('session', 'Fallback cloud actif');
+    startCheckpointCloudTransport();
+    setCloudSyncState('session', 'Fallback checkpoint actif');
     return false;
 }
 
@@ -1929,10 +1908,8 @@ async function startCollabRealtime() {
             stopCollabRealtimeText();
             if (!meta.intentional && isCloudBoardActive()) {
                 collab.realtimeFallbackActive = true;
-                startCollabAutosave();
-                startCollabLiveSync();
-                startCollabPresence();
-                setCloudSyncState('session', 'Fallback cloud actif');
+                startCheckpointCloudTransport();
+                setCloudSyncState('session', 'Fallback checkpoint actif');
             }
             if (state.selection) {
                 renderEditor();
@@ -2126,9 +2103,8 @@ async function clearCollabPresence(boardId = collab.activeBoardId) {
 async function touchCollabPresence(loopToken = collab.presenceLoopToken, options = {}) {
     if (collab.presenceLoopToken !== loopToken && !options.force) return;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return;
+    if (!isRealtimeCloudActive()) return false;
     const sent = await updatePointCloudPresence(options.extra || {});
-    if (isRealtimeCloudActive()) return sent;
-    scheduleNextPresenceTick(loopToken, sent ? COLLAB_PRESENCE_HEARTBEAT_MS : COLLAB_PRESENCE_RETRY_MS);
     return sent;
 }
 
@@ -2142,9 +2118,6 @@ function startCollabPresence() {
         touchCollabPresence(collab.presenceLoopToken, { force: true }).catch(() => {});
         return;
     }
-    const loopToken = collab.presenceLoopToken + 1;
-    collab.presenceLoopToken = loopToken;
-    scheduleNextPresenceTick(loopToken, 0);
 }
 
 function scheduleNextWatchTick(loopToken, delayMs = 0) {
@@ -2364,7 +2337,6 @@ function setActiveCloudBoardFromSummary(summary = null) {
         collab.activeBoardUpdatedAt = String(summary.updatedAt || '');
     }
     if (previousBoardId && previousBoardId !== collab.activeBoardId) {
-        clearCollabPresence(previousBoardId).catch(() => {});
     }
     applyLocalPersistencePolicy();
     syncCloudStatus();
@@ -2535,7 +2507,6 @@ async function logoutCollab(options = {}) {
     stopCollabLiveSync();
     stopCollabPresence();
     try {
-        await clearCollabPresence(collab.activeBoardId);
         if (collab.token) await collabAuthRequest('logout');
     } catch (e) {}
 
@@ -3101,7 +3072,6 @@ async function runCloudAuth(action) {
         collab.token = String(res.token || '');
         collab.user = res.user || null;
         persistCollabState();
-        startCollabSessionHeartbeat();
         setCloudSyncState('session', 'Mode local');
         if (collab.pendingBoardId) {
             const targetBoard = collab.pendingBoardId;
@@ -3648,7 +3618,6 @@ export async function initCloudCollab() {
     try {
         const me = await collabAuthRequest('me');
         collab.user = me.user || collab.user;
-        startCollabSessionHeartbeat();
         setCloudSyncState(collab.activeBoardId ? 'live' : 'session');
         pointDebugLogger.log('init-cloud-collab-authenticated', getPointDiagState());
     } catch (e) {

@@ -18,8 +18,24 @@ function splitKey(key) {
     .filter(Boolean);
 }
 
+function readStoreNamespace() {
+  return String(
+    process.env.BNI_FIREBASE_STORE_NAMESPACE ||
+    process.env.FIREBASE_STORE_NAMESPACE ||
+    ""
+  )
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
 function buildStorePath(storeName, key = "") {
-  const parts = [ROOT_PREFIX, normalizeStoreName(storeName), ...splitKey(key)];
+  const namespace = readStoreNamespace();
+  const parts = [
+    ROOT_PREFIX,
+    ...(namespace ? [namespace] : []),
+    normalizeStoreName(storeName),
+    ...splitKey(key),
+  ];
   return parts.join("/");
 }
 
@@ -110,6 +126,7 @@ module.exports = {
     flattenBlobTree,
     isBlobNode,
     normalizeStoreName,
+    readStoreNamespace,
     splitKey,
     unwrapBlobValue,
     wrapBlobValue,

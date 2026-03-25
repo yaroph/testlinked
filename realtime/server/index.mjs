@@ -6,6 +6,8 @@ import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
 import collabLib from '../../netlify/lib/collab.js';
+import { runRuntimeMaintenance } from '../../shared/ops/runtime-maintenance.mjs';
+import { runRealtimeDatabaseBackup } from '../../shared/ops/runtime-backup.mjs';
 import { canonicalizePointPayload, applyPointOps, preservePointRealtimeTextInOps } from '../../shared/realtime/point-doc.mjs';
 import { canonicalizeMapPayload, applyMapOps, preserveMapRealtimeTextInOps } from '../../shared/realtime/map-doc.mjs';
 import {
@@ -22,6 +24,7 @@ import {
     REALTIME_MSG_HELLO_ACK,
     REALTIME_MSG_OPS,
     REALTIME_MSG_PRESENCE,
+    REALTIME_MSG_SNAPSHOT,
     REALTIME_MSG_SNAPSHOT_REQUEST,
     REALTIME_MSG_Y_SUBSCRIBE,
     REALTIME_MSG_Y_UPDATE,
@@ -51,6 +54,7 @@ const {
 const PORT = Number(process.env.PORT || 8787);
 const REALTIME_SECRET = String(process.env.BNI_REALTIME_SECRET || process.env.REALTIME_SECRET || 'bni-linked-dev-realtime-secret');
 const USING_DEFAULT_REALTIME_SECRET = !String(process.env.BNI_REALTIME_SECRET || process.env.REALTIME_SECRET || '').trim();
+const MAINTENANCE_SECRET = String(process.env.BNI_MAINTENANCE_SECRET || process.env.MAINTENANCE_SECRET || '').trim();
 const ROOM_IDLE_TTL_MS = 120000;
 const PERSIST_DEBOUNCE_MS = 450;
 
@@ -172,6 +176,23 @@ class BoardRoom {
         return true;
     }
 
+    sendSnapshot(clientState, options = {}) {
+        return this.sendToClient(
+            clientState,
+            options.initial ? REALTIME_MSG_HELLO_ACK : REALTIME_MSG_SNAPSHOT,
+            {
+                clientId: clientState.clientId,
+                boardId: this.boardId,
+                page: this.page,
+                serverSeq: this.serverSeq,
+                snapshot: this.snapshot,
+                role: clientState.role,
+                presence: this.listPresence(),
+                ...(options.reason ? { reason: String(options.reason || '') } : {})
+            }
+        );
+    }
+
     async persistPresenceEntry(clientState, presence = {}) {
         const now = nowIso();
         const cursorVisible = readPresenceFlag(presence.cursorVisible, false);
@@ -217,15 +238,7 @@ class BoardRoom {
         };
         this.clients.set(clientState.clientId, clientState);
         await this.persistPresenceEntry(clientState, {});
-        this.sendToClient(clientState, REALTIME_MSG_HELLO_ACK, {
-            clientId: clientState.clientId,
-            boardId: this.boardId,
-            page: this.page,
-            serverSeq: this.serverSeq,
-            snapshot: this.snapshot,
-            role: clientState.role,
-            presence: this.listPresence()
-        });
+        this.sendSnapshot(clientState, { initial: true, reason: 'handshake' });
         this.broadcast(REALTIME_MSG_PRESENCE, { presence: this.listPresence() });
         return clientState;
     }
@@ -238,9 +251,63 @@ class BoardRoom {
         this.scheduleCleanup(registry);
     }
 
+    async revokeClient(clientState) {
+        if (!clientState) return;
+        this.clients.delete(clientState.clientId);
+        await this.clearPresenceEntry(clientState);
+        this.broadcast(REALTIME_MSG_PRESENCE, { presence: this.listPresence() });
+    }
+
     async updatePresence(clientState, presence = {}) {
+        const access = await this.refreshAccess(clientState);
+        if (!access.ok) {
+            await this.revokeClient(clientState);
+            return { ok: false, access };
+        }
         await this.persistPresenceEntry(clientState, presence);
         this.broadcast(REALTIME_MSG_PRESENCE, { presence: this.listPresence() });
+        return { ok: true };
+    }
+
+    async refreshAccess(clientState, options = {}) {
+        const access = await this.roleResolver(this.boardId, clientState.userId);
+        if (!access?.ok) return access || { ok: false, status: 404, message: 'Board introuvable.' };
+        if (String(access.board?.page || REALTIME_PAGE_POINT) !== this.page) {
+            return { ok: false, status: 400, message: 'Page realtime invalide.' };
+        }
+        clientState.role = String(access.role || clientState.role || '');
+        if (options.requireEdit && !canEditBoard(clientState.role)) {
+            return { ok: false, status: 403, message: 'Board en lecture seule.' };
+        }
+        return access;
+    }
+
+    async refreshFromBoard(board = null) {
+        const sourceBoard = board || await this.store.get(boardKey(this.boardId), { type: 'json' });
+        if (!sourceBoard) {
+            return { ok: false, status: 404, message: 'Board introuvable.' };
+        }
+
+        const nextSnapshot = canonicalizeBoardData(this.page, sourceBoard.data || {});
+        if (!valuesEqual(nextSnapshot, this.snapshot)) {
+            this.snapshot = nextSnapshot;
+            this.serverSeq += 1;
+            this.syncTextDocsFromSnapshot({
+                userId: String(sourceBoard.lastEditedBy?.userId || sourceBoard.ownerId || ''),
+                username: String(sourceBoard.lastEditedBy?.username || sourceBoard.ownerName || '')
+            });
+        }
+
+        this.lastEditedBy = {
+            userId: String(sourceBoard.lastEditedBy?.userId || sourceBoard.ownerId || ''),
+            username: String(sourceBoard.lastEditedBy?.username || sourceBoard.ownerName || ''),
+            at: String(sourceBoard.lastEditedBy?.at || sourceBoard.updatedAt || nowIso())
+        };
+
+        return {
+            ok: true,
+            board: sourceBoard
+        };
     }
 
     resolvePointNode(nodeId) {
@@ -430,6 +497,13 @@ class BoardRoom {
     }
 
     async subscribeText(clientState, key) {
+        const access = await this.refreshAccess(clientState);
+        if (!access.ok) {
+            await this.revokeClient(clientState);
+            this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: access.message || 'Acces refuse.' });
+            return false;
+        }
+        await this.refreshFromBoard(access.board);
         const entry = this.ensureTextDoc(key);
         if (!entry) {
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: 'Champ texte introuvable.' });
@@ -445,10 +519,13 @@ class BoardRoom {
     }
 
     async applyTextUpdate(clientState, key, encodedUpdate) {
-        if (!canEditBoard(clientState.role)) {
-            this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: 'Board en lecture seule.' });
+        const access = await this.refreshAccess(clientState, { requireEdit: true });
+        if (!access.ok) {
+            await this.revokeClient(clientState);
+            this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: access.message || 'Board en lecture seule.' });
             return false;
         }
+        await this.refreshFromBoard(access.board);
         const entry = this.ensureTextDoc(key);
         if (!entry) {
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: 'Champ texte introuvable.' });
@@ -488,10 +565,13 @@ class BoardRoom {
     }
 
     async applyClientOps(clientState, ops = []) {
-        if (!canEditBoard(clientState.role)) {
-            this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: 'Board en lecture seule.' });
+        const access = await this.refreshAccess(clientState, { requireEdit: true });
+        if (!access.ok) {
+            await this.revokeClient(clientState);
+            this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: access.message || 'Board en lecture seule.' });
             return false;
         }
+        await this.refreshFromBoard(access.board);
         const safeOps = preserveBoardRealtimeTextInOps(this.page, this.snapshot, Array.isArray(ops) ? ops.slice(0, 200) : []);
         if (!safeOps.length) return false;
 
@@ -634,6 +714,11 @@ function buildServerlessEvent(request, targetUrl, body = '') {
     };
 }
 
+function sendJsonResponse(response, statusCode, payload = {}) {
+    response.writeHead(Number(statusCode || 200), { 'Content-Type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify(payload));
+}
+
 function sendServerlessResponse(response, result = {}) {
     const statusCode = Number(result?.statusCode || 200);
     const headers = result?.headers && typeof result.headers === 'object'
@@ -642,6 +727,85 @@ function sendServerlessResponse(response, result = {}) {
     const body = result?.body === undefined || result?.body === null ? '' : String(result.body);
     response.writeHead(statusCode, headers);
     response.end(body);
+}
+
+function readHeaderValue(request, name) {
+    const target = String(name || '').toLowerCase();
+    const headers = request?.headers || {};
+    for (const [key, value] of Object.entries(headers)) {
+        if (String(key).toLowerCase() !== target) continue;
+        if (Array.isArray(value)) return String(value[0] || '');
+        return String(value || '');
+    }
+    return '';
+}
+
+function authorizeAdminRequest(request, targetUrl) {
+    if (!MAINTENANCE_SECRET) {
+        return {
+            ok: false,
+            statusCode: 503,
+            error: 'Maintenance secret non configure.'
+        };
+    }
+
+    const providedSecret = String(
+        readHeaderValue(request, 'x-bni-maintenance-secret') ||
+        targetUrl.searchParams.get('key') ||
+        ''
+    ).trim();
+    if (!providedSecret || providedSecret !== MAINTENANCE_SECRET) {
+        return {
+            ok: false,
+            statusCode: 403,
+            error: 'Acces admin refuse.'
+        };
+    }
+
+    return { ok: true };
+}
+
+async function handleAdminRoute(request, response, targetUrl) {
+    const cleanPath = String(targetUrl.pathname || '').replace(/\/+$/, '') || '/';
+    if (cleanPath !== '/api/admin/maintenance/run' && cleanPath !== '/api/admin/backups/run') {
+        return false;
+    }
+
+    if (String(request.method || 'GET').toUpperCase() !== 'POST') {
+        sendJsonResponse(response, 405, { ok: false, error: 'Method not allowed' });
+        return true;
+    }
+
+    const access = authorizeAdminRequest(request, targetUrl);
+    if (!access.ok) {
+        sendJsonResponse(response, access.statusCode, { ok: false, error: access.error });
+        return true;
+    }
+
+    if (cleanPath === '/api/admin/maintenance/run') {
+        const result = await runRuntimeMaintenance({
+            presenceTtlMs: process.env.BNI_PRESENCE_TTL_MS,
+            sessionMaxIdleMs: process.env.BNI_SESSION_MAX_IDLE_MS,
+            exportRetentionDays: process.env.BNI_EXPORT_RETENTION_DAYS,
+        });
+        sendJsonResponse(response, 200, {
+            ok: true,
+            task: 'maintenance',
+            ...result,
+        });
+        return true;
+    }
+
+    const result = await runRealtimeDatabaseBackup({
+        bucketName: process.env.BNI_BACKUP_BUCKET,
+        prefix: process.env.BNI_BACKUP_PREFIX,
+    });
+    sendJsonResponse(response, 200, {
+        ok: true,
+        task: 'backup',
+        ...result,
+    });
+    return true;
 }
 
 function resolveServerlessHandler(pathname = '') {
@@ -689,6 +853,8 @@ const server = http.createServer(async (request, response) => {
             rooms: rooms.size,
             wsPath: '/ws',
             secretConfigured: !USING_DEFAULT_REALTIME_SECRET,
+            maintenanceSecretConfigured: Boolean(MAINTENANCE_SECRET),
+            backupBucketConfigured: Boolean(String(process.env.BNI_BACKUP_BUCKET || '').trim()),
             store: {
                 ...storeConfig,
                 reachable: storeProbe.ok
@@ -699,6 +865,10 @@ const server = http.createServer(async (request, response) => {
         }
         response.writeHead(payload.ok ? 200 : 503, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(payload));
+        return;
+    }
+
+    if (await handleAdminRoute(request, response, targetUrl)) {
         return;
     }
 
@@ -726,6 +896,11 @@ const wss = new WebSocketServer({ noServer: true });
 wss.on('connection', (socket) => {
     let clientState = null;
     let room = null;
+
+    function closeWithRealtimeError(message, code = 4003, reason = 'access-lost') {
+        socket.send(JSON.stringify({ type: REALTIME_MSG_ERROR, message: String(message || 'Acces refuse.') }));
+        socket.close(code, reason);
+    }
 
     socket.on('message', async (rawMessage) => {
         const message = parseJsonSafe(rawMessage);
@@ -773,34 +948,51 @@ wss.on('connection', (socket) => {
         }
 
         if (type === REALTIME_MSG_OPS) {
-            await room.applyClientOps(clientState, message.ops || []);
+            const applied = await room.applyClientOps(clientState, message.ops || []);
+            if (!applied && socket.readyState === 1 && !room.clients.has(clientState.clientId)) {
+                closeWithRealtimeError('Session realtime fermee.', 4003, 'room-missing');
+            }
             return;
         }
 
         if (type === REALTIME_MSG_PRESENCE) {
-            await room.updatePresence(clientState, message.presence || {});
+            const result = await room.updatePresence(clientState, message.presence || {});
+            if (result && result.ok === false && result.access && socket.readyState === 1) {
+                closeWithRealtimeError(result.access.message || 'Acces refuse.', 4003, 'presence-access-lost');
+            }
             return;
         }
 
         if (type === REALTIME_MSG_Y_SUBSCRIBE) {
-            await room.subscribeText(clientState, message.key || '');
+            const subscribed = await room.subscribeText(clientState, message.key || '');
+            if (!subscribed && socket.readyState === 1 && !room.clients.has(clientState.clientId)) {
+                closeWithRealtimeError('Session realtime fermee.', 4003, 'text-access-lost');
+            }
             return;
         }
 
         if (type === REALTIME_MSG_Y_UPDATE) {
-            await room.applyTextUpdate(clientState, message.key || '', message.update || '');
+            const updated = await room.applyTextUpdate(clientState, message.key || '', message.update || '');
+            if (!updated && socket.readyState === 1 && !room.clients.has(clientState.clientId)) {
+                closeWithRealtimeError('Session realtime fermee.', 4003, 'text-write-access-lost');
+            }
             return;
         }
 
         if (type === REALTIME_MSG_SNAPSHOT_REQUEST) {
-            room.sendToClient(clientState, REALTIME_MSG_HELLO_ACK, {
-                clientId: clientState.clientId,
-                boardId: room.boardId,
-                page: room.page,
-                serverSeq: room.serverSeq,
-                snapshot: room.snapshot,
-                role: clientState.role,
-                presence: room.listPresence()
+            const access = await room.refreshAccess(clientState);
+            if (!access.ok) {
+                closeWithRealtimeError(access.message || 'Acces refuse.', 4003, 'snapshot-access-lost');
+                return;
+            }
+            const refresh = await room.refreshFromBoard(access.board);
+            if (!refresh.ok) {
+                closeWithRealtimeError(refresh.message || 'Board introuvable.', 4004, 'snapshot-board-missing');
+                return;
+            }
+            room.sendSnapshot(clientState, {
+                initial: false,
+                reason: 'snapshot_request'
             });
         }
     });

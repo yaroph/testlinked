@@ -149,7 +149,7 @@ export function initEngine() {
         };
         // Sécurité si l'image plante
         mapImage.onerror = () => {
-            console.error("Erreur chargement carte.jpg");
+            console.error("Erreur chargement fond de carte");
         };
     }
 

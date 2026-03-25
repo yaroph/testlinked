@@ -12,6 +12,7 @@
     "migrate:netlify": "node scripts/migrate-netlify-to-firebase.mjs"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
     "firebase-admin": "^13.7.0",
     "jsonwebtoken": "^9.0.3",
     "ws": "^8.19.0",

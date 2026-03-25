@@ -734,47 +734,24 @@ export function unbindMapRealtimeTextFields() {
 
 export async function updateMapCloudPresence(extra = {}) {
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (!isRealtimeCloudActive()) return false;
     const payload = buildMapPresencePayload(extra);
-
-    if (isRealtimeCloudActive()) {
-        return collab.realtimeSession?.updatePresence(payload) || false;
-    }
-
-    try {
-        const response = await collabBoardRequest('touch_presence', {
-            boardId: collab.activeBoardId,
-            ...payload
-        });
-        updateMapPresence(response?.presence || []);
-        return true;
-    } catch (e) {
-        return false;
-    }
+    return collab.realtimeSession?.updatePresence(payload) || false;
 }
 
 async function flushMapCursorPresence() {
     clearMapCursorSyncTimer();
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (!isRealtimeCloudActive()) return false;
 
-    const realtimeActive = isRealtimeCloudActive();
     const sent = await updateMapCloudPresence();
-    if (realtimeActive) {
-        collab.cursorLastSentAt = Date.now();
-        return sent;
-    }
-    if (sent) {
-        collab.cursorLastSentAt = Date.now();
-        return true;
-    }
-    if (isCloudBoardActive() && collab.user && collab.token) {
-        scheduleMapCursorPresenceSync(COLLAB_CURSOR_LEGACY_MS);
-    }
-    return false;
+    if (sent) collab.cursorLastSentAt = Date.now();
+    return sent;
 }
 
 function scheduleMapCursorPresenceSync(delayMs = null) {
-    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
-    const interval = isRealtimeCloudActive() ? COLLAB_CURSOR_REALTIME_MS : COLLAB_CURSOR_LEGACY_MS;
+    if (!isCloudBoardActive() || !collab.user || !collab.token || !isRealtimeCloudActive()) return false;
+    const interval = COLLAB_CURSOR_REALTIME_MS;
     const now = Date.now();
     const elapsed = Math.max(0, now - Number(collab.cursorLastSentAt || 0));
     const hasExplicitDelay = delayMs !== null && delayMs !== undefined;
@@ -816,12 +793,13 @@ export function clearMapLiveCursor(options = {}) {
     }
 }
 
-function startLegacyCloudTransport() {
+function startCheckpointCloudTransport() {
     stopCollabRealtime();
     collab.realtimeFallbackActive = true;
     startCollabAutosave();
-    startCollabLiveSync();
-    startCollabPresence();
+    stopCollabLiveSync();
+    stopCollabPresence();
+    updateMapPresence([]);
 }
 
 async function activateCloudTransport() {
@@ -840,7 +818,7 @@ async function activateCloudTransport() {
         mapDebugLogger.warn('activate-cloud-transport-legacy', getMapDiagState({
             reason: 'realtime-disabled'
         }));
-        startLegacyCloudTransport();
+        startCheckpointCloudTransport();
         return false;
     }
 
@@ -856,7 +834,7 @@ async function activateCloudTransport() {
     mapDebugLogger.warn('activate-cloud-transport-fallback', getMapDiagState({
         reason: 'realtime-start-failed'
     }));
-    startLegacyCloudTransport();
+    startCheckpointCloudTransport();
     return false;
 }
 
@@ -910,9 +888,7 @@ async function startCollabRealtime() {
             stopMapRealtimeText();
             if (!meta.intentional && isCloudBoardActive()) {
                 collab.realtimeFallbackActive = true;
-                startCollabAutosave();
-                startCollabLiveSync();
-                startCollabPresence();
+                startCheckpointCloudTransport();
             }
             if (state.selectedPoint || state.selectedZone) {
                 import('./ui-editor.js').then((module) => {
@@ -1049,28 +1025,9 @@ async function clearCollabPresence(boardId = collab.activeBoardId) {
 async function touchCollabPresence(loopToken = collab.presenceLoopToken, options = {}) {
     if (collab.presenceLoopToken !== loopToken && !options.force) return false;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (!isRealtimeCloudActive()) return false;
     const payload = buildMapPresencePayload(options.extra || {});
-
-    if (isRealtimeCloudActive()) {
-        return collab.realtimeSession.updatePresence(payload);
-    }
-    if (collab.presenceInFlight && !options.force) return false;
-
-    collab.presenceInFlight = true;
-    try {
-        const response = await collabBoardRequest('touch_presence', {
-            boardId: collab.activeBoardId,
-            ...payload
-        });
-        updateMapPresence(response?.presence || []);
-        scheduleNextPresenceTick(loopToken, COLLAB_PRESENCE_HEARTBEAT_MS);
-        return true;
-    } catch (e) {
-        scheduleNextPresenceTick(loopToken, COLLAB_PRESENCE_RETRY_MS);
-        return false;
-    } finally {
-        collab.presenceInFlight = false;
-    }
+    return collab.realtimeSession.updatePresence(payload);
 }
 
 function startCollabPresence() {
@@ -1083,9 +1040,6 @@ function startCollabPresence() {
         touchCollabPresence(collab.presenceLoopToken, { force: true }).catch(() => {});
         return;
     }
-    const loopToken = collab.presenceLoopToken + 1;
-    collab.presenceLoopToken = loopToken;
-    scheduleNextPresenceTick(loopToken, 0);
 }
 
 function scheduleNextWatchTick(loopToken, delayMs = 0) {
@@ -1326,7 +1280,6 @@ function setActiveCloudBoardFromSummary(summary = null) {
     }
 
     if (previousBoardId && previousBoardId !== collab.activeBoardId) {
-        clearCollabPresence(previousBoardId).catch(() => {});
         syncSharedMapSnapshot(null);
     }
     applyLocalPersistencePolicy();
@@ -1561,7 +1514,6 @@ async function logoutCollab() {
     stopCollabLiveSync();
     stopCollabPresence();
     try {
-        await clearCollabPresence(collab.activeBoardId);
         if (collab.token) await collabAuthRequest('logout');
     } catch (e) {}
 
@@ -2009,7 +1961,6 @@ async function disconnectCurrentCloudBoard(options = {}) {
     stopCollabAutosave();
     stopCollabLiveSync();
     stopCollabPresence();
-    await clearCollabPresence(boardId).catch(() => {});
 
     setActiveCloudBoardFromSummary(null);
     setBoardQueryParam('');

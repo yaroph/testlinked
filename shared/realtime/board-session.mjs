@@ -71,6 +71,27 @@ function joinUrl(base, path) {
     return safeBase && safePath ? `${safeBase}/${safePath}` : safeBase || '';
 }
 
+function sanitizeTextKey(value = '') {
+    return String(value || '').trim();
+}
+
+function backoffDelay(attempt, baseMs, maxMs) {
+    const safeAttempt = Math.max(0, Number(attempt) || 0);
+    const rawDelay = Math.min(maxMs, baseMs * (2 ** safeAttempt));
+    const jitter = Math.min(750, Math.round(rawDelay * 0.2));
+    return rawDelay + Math.floor(Math.random() * (jitter + 1));
+}
+
+function shouldTreatConnectErrorAsTerminal(error) {
+    const status = Number(error?.status || 0);
+    return status === 400 || status === 401 || status === 403 || status === 404;
+}
+
+function shouldTreatCloseAsTerminal(meta = {}) {
+    const code = Number(meta?.code || 0);
+    return code === 4001 || code === 4003 || code === 4004;
+}
+
 async function requestRealtimeToken(tokenEndpoint, collabToken, boardId, page, debug = null) {
     writeDebug(debug, 'log', 'realtime-token-request', {
         page,
@@ -130,6 +151,10 @@ export async function createRealtimeBoardSession(options = {}) {
     const onLocalAccepted = typeof options.onLocalAccepted === 'function' ? options.onLocalAccepted : () => {};
     const onTextUpdate = typeof options.onTextUpdate === 'function' ? options.onTextUpdate : () => {};
     const localFlushMs = Math.max(40, Number(options.localFlushMs) || 140);
+    const reconnectBaseMs = Math.max(500, Number(options.reconnectBaseMs) || 1000);
+    const reconnectMaxMs = Math.max(reconnectBaseMs, Number(options.reconnectMaxMs) || 15000);
+    const presenceHeartbeatMs = Math.max(5000, Number(options.presenceHeartbeatMs) || 10000);
+    const snapshotRefreshMs = Math.max(10000, Number(options.snapshotRefreshMs) || 45000);
     const buildPresence = typeof options.buildPresence === 'function' ? options.buildPresence : () => ({});
     const debug = resolveDebugLogger(options.debug);
 
@@ -139,99 +164,165 @@ export async function createRealtimeBoardSession(options = {}) {
         throw new Error('Configuration realtime incomplete.');
     }
 
-    const tokenData = await requestRealtimeToken(joinUrl(tokenBase, tokenEndpoint), collabToken, boardId, page, debug);
-    const wsBase = String(options.wsBase || tokenData.wsBase || resolveRealtimeWsBase()).trim();
-    if (!wsBase) {
-        throw new Error('Configuration realtime incomplete.');
-    }
-    writeDebug(debug, 'log', 'realtime-session-config', {
-        page,
-        boardId: shortDebugId(boardId),
-        wsBase,
-        localFlushMs
-    });
     let shadowSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
     let flushTimer = null;
+    let reconnectTimer = null;
+    let presenceTimer = null;
+    let snapshotTimer = null;
     let closed = false;
-    let clientSeq = 0;
     let manualStop = false;
+    let reconnectAttempt = 0;
+    let clientSeq = 0;
+    let activeClient = null;
+    let lastPresencePayload = buildPresence({});
+    const textSubscriptions = new Set();
 
-    const roomClient = new RealtimeRoomClient({
-        url: joinUrl(wsBase, '/ws'),
-        boardId,
-        page,
-        token: tokenData.token,
-        onSnapshot: (snapshot, meta) => {
-            const incomingSnapshot = canonicalizeSnapshot(snapshot || {});
-            const currentSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
-            const hadPendingLocalChanges = !valuesEqual(currentSnapshot, shadowSnapshot);
-            shadowSnapshot = incomingSnapshot;
-            writeDebug(debug, 'log', 'realtime-snapshot', {
-                page,
-                boardId: shortDebugId(boardId),
-                initial: Boolean(meta?.initial),
-                hadPendingLocalChanges,
-                summary: summarizeSnapshot(incomingSnapshot)
-            });
-            if (!(meta?.initial && hadPendingLocalChanges)) {
-                applySnapshot(shadowSnapshot, meta || {});
-            } else {
-                writeDebug(debug, 'warn', 'realtime-initial-snapshot-delayed', {
-                    page,
-                    boardId: shortDebugId(boardId),
-                    reason: 'pending-local-changes'
-                });
-                scheduleLocalFlush(0);
+    function clearFlushTimer() {
+        if (!flushTimer) return;
+        clearTimeout(flushTimer);
+        flushTimer = null;
+    }
+
+    function clearReconnectTimer() {
+        if (!reconnectTimer) return;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+
+    function clearPresenceTimer() {
+        if (!presenceTimer) return;
+        clearTimeout(presenceTimer);
+        presenceTimer = null;
+    }
+
+    function clearSnapshotTimer() {
+        if (!snapshotTimer) return;
+        clearTimeout(snapshotTimer);
+        snapshotTimer = null;
+    }
+
+    function scheduleSnapshotRefresh(delayMs = snapshotRefreshMs) {
+        if (closed || !snapshotRefreshMs) return;
+        clearSnapshotTimer();
+        snapshotTimer = setTimeout(() => {
+            snapshotTimer = null;
+            if (closed) return;
+            if (activeClient?.isConnected()) {
+                activeClient.requestSnapshot();
             }
-            onPresence(meta?.presence || []);
-        },
-        onRemoteOps: (ops, meta) => {
-            if (flushTimer) {
-                clearTimeout(flushTimer);
-                flushTimer = null;
-                flushLocalChanges().catch(() => {});
+            scheduleSnapshotRefresh(snapshotRefreshMs);
+        }, Math.max(1000, Number(delayMs) || snapshotRefreshMs));
+    }
+
+    function schedulePresenceHeartbeat(delayMs = presenceHeartbeatMs) {
+        if (closed || !presenceHeartbeatMs) return;
+        clearPresenceTimer();
+        presenceTimer = setTimeout(() => {
+            presenceTimer = null;
+            if (closed) return;
+            if (activeClient?.isConnected()) {
+                roomClientFacade.updatePresence(lastPresencePayload);
             }
-            shadowSnapshot = applyOps(shadowSnapshot, ops || []);
-            writeDebug(debug, 'log', 'realtime-remote-ops', {
-                page,
-                boardId: shortDebugId(boardId),
-                opCount: Array.isArray(ops) ? ops.length : 0,
-                serverSeq: Number(meta?.serverSeq || 0),
-                senderClientId: shortDebugId(meta?.senderClientId || '')
-            });
-            applySnapshot(shadowSnapshot, {
-                remote: true,
-                ...(meta || {})
-            });
-        },
-        onPresence,
-        onStatus,
-        onError,
-        onTextUpdate,
-        onClose: (meta) => {
-            closed = true;
-            if (flushTimer) {
-                clearTimeout(flushTimer);
-                flushTimer = null;
-            }
-            writeDebug(debug, 'warn', 'realtime-session-closed', {
-                page,
-                boardId: shortDebugId(boardId),
-                code: Number(meta?.code || 0),
-                reason: String(meta?.reason || ''),
-                intentional: Boolean(manualStop),
-                wasConnected: Boolean(meta?.wasConnected)
-            });
-            onClose({
-                ...(meta || {}),
-                intentional: manualStop
-            });
+            schedulePresenceHeartbeat(presenceHeartbeatMs);
+        }, Math.max(1000, Number(delayMs) || presenceHeartbeatMs));
+    }
+
+    function replayTextSubscriptions() {
+        if (!activeClient || !activeClient.isConnected() || !textSubscriptions.size) return;
+        textSubscriptions.forEach((key) => {
+            activeClient.subscribeText(key);
+        });
+    }
+
+    function setRealtimePresencePayload(payload = null) {
+        if (!payload || typeof payload !== 'object') {
+            lastPresencePayload = {};
+            return lastPresencePayload;
         }
-    });
+        lastPresencePayload = payload;
+        return lastPresencePayload;
+    }
+
+    function finalizeSessionClose(meta = {}) {
+        clearFlushTimer();
+        clearReconnectTimer();
+        clearPresenceTimer();
+        clearSnapshotTimer();
+        closed = true;
+        activeClient = null;
+        onClose({
+            ...(meta || {}),
+            intentional: Boolean(manualStop)
+        });
+    }
+
+    function scheduleReconnect(reason = '', details = {}) {
+        if (closed || manualStop) return;
+        clearReconnectTimer();
+        clearPresenceTimer();
+        clearSnapshotTimer();
+        const delayMs = backoffDelay(reconnectAttempt, reconnectBaseMs, reconnectMaxMs);
+        const nextAttempt = reconnectAttempt + 1;
+        writeDebug(debug, 'warn', 'realtime-reconnect-scheduled', {
+            page,
+            boardId: shortDebugId(boardId),
+            reason: String(reason || ''),
+            attempt: nextAttempt,
+            delayMs,
+            ...details
+        });
+        onStatus('connecting', reason ? `${reason} • retry ${nextAttempt}` : `Retry ${nextAttempt}`);
+        reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            reconnectAttempt = nextAttempt;
+            connectRealtimeClient({ reconnect: true }).catch((error) => {
+                if (shouldTreatConnectErrorAsTerminal(error)) {
+                    onError(error);
+                    finalizeSessionClose({
+                        code: Number(error?.status || 0),
+                        reason: error?.message || 'Reconnect terminal error',
+                        terminal: true
+                    });
+                    return;
+                }
+                onError(error);
+                scheduleReconnect(error?.message || 'Reconnect failed');
+            });
+        }, delayMs);
+    }
+
+    const roomClientFacade = {
+        isConnected() {
+            return Boolean(activeClient?.isConnected());
+        },
+        requestSnapshot() {
+            if (!activeClient) return false;
+            activeClient.requestSnapshot();
+            return true;
+        },
+        subscribeText(key) {
+            const cleanKey = sanitizeTextKey(key);
+            if (!cleanKey) return false;
+            textSubscriptions.add(cleanKey);
+            if (!activeClient) return false;
+            return activeClient.subscribeText(cleanKey);
+        },
+        sendTextUpdate(key, update) {
+            const cleanKey = sanitizeTextKey(key);
+            if (!cleanKey || !activeClient) return false;
+            return activeClient.sendTextUpdate(cleanKey, update);
+        },
+        updatePresence(presence = {}) {
+            const payload = setRealtimePresencePayload(presence);
+            schedulePresenceHeartbeat(presenceHeartbeatMs);
+            if (!activeClient) return false;
+            return activeClient.updatePresence(payload);
+        }
+    };
 
     async function flushLocalChanges() {
         if (closed) return false;
-        if (!roomClient.isConnected()) {
+        if (!activeClient || !activeClient.isConnected()) {
             writeDebug(debug, 'warn', 'realtime-flush-skipped', {
                 page,
                 boardId: shortDebugId(boardId),
@@ -253,7 +344,7 @@ export async function createRealtimeBoardSession(options = {}) {
             opCount: ops.length,
             summary: summarizeSnapshot(currentSnapshot)
         });
-        const sent = roomClient.sendOps(ops, { clientSeq });
+        const sent = activeClient.sendOps(ops, { clientSeq });
         if (sent) {
             shadowSnapshot = applyOps(shadowSnapshot, ops);
             onLocalAccepted({
@@ -266,39 +357,214 @@ export async function createRealtimeBoardSession(options = {}) {
 
     function scheduleLocalFlush(delayMs = localFlushMs) {
         if (closed) return;
-        if (flushTimer) clearTimeout(flushTimer);
+        clearFlushTimer();
         flushTimer = setTimeout(() => {
             flushTimer = null;
             flushLocalChanges().catch((error) => onError(error));
-        }, delayMs);
+        }, Math.max(0, Number(delayMs) || localFlushMs));
     }
 
     function updatePresence(extra = null) {
         if (closed) return false;
-        return roomClient.updatePresence(buildPresence(extra || {}));
+        const payload = buildPresence(extra || {});
+        return roomClientFacade.updatePresence(payload);
     }
 
-    roomClient.connect();
+    async function connectRealtimeClient(options = {}) {
+        if (closed || manualStop) return false;
 
-    return {
-        roomClient,
+        const tokenData = await requestRealtimeToken(
+            joinUrl(tokenBase, tokenEndpoint),
+            collabToken,
+            boardId,
+            page,
+            debug
+        );
+        const wsBase = String(options.wsBase || tokenData.wsBase || resolveRealtimeWsBase()).trim();
+        if (!wsBase) {
+            throw new Error('Configuration realtime incomplete.');
+        }
+
+        writeDebug(debug, 'log', 'realtime-session-config', {
+            page,
+            boardId: shortDebugId(boardId),
+            wsBase,
+            localFlushMs,
+            reconnectAttempt
+        });
+
+        const client = new RealtimeRoomClient({
+            url: joinUrl(wsBase, '/ws'),
+            boardId,
+            page,
+            token: tokenData.token,
+            onSnapshot: (snapshot, meta) => {
+                if (activeClient !== client) return;
+                const incomingSnapshot = canonicalizeSnapshot(snapshot || {});
+                const currentSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
+                const hadPendingLocalChanges = !valuesEqual(currentSnapshot, shadowSnapshot);
+                shadowSnapshot = incomingSnapshot;
+                writeDebug(debug, 'log', 'realtime-snapshot', {
+                    page,
+                    boardId: shortDebugId(boardId),
+                    initial: Boolean(meta?.initial),
+                    hadPendingLocalChanges,
+                    reason: String(meta?.reason || ''),
+                    summary: summarizeSnapshot(incomingSnapshot)
+                });
+                if (!(meta?.initial && hadPendingLocalChanges)) {
+                    applySnapshot(shadowSnapshot, meta || {});
+                } else {
+                    writeDebug(debug, 'warn', 'realtime-initial-snapshot-delayed', {
+                        page,
+                        boardId: shortDebugId(boardId),
+                        reason: 'pending-local-changes'
+                    });
+                    scheduleLocalFlush(0);
+                }
+                if (Array.isArray(meta?.presence)) {
+                    onPresence(meta.presence);
+                }
+                if (meta?.initial) {
+                    reconnectAttempt = 0;
+                    onStatus('connected', options.reconnect ? 'Reconnected' : 'Connected');
+                    replayTextSubscriptions();
+                    if (lastPresencePayload && Object.keys(lastPresencePayload).length) {
+                        roomClientFacade.updatePresence(lastPresencePayload);
+                    }
+                    schedulePresenceHeartbeat(presenceHeartbeatMs);
+                }
+                scheduleSnapshotRefresh(snapshotRefreshMs);
+            },
+            onRemoteOps: (ops, meta) => {
+                if (activeClient !== client) return;
+                if (flushTimer) {
+                    clearFlushTimer();
+                    flushLocalChanges().catch(() => {});
+                }
+                shadowSnapshot = applyOps(shadowSnapshot, ops || []);
+                writeDebug(debug, 'log', 'realtime-remote-ops', {
+                    page,
+                    boardId: shortDebugId(boardId),
+                    opCount: Array.isArray(ops) ? ops.length : 0,
+                    serverSeq: Number(meta?.serverSeq || 0),
+                    senderClientId: shortDebugId(meta?.senderClientId || '')
+                });
+                applySnapshot(shadowSnapshot, {
+                    remote: true,
+                    ...(meta || {})
+                });
+                scheduleSnapshotRefresh(snapshotRefreshMs);
+            },
+            onPresence: (presence) => {
+                if (activeClient !== client) return;
+                onPresence(presence);
+                scheduleSnapshotRefresh(snapshotRefreshMs);
+            },
+            onStatus: (status, detail = '') => {
+                if (activeClient !== client) return;
+                if (status === 'connecting') {
+                    onStatus(status, detail);
+                    return;
+                }
+                if (status === 'error') {
+                    onStatus(status, detail);
+                }
+            },
+            onError: (error) => {
+                if (activeClient !== client) return;
+                onError(error);
+            },
+            onTextUpdate: (payload) => {
+                if (activeClient !== client) return;
+                onTextUpdate(payload);
+                scheduleSnapshotRefresh(snapshotRefreshMs);
+            },
+            onClose: (meta) => {
+                if (activeClient === client) {
+                    activeClient = null;
+                }
+                clearSnapshotTimer();
+                writeDebug(debug, 'warn', 'realtime-session-closed', {
+                    page,
+                    boardId: shortDebugId(boardId),
+                    code: Number(meta?.code || 0),
+                    reason: String(meta?.reason || ''),
+                    intentional: Boolean(manualStop),
+                    wasConnected: Boolean(meta?.wasConnected)
+                });
+                if (closed || manualStop) {
+                    finalizeSessionClose({
+                        ...(meta || {}),
+                        intentional: true
+                    });
+                    return;
+                }
+                if (shouldTreatCloseAsTerminal(meta)) {
+                    finalizeSessionClose({
+                        ...(meta || {}),
+                        terminal: true
+                    });
+                    return;
+                }
+                scheduleReconnect(meta?.reason || 'Socket closed', {
+                    code: Number(meta?.code || 0),
+                    wasConnected: Boolean(meta?.wasConnected)
+                });
+            }
+        });
+
+        activeClient = client;
+        client.connect();
+        return true;
+    }
+
+    const session = {
+        roomClient: roomClientFacade,
         get shadowSnapshot() {
             return shadowSnapshot;
         },
         isConnected() {
-            return roomClient.isConnected();
+            return roomClientFacade.isConnected();
+        },
+        requestSnapshot() {
+            return roomClientFacade.requestSnapshot();
+        },
+        subscribeText(key) {
+            return roomClientFacade.subscribeText(key);
+        },
+        sendTextUpdate(key, update) {
+            return roomClientFacade.sendTextUpdate(key, update);
         },
         scheduleLocalFlush,
         flushLocalChanges,
         updatePresence,
         stop(reason = 'realtime-stop') {
             manualStop = true;
-            closed = true;
-            if (flushTimer) {
-                clearTimeout(flushTimer);
-                flushTimer = null;
+            clearFlushTimer();
+            clearReconnectTimer();
+            clearPresenceTimer();
+            clearSnapshotTimer();
+            if (activeClient) {
+                activeClient.disconnect(1000, reason);
+            } else {
+                finalizeSessionClose({
+                    code: 1000,
+                    reason,
+                    intentional: true
+                });
             }
-            roomClient.disconnect(1000, reason);
         }
     };
+
+    try {
+        await connectRealtimeClient({ reconnect: false });
+    } catch (error) {
+        if (shouldTreatConnectErrorAsTerminal(error)) {
+            throw error;
+        }
+        throw error;
+    }
+
+    return session;
 }

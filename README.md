@@ -5,6 +5,7 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 ## Production
 
 - frontend public : `https://bni-linked.web.app`
+- staging preview : `https://bni-linked--staging-xyk88t9b.web.app`
 - hebergement statique : Firebase Hosting
 - backend API + websocket : Cloud Run
 - stockage runtime : Firebase Realtime Database
@@ -40,6 +41,11 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 - `Recherche rapide` reste volontairement limitee au nom
 - la couleur HVT continue visuellement vers les noeuds relies
 - `map/carte.jpg` a ete recompressee pour reduire fortement le poids au chargement
+- `map/carte.webp` sert maintenant de fond prioritaire pour couper encore le trafic Hosting
+- le front ne relance plus les boucles HTTP `watch_board`, `touch_presence` et `clear_presence`
+- la synchro realtime passe par websocket avec snapshots, presence keepalive et reconnexion
+- les secrets Cloud Run passent par Secret Manager
+- backups RTDB, cleanup des sessions/presences et budget mensuel sont maintenant automatises
 
 ## Stack
 
@@ -104,8 +110,15 @@ Backend Cloud Run :
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_SERVICE_ACCOUNT_JSON` optionnelle en local
 - `BNI_REALTIME_SECRET`
+- `BNI_MAINTENANCE_SECRET`
 - `BNI_REALTIME_HTTP_URL`
 - `BNI_REALTIME_WS_URL`
+- `BNI_FIREBASE_STORE_NAMESPACE`
+- `BNI_BACKUP_BUCKET`
+- `BNI_BACKUP_PREFIX`
+- `BNI_SESSION_MAX_IDLE_MS`
+- `BNI_PRESENCE_TTL_MS`
+- `BNI_EXPORT_RETENTION_DAYS`
 - `PORT`
 - `PLAYWRIGHT_PORT`
 
@@ -130,7 +143,10 @@ Fichiers ajoutes pour accelerer ce setup :
 
 - [Dockerfile](./Dockerfile) pour un deploiement container standard
 - [firebase.json](./firebase.json) pour Firebase Hosting
+- [firebase.staging.json](./firebase.staging.json) pour les preview channels relies au backend staging
 - [scripts/deploy-cloudrun.ps1](./scripts/deploy-cloudrun.ps1) pour `gcloud builds submit` puis `gcloud run deploy`
+- [scripts/setup-firebase-ops.ps1](./scripts/setup-firebase-ops.ps1) pour Secrets Manager, bucket de backup, Scheduler et budget
+- [scripts/deploy-firebase-staging.ps1](./scripts/deploy-firebase-staging.ps1) pour publier un preview channel Firebase
 - [scripts/migrate-netlify-to-firebase.mjs](./scripts/migrate-netlify-to-firebase.mjs) pour copier les stores Netlify existants vers Firebase
 - [scripts/verify-realtime-prod.mjs](./scripts/verify-realtime-prod.mjs) pour verifier la chaine prod
 
@@ -144,7 +160,32 @@ Exemple de deploiement :
   -Region europe-west1 `
   -ServiceName bni-linked-backend `
   -DatabaseUrl https://your-project-id-default-rtdb.europe-west1.firebasedatabase.app `
-  -RealtimeSecret <long-random-secret>
+  -BackupBucket your-project-id-rtdb-backups `
+  -RealtimeSecretName bni-linked-realtime-secret `
+  -MaintenanceSecretName bni-linked-maintenance-secret
+```
+
+### Secrets, backups et budget
+
+Le script suivant cree ou met a jour automatiquement :
+
+- `bni-linked-realtime-secret` dans Secret Manager
+- `bni-linked-maintenance-secret` dans Secret Manager
+- le bucket de backup RTDB avec cycle de vie
+- un job Scheduler horaire pour le cleanup
+- un job Scheduler quotidien pour les backups
+- un budget mensuel GCP avec seuils `50%`, `80%`, `100%` et `120% forecast`
+
+Exemple :
+
+```powershell
+./scripts/setup-firebase-ops.ps1 `
+  -ProjectId bni-linked `
+  -BillingAccountId 01F379-BA44AA-3594CC `
+  -Region europe-west1 `
+  -SchedulerLocation europe-west1 `
+  -ServiceName bni-linked-backend `
+  -BudgetAmount 20
 ```
 
 ### Firebase Hosting
@@ -160,6 +201,34 @@ Deploiement :
 
 ```bash
 firebase deploy --only hosting
+```
+
+### Staging preview
+
+Le backend staging tourne sur un namespace RTDB isole (`BNI_FIREBASE_STORE_NAMESPACE=staging`) et le front preview pointe vers ce service.
+
+Deploiement du backend staging :
+
+```powershell
+./scripts/deploy-cloudrun.ps1 `
+  -ProjectId bni-linked `
+  -Region europe-west1 `
+  -ServiceName bni-linked-backend-staging `
+  -DatabaseUrl https://bni-linked-default-rtdb.europe-west1.firebasedatabase.app `
+  -StoreNamespace staging `
+  -BackupBucket bni-linked-rtdb-backups `
+  -BackupPrefix staging/rtdb `
+  -RealtimeSecretName bni-linked-realtime-secret `
+  -MaintenanceSecretName bni-linked-maintenance-secret
+```
+
+Publication du preview channel :
+
+```powershell
+./scripts/deploy-firebase-staging.ps1 `
+  -ProjectId bni-linked `
+  -ChannelId staging `
+  -Expires 30d
 ```
 
 ### Migration des donnees
@@ -230,7 +299,17 @@ Verification deploiement Firebase validee :
 - `https://bni-linked.web.app/point/`
 - `https://bni-linked.web.app/map/`
 - `https://bni-linked.web.app/health`
+- `https://bni-linked--staging-xyk88t9b.web.app/api/health`
 - creation d'un compte, creation d'un board, token realtime et handshake websocket
+- execution reussie d'un cleanup admin et d'un backup RTDB vers `gs://bni-linked-rtdb-backups`
+
+## Limite actuelle
+
+Le service realtime reste volontairement en `max instances = 1`. Les rooms websocket sont encore maintenues en memoire dans Cloud Run. Si le trafic monte fort, il faudra introduire un backplane externe pour scaler horizontalement sans casser la coherence :
+
+- Redis ou Pub/Sub pour relayer presence, ops et invalidations entre instances
+- persistance de room state hors memoire
+- repartition multi-instances seulement apres cette extraction
 
 ## Version
 
