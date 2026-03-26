@@ -118,6 +118,9 @@ const collab = {
     realtimeTextBindings: new Map(),
     activeTextKey: '',
     activeTextLabel: '',
+    activeTextSelectionStart: null,
+    activeTextSelectionEnd: null,
+    activeTextSelectionDirection: 'none',
     homeRenderSeq: 0,
     profileFlash: '',
     cursorVisible: false,
@@ -458,6 +461,9 @@ function clearRealtimeFieldPresence(options = {}) {
     const hadPresence = Boolean(collab.activeTextKey || collab.activeTextLabel);
     collab.activeTextKey = '';
     collab.activeTextLabel = '';
+    collab.activeTextSelectionStart = null;
+    collab.activeTextSelectionEnd = null;
+    collab.activeTextSelectionDirection = 'none';
     if (shouldNotify && hadPresence) {
         if (collab.realtimeSession) {
             collab.realtimeSession.updatePresence();
@@ -473,6 +479,28 @@ function setRealtimeFieldPresence(textKey, textLabel) {
     if (collab.activeTextKey === nextKey && collab.activeTextLabel === nextLabel) return;
     collab.activeTextKey = nextKey;
     collab.activeTextLabel = nextLabel;
+    collab.activeTextSelectionStart = null;
+    collab.activeTextSelectionEnd = null;
+    collab.activeTextSelectionDirection = 'none';
+    if (collab.realtimeSession) {
+        collab.realtimeSession.updatePresence();
+    } else if (isCloudBoardActive() && collab.user) {
+        touchCollabPresence(collab.presenceLoopToken, { force: true }).catch(() => {});
+    }
+}
+
+function setRealtimeFieldSelection(textKey, selection = {}, options = {}) {
+    if (String(collab.activeTextKey || '') !== String(textKey || '')) return;
+    const nextStart = typeof selection?.selectionStart === 'number' ? selection.selectionStart : null;
+    const nextEnd = typeof selection?.selectionEnd === 'number' ? selection.selectionEnd : nextStart;
+    const nextDirection = typeof selection?.selectionDirection === 'string' ? selection.selectionDirection : 'none';
+    const didChange = collab.activeTextSelectionStart !== nextStart
+        || collab.activeTextSelectionEnd !== nextEnd
+        || String(collab.activeTextSelectionDirection || 'none') !== nextDirection;
+    collab.activeTextSelectionStart = nextStart;
+    collab.activeTextSelectionEnd = nextEnd;
+    collab.activeTextSelectionDirection = nextDirection;
+    if (!didChange || options.notify === false) return;
     if (collab.realtimeSession) {
         collab.realtimeSession.updatePresence();
     } else if (isCloudBoardActive() && collab.user) {
@@ -484,6 +512,16 @@ function getPointFieldAwarenessContainerId(fieldName) {
     return POINT_REALTIME_TEXT_FIELDS[fieldName]?.awarenessId || '';
 }
 
+function formatPointSelectionAwareness(entry = {}) {
+    const start = Number.isFinite(Number(entry?.activeTextSelectionStart)) ? Number(entry.activeTextSelectionStart) : null;
+    const end = Number.isFinite(Number(entry?.activeTextSelectionEnd)) ? Number(entry.activeTextSelectionEnd) : start;
+    if (start === null || end === null) return '';
+    if (end > start) {
+        return `selection ${start + 1}-${end}`;
+    }
+    return `curseur ${start + 1}`;
+}
+
 function getPointFieldAwarenessMessage(textKey) {
     if (!textKey) return '';
     const editors = collab.presence.filter((entry) =>
@@ -492,9 +530,12 @@ function getPointFieldAwarenessMessage(textKey) {
     );
     if (!editors.length) return '';
     const names = editors.slice(0, 2).map((entry) => entry.username).filter(Boolean);
-    if (!names.length) return 'Edition distante en cours';
-    if (names.length === 1) return `${names[0]} edite ce champ`;
-    return `${names.join(', ')} editent ce champ`;
+    const selectionHint = formatPointSelectionAwareness(editors[0]);
+    if (!names.length) return selectionHint ? `Edition distante en cours · ${selectionHint}` : 'Edition distante en cours';
+    if (names.length === 1) {
+        return selectionHint ? `${names[0]} edite ce champ · ${selectionHint}` : `${names[0]} edite ce champ`;
+    }
+    return selectionHint ? `${names.join(', ')} editent ce champ · ${selectionHint}` : `${names.join(', ')} editent ce champ`;
 }
 
 function syncPointRealtimeAwarenessDecorations(nodeId = state.selection) {
@@ -1393,6 +1434,17 @@ function buildPointPresencePayload(extra = {}) {
         activeNodeName: String(extra.activeNodeName || selected?.name || ''),
         activeTextKey: String(extra.activeTextKey || collab.activeTextKey || ''),
         activeTextLabel: String(extra.activeTextLabel || collab.activeTextLabel || ''),
+        activeTextSelectionStart: hasOwnField(extra, 'activeTextSelectionStart')
+            ? (typeof extra.activeTextSelectionStart === 'number' ? extra.activeTextSelectionStart : null)
+            : collab.activeTextSelectionStart,
+        activeTextSelectionEnd: hasOwnField(extra, 'activeTextSelectionEnd')
+            ? (typeof extra.activeTextSelectionEnd === 'number' ? extra.activeTextSelectionEnd : null)
+            : collab.activeTextSelectionEnd,
+        activeTextSelectionDirection: String(
+            extra.activeTextSelectionDirection
+            || collab.activeTextSelectionDirection
+            || 'none'
+        ),
         mode: String(extra.mode || (canEditCloudBoard() ? 'editing' : 'viewing')),
         cursorVisible,
         cursorWorldX,
@@ -1482,6 +1534,9 @@ function presenceListsEqual(left = [], right = []) {
             String(a.activeNodeName || '') !== String(b.activeNodeName || '') ||
             String(a.activeTextKey || '') !== String(b.activeTextKey || '') ||
             String(a.activeTextLabel || '') !== String(b.activeTextLabel || '') ||
+            Number(a.activeTextSelectionStart ?? -1) !== Number(b.activeTextSelectionStart ?? -1) ||
+            Number(a.activeTextSelectionEnd ?? -1) !== Number(b.activeTextSelectionEnd ?? -1) ||
+            String(a.activeTextSelectionDirection || 'none') !== String(b.activeTextSelectionDirection || 'none') ||
             String(a.mode || '') !== String(b.mode || '') ||
             Boolean(a.cursorVisible) !== Boolean(b.cursorVisible) ||
             Number(a.cursorWorldX || 0) !== Number(b.cursorWorldX || 0) ||
@@ -1508,6 +1563,9 @@ function updateCollabPresence(rawPresence = []) {
             activeNodeName: String(row?.activeNodeName || ''),
             activeTextKey: String(row?.activeTextKey || ''),
             activeTextLabel: String(row?.activeTextLabel || ''),
+            activeTextSelectionStart: typeof row?.activeTextSelectionStart === 'number' ? row.activeTextSelectionStart : null,
+            activeTextSelectionEnd: typeof row?.activeTextSelectionEnd === 'number' ? row.activeTextSelectionEnd : null,
+            activeTextSelectionDirection: String(row?.activeTextSelectionDirection || 'none'),
             mode: String(row?.mode || 'editing'),
             cursorVisible: cursor.cursorVisible,
             cursorWorldX: cursor.cursorWorldX,
@@ -1537,7 +1595,7 @@ function renderCloudPresenceChips(entries = [], options = {}) {
         const initials = String(entry.username || '?').slice(0, 2).toUpperCase();
         const label = entry.isSelf ? 'toi' : entry.username;
         const detail = entry.activeTextLabel
-            ? `${entry.activeNodeName ? `${entry.activeNodeName} · ` : ''}${entry.activeTextLabel}`
+            ? `${entry.activeNodeName ? `${entry.activeNodeName} · ` : ''}${entry.activeTextLabel}${formatPointSelectionAwareness(entry) ? ` · ${formatPointSelectionAwareness(entry)}` : ''}`
             : (entry.activeNodeName ? `Fiche ${entry.activeNodeName}` : (entry.mode === 'viewing' ? 'Lecture' : 'Edition'));
         return `
             <div class="cloud-presence-pill${entry.isSelf ? ' is-self' : ''}">
@@ -1758,6 +1816,19 @@ function ensurePointRealtimeTextBinding(nodeId, fieldName) {
             if (collab.activeTextKey === textKey) {
                 clearRealtimeFieldPresence({ notify: true });
             }
+        },
+        onSelectionChange: (meta = {}) => {
+            if (!meta.active) {
+                if (collab.activeTextKey === textKey) {
+                    setRealtimeFieldSelection(textKey, {
+                        selectionStart: null,
+                        selectionEnd: null,
+                        selectionDirection: 'none'
+                    });
+                }
+                return;
+            }
+            setRealtimeFieldSelection(textKey, meta);
         }
     });
 
@@ -1918,10 +1989,9 @@ async function startCollabRealtime() {
                 collab.realtimeSession = null;
             }
             stopCollabRealtimeText();
+            collab.realtimeFallbackActive = false;
             if (!meta.intentional && isCloudBoardActive()) {
-                collab.realtimeFallbackActive = true;
-                startCheckpointCloudTransport();
-                setCloudSyncState('session', 'Fallback checkpoint actif');
+                setCloudSyncState('error', meta?.reason || 'Temps reel indisponible');
             }
             if (state.selection) {
                 renderEditor();

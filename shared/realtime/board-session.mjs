@@ -9,6 +9,13 @@ function shortDebugId(value = '') {
     return `${text.slice(0, 8)}...${text.slice(-4)}`;
 }
 
+function makeClientInstanceId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return `cli_${crypto.randomUUID()}`;
+    }
+    return `cli_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function summarizeSnapshot(snapshot = {}) {
     if (snapshot && typeof snapshot === 'object' && Array.isArray(snapshot.nodes)) {
         const nodes = snapshot.nodes;
@@ -176,7 +183,95 @@ export async function createRealtimeBoardSession(options = {}) {
     let clientSeq = 0;
     let activeClient = null;
     let lastPresencePayload = buildPresence({});
+    const clientInstanceId = String(options.clientInstanceId || makeClientInstanceId()).trim();
+    const pendingLocalBatches = new Map();
     const textSubscriptions = new Set();
+
+    function makeOpBatchId(nextClientSeq) {
+        return `${clientInstanceId}:${Math.max(1, Number(nextClientSeq) || 1)}`;
+    }
+
+    function rememberPendingLocalBatch(opBatchId, payload = {}) {
+        const cleanBatchId = String(opBatchId || '').trim();
+        if (!cleanBatchId) return;
+        pendingLocalBatches.set(cleanBatchId, {
+            clientSeq: Number(payload.clientSeq || 0),
+            ops: Array.isArray(payload.ops) ? [...payload.ops] : [],
+            sentAt: Date.now()
+        });
+        while (pendingLocalBatches.size > 96) {
+            const oldestKey = pendingLocalBatches.keys().next().value;
+            if (!oldestKey) break;
+            pendingLocalBatches.delete(oldestKey);
+        }
+    }
+
+    function reconcileIncomingOps(ops = [], meta = {}, options = {}) {
+        const safeOps = Array.isArray(ops) ? ops : [];
+        if (!safeOps.length) {
+            return {
+                applied: false,
+                remoteApplied: false,
+                localAck: false
+            };
+        }
+
+        const opBatchId = String(meta?.opBatchId || '').trim();
+        const senderInstanceId = String(meta?.senderInstanceId || '').trim();
+        const isAcknowledgedLocalOps = Boolean(
+            (senderInstanceId && senderInstanceId === clientInstanceId)
+            || (Boolean(meta?.acknowledged) && opBatchId && pendingLocalBatches.has(opBatchId))
+        );
+
+        committedShadowSnapshot = applyOps(committedShadowSnapshot, safeOps);
+
+        if (isAcknowledgedLocalOps) {
+            if (opBatchId) {
+                pendingLocalBatches.delete(opBatchId);
+            }
+            writeDebug(debug, 'log', options.resume ? 'realtime-local-ops-resume' : 'realtime-local-ops-ack', {
+                page,
+                boardId: shortDebugId(boardId),
+                opCount: safeOps.length,
+                serverSeq: Number(meta?.serverSeq || 0),
+                clientSeq: Number(meta?.clientSeq || 0),
+                opBatchId
+            });
+            return {
+                applied: true,
+                remoteApplied: false,
+                localAck: true
+            };
+        }
+
+        if (flushTimer) {
+            clearFlushTimer();
+            flushLocalChanges().catch(() => {});
+        }
+
+        shadowSnapshot = applyOps(shadowSnapshot, safeOps);
+        if (!options.suppressApplySnapshot) {
+            applySnapshot(shadowSnapshot, {
+                remote: true,
+                replay: Boolean(options.resume),
+                ...(meta || {})
+            });
+        }
+        writeDebug(debug, 'log', options.resume ? 'realtime-replay-ops' : 'realtime-remote-ops', {
+            page,
+            boardId: shortDebugId(boardId),
+            opCount: safeOps.length,
+            serverSeq: Number(meta?.serverSeq || 0),
+            senderClientId: shortDebugId(meta?.senderClientId || ''),
+            senderInstanceId: shortDebugId(senderInstanceId),
+            opBatchId
+        });
+        return {
+            applied: true,
+            remoteApplied: true,
+            localAck: false
+        };
+    }
 
     function clearFlushTimer() {
         if (!flushTimer) return;
@@ -338,19 +433,29 @@ export async function createRealtimeBoardSession(options = {}) {
             return false;
         }
         clientSeq += 1;
+        const opBatchId = makeOpBatchId(clientSeq);
         writeDebug(debug, 'log', 'realtime-flush-send', {
             page,
             boardId: shortDebugId(boardId),
             clientSeq,
+            opBatchId,
             opCount: ops.length,
             summary: summarizeSnapshot(currentSnapshot)
         });
-        const sent = activeClient.sendOps(ops, { clientSeq });
+        const sent = activeClient.sendOps(ops, {
+            clientSeq,
+            opBatchId,
+            baseServerSeq: Number(activeClient?.serverSeq || 0),
+            clientInstanceId
+        });
         if (sent) {
+            rememberPendingLocalBatch(opBatchId, { clientSeq, ops });
             shadowSnapshot = applyOps(shadowSnapshot, ops);
             onLocalAccepted({
                 ops,
-                snapshot: shadowSnapshot
+                snapshot: shadowSnapshot,
+                opBatchId,
+                clientSeq
             });
         }
         return sent;
@@ -399,8 +504,58 @@ export async function createRealtimeBoardSession(options = {}) {
             boardId,
             page,
             token: tokenData.token,
+            clientInstanceId,
             onSnapshot: (snapshot, meta) => {
                 if (activeClient !== client) return;
+                if (meta?.resume && Array.isArray(meta?.replay)) {
+                    let hadRemoteReplay = false;
+                    meta.replay.forEach((batch) => {
+                        const replayMeta = {
+                            serverSeq: Number(batch?.serverSeq || meta?.serverSeq || 0),
+                            senderClientId: String(batch?.senderClientId || ''),
+                            senderInstanceId: String(batch?.senderInstanceId || ''),
+                            actor: batch?.actor || null,
+                            opBatchId: String(batch?.opBatchId || ''),
+                            clientSeq: Number(batch?.clientSeq || 0),
+                            acknowledged: Boolean(batch?.acknowledged)
+                        };
+                        const replayResult = reconcileIncomingOps(batch?.ops || [], replayMeta, {
+                            resume: true,
+                            suppressApplySnapshot: true
+                        });
+                        hadRemoteReplay = hadRemoteReplay || replayResult.remoteApplied;
+                    });
+                    writeDebug(debug, 'log', 'realtime-resume', {
+                        page,
+                        boardId: shortDebugId(boardId),
+                        replayCount: meta.replay.length,
+                        hadRemoteReplay,
+                        serverSeq: Number(meta?.serverSeq || 0)
+                    });
+                    if (hadRemoteReplay) {
+                        applySnapshot(shadowSnapshot, {
+                            remote: true,
+                            replay: true,
+                            ...(meta || {})
+                        });
+                    }
+                    if (Array.isArray(meta?.presence)) {
+                        onPresence(meta.presence);
+                    }
+                    const currentSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
+                    if (!valuesEqual(currentSnapshot, committedShadowSnapshot)) {
+                        scheduleLocalFlush(0);
+                    }
+                    reconnectAttempt = 0;
+                    onStatus('connected', options.reconnect ? 'Reconnected' : 'Connected');
+                    replayTextSubscriptions();
+                    if (lastPresencePayload && Object.keys(lastPresencePayload).length) {
+                        roomClientFacade.updatePresence(lastPresencePayload);
+                    }
+                    schedulePresenceHeartbeat(presenceHeartbeatMs);
+                    scheduleSnapshotRefresh(snapshotRefreshMs);
+                    return;
+                }
                 const incomingSnapshot = canonicalizeSnapshot(snapshot || {});
                 const currentSnapshot = canonicalizeSnapshot(getCurrentSnapshot());
                 const hadPendingLocalChanges = !valuesEqual(currentSnapshot, committedShadowSnapshot);
@@ -440,35 +595,7 @@ export async function createRealtimeBoardSession(options = {}) {
             },
             onRemoteOps: (ops, meta) => {
                 if (activeClient !== client) return;
-                const isAcknowledgedLocalOps = String(meta?.senderClientId || '') === String(client.clientId || '');
-                committedShadowSnapshot = applyOps(committedShadowSnapshot, ops || []);
-                if (isAcknowledgedLocalOps) {
-                    writeDebug(debug, 'log', 'realtime-local-ops-ack', {
-                        page,
-                        boardId: shortDebugId(boardId),
-                        opCount: Array.isArray(ops) ? ops.length : 0,
-                        serverSeq: Number(meta?.serverSeq || 0),
-                        clientSeq: Number(meta?.clientSeq || 0)
-                    });
-                    scheduleSnapshotRefresh(snapshotRefreshMs);
-                    return;
-                }
-                if (flushTimer) {
-                    clearFlushTimer();
-                    flushLocalChanges().catch(() => {});
-                }
-                shadowSnapshot = applyOps(shadowSnapshot, ops || []);
-                writeDebug(debug, 'log', 'realtime-remote-ops', {
-                    page,
-                    boardId: shortDebugId(boardId),
-                    opCount: Array.isArray(ops) ? ops.length : 0,
-                    serverSeq: Number(meta?.serverSeq || 0),
-                    senderClientId: shortDebugId(meta?.senderClientId || '')
-                });
-                applySnapshot(shadowSnapshot, {
-                    remote: true,
-                    ...(meta || {})
-                });
+                reconcileIncomingOps(ops, meta);
                 scheduleSnapshotRefresh(snapshotRefreshMs);
             },
             onPresence: (presence) => {
@@ -538,6 +665,9 @@ export async function createRealtimeBoardSession(options = {}) {
         roomClient: roomClientFacade,
         get shadowSnapshot() {
             return shadowSnapshot;
+        },
+        get clientInstanceId() {
+            return clientInstanceId;
         },
         isConnected() {
             return roomClientFacade.isConnected();

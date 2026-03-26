@@ -101,16 +101,17 @@ test('point realtime structural ops preserve text fields', async () => {
 
     const ops = diffPointOpsWithoutRealtimeText(previous, next);
     assert.equal(ops.length, 1);
-    assert.equal(ops[0].type, 'upsert_node');
-    assert.equal(ops[0].node.name, 'Alpha');
-    assert.equal(ops[0].node.description, 'keep me');
+    assert.equal(ops[0].type, 'patch_node');
+    assert.equal(ops[0].id, 'n1');
+    assert.deepStrictEqual(ops[0].changes, { x: 30, y: 40 });
 
     const rebuilt = applyPointOps(
         previous,
         preservePointRealtimeTextInOps(previous, [
             {
-                type: 'upsert_node',
-                node: { id: 'n1', name: '', type: 'person', x: 30, y: 40, num: '', description: '', notes: '' }
+                type: 'patch_node',
+                id: 'n1',
+                changes: { x: 30, y: 40, name: '', num: '', description: '', notes: '' }
             }
         ])
     );
@@ -211,24 +212,19 @@ test('map realtime structural ops preserve text fields', async () => {
 
     const ops = diffMapOpsWithoutRealtimeText(previous, next);
     assert.equal(ops.length, 1);
-    assert.equal(ops[0].type, 'upsert_group');
-    assert.equal(ops[0].group.name, 'Allies');
-    assert.equal(ops[0].group.points[0].name, 'Alpha');
-    assert.equal(ops[0].group.points[0].notes, 'keep');
+    assert.equal(ops[0].type, 'patch_point');
+    assert.equal(ops[0].groupId, 'g1');
+    assert.equal(ops[0].pointId, 'p1');
+    assert.deepStrictEqual(ops[0].changes, { x: 15, y: 25 });
 
     const rebuilt = applyMapOps(
         previous,
         preserveMapRealtimeTextInOps(previous, [
             {
-                type: 'upsert_group',
-                group: {
-                    id: 'g1',
-                    name: '',
-                    color: '#73fbf7',
-                    visible: true,
-                    points: [{ id: 'p1', name: '', x: 15, y: 25, type: '', iconType: 'DEFAULT', notes: '', status: 'ACTIVE' }],
-                    zones: []
-                }
+                type: 'patch_point',
+                groupId: 'g1',
+                pointId: 'p1',
+                changes: { x: 15, y: 25, name: '', type: '', notes: '' }
             }
         ])
     );

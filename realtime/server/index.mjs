@@ -8,7 +8,12 @@ import * as Y from 'yjs';
 import collabLib from '../../netlify/lib/collab.js';
 import { runRuntimeMaintenance } from '../../shared/ops/runtime-maintenance.mjs';
 import { runRealtimeDatabaseBackup } from '../../shared/ops/runtime-backup.mjs';
-import { buildRealtimeEventsPath } from '../../shared/ops/realtime-runtime.mjs';
+import {
+    buildRealtimeEventsPath,
+    buildRealtimeJournalPath,
+    formatRealtimeSeqKey,
+    parseRealtimeSeqKey
+} from '../../shared/ops/realtime-runtime.mjs';
 import { canonicalizePointPayload, applyPointOps, preservePointRealtimeTextInOps } from '../../shared/realtime/point-doc.mjs';
 import { canonicalizeMapPayload, applyMapOps, preserveMapRealtimeTextInOps } from '../../shared/realtime/map-doc.mjs';
 import {
@@ -71,6 +76,8 @@ const ROOM_IDLE_TTL_MS = 120000;
 const PERSIST_DEBOUNCE_MS = 450;
 const BACKPLANE_EVENT_GRACE_MS = 2000;
 const BACKPLANE_EVENT_SCAN_LIMIT = 200;
+const JOURNAL_REPLAY_LIMIT = 96;
+const LEDGER_BATCH_LIMIT = 64;
 const SERVER_ID = `srv_${crypto.randomUUID()}`;
 const database = getFirebaseDatabase();
 
@@ -139,6 +146,13 @@ function readPresenceFlag(value, fallback = false) {
     return Boolean(value);
 }
 
+function readSelectionPosition(value, fallback = null) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(0, Math.floor(parsed));
+}
+
 function timeValue(value) {
     const parsed = Date.parse(String(value || ''));
     return Number.isFinite(parsed) ? parsed : 0;
@@ -162,6 +176,122 @@ function eventsRef(boardId) {
     return database.ref(buildRealtimeEventsPath(boardId));
 }
 
+function journalRef(boardId) {
+    return database.ref(buildRealtimeJournalPath(boardId));
+}
+
+function makeReceiptId(clientInstanceId = '', opBatchId = '') {
+    const cleanInstanceId = String(clientInstanceId || '').trim();
+    const cleanBatchId = String(opBatchId || '').trim();
+    if (!cleanInstanceId || !cleanBatchId) return '';
+    return `${cleanInstanceId}:${cleanBatchId}`;
+}
+
+function normalizeJournalBatch(rawValue = {}) {
+    const row = unwrapBlobValue(rawValue) || (rawValue && typeof rawValue === 'object' ? rawValue : null);
+    if (!row || typeof row !== 'object') return null;
+    const serverSeq = normalizeServerSeq(row.serverSeq, 0);
+    const ops = Array.isArray(row.ops) ? cloneJson(row.ops, row.ops) : [];
+    if (!serverSeq || !ops.length) return null;
+    const senderInstanceId = String(row.senderInstanceId || '').trim();
+    const opBatchId = String(row.opBatchId || '').trim();
+    return {
+        boardId: String(row.boardId || ''),
+        page: String(row.page || ''),
+        serverSeq,
+        clientSeq: Number(row.clientSeq || 0),
+        senderClientId: String(row.senderClientId || ''),
+        senderInstanceId,
+        opBatchId,
+        receiptId: makeReceiptId(senderInstanceId, opBatchId),
+        actor: row.actor && typeof row.actor === 'object'
+            ? {
+                userId: String(row.actor.userId || ''),
+                username: String(row.actor.username || '')
+            }
+            : null,
+        at: String(row.at || row.createdAt || ''),
+        createdAt: String(row.createdAt || row.at || ''),
+        createdMs: Number(row.createdMs || 0) || 0,
+        acknowledged: Boolean(row.acknowledged),
+        ops
+    };
+}
+
+function normalizeRealtimeLedger(rawValue = null) {
+    const raw = rawValue && typeof rawValue === 'object' ? rawValue : {};
+    const batches = (Array.isArray(raw.batches) ? raw.batches : [])
+        .map((entry) => normalizeJournalBatch(entry))
+        .filter(Boolean)
+        .sort((left, right) => Number(left.serverSeq || 0) - Number(right.serverSeq || 0))
+        .slice(-LEDGER_BATCH_LIMIT);
+    return { batches };
+}
+
+function findLedgerBatch(board, clientInstanceId = '', opBatchId = '') {
+    const receiptId = makeReceiptId(clientInstanceId, opBatchId);
+    if (!receiptId) return null;
+    const ledger = normalizeRealtimeLedger(board?.realtimeLedger);
+    return ledger.batches.find((entry) => String(entry.receiptId || '') === receiptId) || null;
+}
+
+function rememberLedgerBatch(board, batch) {
+    const normalizedBatch = normalizeJournalBatch(batch);
+    if (!board || !normalizedBatch) return normalizedBatch;
+    const ledger = normalizeRealtimeLedger(board.realtimeLedger);
+    const filtered = ledger.batches.filter((entry) =>
+        String(entry.receiptId || '') !== String(normalizedBatch.receiptId || '')
+        && Number(entry.serverSeq || 0) !== Number(normalizedBatch.serverSeq || 0)
+    );
+    filtered.push(normalizedBatch);
+    filtered.sort((left, right) => Number(left.serverSeq || 0) - Number(right.serverSeq || 0));
+    board.realtimeLedger = {
+        batches: filtered.slice(-LEDGER_BATCH_LIMIT)
+    };
+    return normalizedBatch;
+}
+
+async function writeJournalBatch(boardId, batch) {
+    const normalizedBatch = normalizeJournalBatch({
+        ...cloneJson(batch, batch),
+        boardId
+    });
+    if (!normalizedBatch) return false;
+    await journalRef(boardId).child(formatRealtimeSeqKey(normalizedBatch.serverSeq)).set({
+        ...cloneJson(normalizedBatch, normalizedBatch),
+        createdAt: normalizedBatch.createdAt || normalizedBatch.at || nowIso(),
+        createdMs: Number(normalizedBatch.createdMs || Date.now())
+    });
+    return true;
+}
+
+async function loadJournalReplay(boardId, fromSeq, toSeq, maxItems = JOURNAL_REPLAY_LIMIT) {
+    const startSeq = normalizeServerSeq(fromSeq, 0);
+    const endSeq = normalizeServerSeq(toSeq, 0);
+    if (!boardId || !startSeq || !endSeq || endSeq < startSeq) {
+        return [];
+    }
+    const snapshot = await journalRef(boardId)
+        .orderByKey()
+        .startAt(formatRealtimeSeqKey(startSeq))
+        .endAt(formatRealtimeSeqKey(endSeq))
+        .limitToFirst(Math.max(1, Number(maxItems) || JOURNAL_REPLAY_LIMIT))
+        .get()
+        .catch(() => null);
+    if (!snapshot?.exists()) return [];
+
+    const entries = [];
+    Object.entries(snapshot.val() || {}).forEach(([seqKey, row]) => {
+        const normalized = normalizeJournalBatch({
+            ...(row && typeof row === 'object' ? row : {}),
+            serverSeq: parseRealtimeSeqKey(seqKey) || row?.serverSeq
+        });
+        if (normalized) entries.push(normalized);
+    });
+    entries.sort((left, right) => Number(left.serverSeq || 0) - Number(right.serverSeq || 0));
+    return entries;
+}
+
 function normalizePresenceRow(rawValue, fallbackBoardId = '') {
     const row = unwrapBlobValue(rawValue);
     if (!row || typeof row !== 'object' || !row.userId) return null;
@@ -175,6 +305,9 @@ function normalizePresenceRow(rawValue, fallbackBoardId = '') {
         activeNodeName: String(row.activeNodeName || row.activeLabel || ''),
         activeTextKey: String(row.activeTextKey || ''),
         activeTextLabel: String(row.activeTextLabel || ''),
+        activeTextSelectionStart: readSelectionPosition(row.activeTextSelectionStart, null),
+        activeTextSelectionEnd: readSelectionPosition(row.activeTextSelectionEnd, null),
+        activeTextSelectionDirection: String(row.activeTextSelectionDirection || 'none'),
         mode: String(row.mode || 'editing'),
         cursorVisible,
         cursorWorldX: cursorVisible ? clampPresenceNumber(row.cursorWorldX, 0, -250000, 250000) : 0,
@@ -312,15 +445,95 @@ class BoardRoom {
             options.initial ? REALTIME_MSG_HELLO_ACK : REALTIME_MSG_SNAPSHOT,
             {
                 clientId: clientState.clientId,
+                clientInstanceId: clientState.clientInstanceId,
                 boardId: this.boardId,
                 page: this.page,
                 serverSeq: this.serverSeq,
-                snapshot: this.snapshot,
+                snapshot: options.resume ? null : this.snapshot,
                 role: clientState.role,
                 presence: this.listPresence(),
+                ...(options.resume ? {
+                    resume: true,
+                    replay: Array.isArray(options.replay) ? options.replay.map((entry) => cloneJson(entry, entry)) : []
+                } : {}),
                 ...(options.reason ? { reason: String(options.reason || '') } : {})
             }
         );
+    }
+
+    async buildInitialSyncOptions(clientState, handshake = {}) {
+        const requestedServerSeq = normalizeServerSeq(handshake.lastServerSeq, 0);
+        if (requestedServerSeq > 0 && requestedServerSeq < this.serverSeq) {
+            const replay = await loadJournalReplay(
+                this.boardId,
+                requestedServerSeq + 1,
+                this.serverSeq,
+                JOURNAL_REPLAY_LIMIT
+            );
+            const expectedLength = (this.serverSeq - requestedServerSeq);
+            const sequentialReplay = replay.length === expectedLength
+                && replay.every((entry, index) => Number(entry.serverSeq || 0) === (requestedServerSeq + index + 1));
+            if (sequentialReplay && replay.length > 0 && replay.length <= JOURNAL_REPLAY_LIMIT) {
+                return {
+                    initial: true,
+                    resume: true,
+                    replay
+                };
+            }
+        }
+        return {
+            initial: true,
+            reason: 'handshake'
+        };
+    }
+
+    applyJournalBatch(batch, options = {}) {
+        const normalizedBatch = normalizeJournalBatch(batch);
+        if (!normalizedBatch) return false;
+        if (normalizedBatch.serverSeq <= this.serverSeq) return false;
+        if (normalizedBatch.serverSeq !== this.serverSeq + 1) return false;
+
+        this.snapshot = applyBoardOps(this.page, this.snapshot, normalizedBatch.ops);
+        this.serverSeq = normalizedBatch.serverSeq;
+        this.lastEditedBy = {
+            userId: String(normalizedBatch.actor?.userId || this.lastEditedBy.userId || ''),
+            username: String(normalizedBatch.actor?.username || this.lastEditedBy.username || ''),
+            at: String(normalizedBatch.at || nowIso())
+        };
+        this.syncTextDocsFromSnapshot({
+            userId: this.lastEditedBy.userId,
+            username: this.lastEditedBy.username,
+            backplane: true
+        });
+
+        if (options.broadcast !== false) {
+            this.broadcast(REALTIME_MSG_OPS, {
+                boardId: this.boardId,
+                page: this.page,
+                serverSeq: this.serverSeq,
+                senderClientId: normalizedBatch.senderClientId,
+                senderInstanceId: normalizedBatch.senderInstanceId,
+                actor: normalizedBatch.actor || null,
+                opBatchId: normalizedBatch.opBatchId,
+                clientSeq: normalizedBatch.clientSeq,
+                ops: normalizedBatch.ops
+            });
+        }
+        return true;
+    }
+
+    async replayJournalRange(fromSeq, toSeq) {
+        const replay = await loadJournalReplay(this.boardId, fromSeq, toSeq, JOURNAL_REPLAY_LIMIT);
+        if (!replay.length) return false;
+        let applied = 0;
+        for (const batch of replay) {
+            const didApply = this.applyJournalBatch(batch, { broadcast: true });
+            if (!didApply) {
+                return false;
+            }
+            applied += 1;
+        }
+        return applied > 0 && this.serverSeq >= normalizeServerSeq(toSeq, 0);
     }
 
     async ensureBackplane() {
@@ -364,11 +577,11 @@ class BoardRoom {
 
         const eventType = String(event.type || '').trim();
         if (eventType === REALTIME_MSG_OPS) {
-            const safeOps = Array.isArray(event.ops) ? event.ops : [];
-            if (!safeOps.length) return;
             const targetSeq = normalizeServerSeq(event.serverSeq, this.serverSeq);
             if (targetSeq <= this.serverSeq) return;
             if (targetSeq !== this.serverSeq + 1) {
+                const replayed = await this.replayJournalRange(this.serverSeq + 1, targetSeq);
+                if (replayed) return;
                 await this.refreshFromBoard();
                 this.broadcast(REALTIME_MSG_SNAPSHOT, {
                     boardId: this.boardId,
@@ -381,25 +594,19 @@ class BoardRoom {
                 return;
             }
 
-            this.snapshot = applyBoardOps(this.page, this.snapshot, safeOps);
-            this.serverSeq = targetSeq;
-            this.lastEditedBy = {
-                userId: String(event.actor?.userId || this.lastEditedBy.userId || ''),
-                username: String(event.actor?.username || this.lastEditedBy.username || ''),
-                at: String(event.at || nowIso())
-            };
-            this.syncTextDocsFromSnapshot({
-                userId: this.lastEditedBy.userId,
-                username: this.lastEditedBy.username,
-                backplane: true
-            });
-            this.broadcast(REALTIME_MSG_OPS, {
+            this.applyJournalBatch({
                 boardId: this.boardId,
                 page: this.page,
-                serverSeq: this.serverSeq,
+                serverSeq: targetSeq,
                 senderClientId: String(event.senderClientId || ''),
+                senderInstanceId: String(event.senderInstanceId || ''),
                 actor: event.actor || null,
-                ops: safeOps
+                opBatchId: String(event.opBatchId || ''),
+                clientSeq: Number(event.clientSeq || 0),
+                at: String(event.at || nowIso()),
+                ops: Array.isArray(event.ops) ? event.ops : []
+            }, {
+                broadcast: true
             });
             return;
         }
@@ -446,6 +653,9 @@ class BoardRoom {
             activeNodeName: String(presence.activeNodeName || presence.activeLabel || '').slice(0, 80),
             activeTextKey: String(presence.activeTextKey || ''),
             activeTextLabel: String(presence.activeTextLabel || '').slice(0, 80),
+            activeTextSelectionStart: readSelectionPosition(presence.activeTextSelectionStart, null),
+            activeTextSelectionEnd: readSelectionPosition(presence.activeTextSelectionEnd, null),
+            activeTextSelectionDirection: String(presence.activeTextSelectionDirection || 'none'),
             mode: String(presence.mode || (canEditBoard(clientState.role) ? 'editing' : 'viewing')),
             cursorVisible,
             cursorWorldX: cursorVisible ? clampPresenceNumber(presence.cursorWorldX, 0, -250000, 250000) : 0,
@@ -468,10 +678,11 @@ class BoardRoom {
         ).catch(() => {});
     }
 
-    async attachClient(socket, user, role) {
+    async attachClient(socket, user, role, handshake = {}) {
         await this.ensureBackplane();
         const clientState = {
             clientId: makeClientId(),
+            clientInstanceId: String(handshake.clientInstanceId || makeClientId()).trim(),
             socket,
             userId: String(user.id || ''),
             username: String(user.username || ''),
@@ -480,7 +691,8 @@ class BoardRoom {
         };
         this.clients.set(clientState.clientId, clientState);
         await this.persistPresenceEntry(clientState, {});
-        this.sendSnapshot(clientState, { initial: true, reason: 'handshake' });
+        const initialSync = await this.buildInitialSyncOptions(clientState, handshake);
+        this.sendSnapshot(clientState, initialSync);
         this.broadcast(REALTIME_MSG_PRESENCE, { presence: this.listPresence() });
         return clientState;
     }
@@ -875,9 +1087,13 @@ class BoardRoom {
         const requestedOps = Array.isArray(ops) ? ops.slice(0, 200) : [];
         if (!requestedOps.length) return false;
 
+        const senderInstanceId = String(metadata?.clientInstanceId || clientState.clientInstanceId || '').trim();
+        const opBatchId = String(metadata?.opBatchId || '').trim();
         let blockedError = null;
         let appliedOps = [];
         let deltaSummary = 'modification';
+        let duplicateBatch = null;
+        let appliedBatch = null;
         const result = await this.transactBoard((board) => {
             if (!board) {
                 blockedError = { status: 404, message: 'Board introuvable.' };
@@ -891,6 +1107,12 @@ class BoardRoom {
             if (String(board.page || REALTIME_PAGE_POINT) !== this.page) {
                 blockedError = { status: 400, message: 'Page realtime invalide.' };
                 return undefined;
+            }
+            if (senderInstanceId && opBatchId) {
+                duplicateBatch = findLedgerBatch(board, senderInstanceId, opBatchId);
+                if (duplicateBatch) {
+                    return undefined;
+                }
             }
 
             const previousSnapshot = canonicalizeBoardData(this.page, board.data || {});
@@ -907,9 +1129,10 @@ class BoardRoom {
             }
 
             const updatedAt = nowIso();
+            const nextServerSeq = normalizeServerSeq(board.realtimeSeq, this.serverSeq) + 1;
             board.data = cloneJson(nextSnapshot, nextSnapshot);
             board.updatedAt = updatedAt;
-            board.realtimeSeq = normalizeServerSeq(board.realtimeSeq, this.serverSeq) + 1;
+            board.realtimeSeq = nextServerSeq;
             board.lastEditedBy = {
                 userId: clientState.userId,
                 username: clientState.username,
@@ -922,6 +1145,23 @@ class BoardRoom {
                 appendBoardActivity(board, { id: clientState.userId, username: clientState.username }, 'save', `a modifie le board (${deltaSummary})`);
             }
             appliedOps = safeOps;
+            appliedBatch = rememberLedgerBatch(board, {
+                boardId: this.boardId,
+                page: this.page,
+                serverSeq: nextServerSeq,
+                clientSeq: Number(metadata?.clientSeq || 0),
+                senderClientId: clientState.clientId,
+                senderInstanceId,
+                opBatchId,
+                actor: {
+                    userId: clientState.userId,
+                    username: clientState.username
+                },
+                at: updatedAt,
+                createdAt: updatedAt,
+                createdMs: Date.now(),
+                ops: safeOps
+            });
             return board;
         });
 
@@ -929,6 +1169,28 @@ class BoardRoom {
             await this.revokeClient(clientState);
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: blockedError.message || 'Acces refuse.' });
             return false;
+        }
+        if (duplicateBatch) {
+            if (normalizeServerSeq(duplicateBatch.serverSeq, 0) > this.serverSeq) {
+                const replayed = await this.replayJournalRange(this.serverSeq + 1, duplicateBatch.serverSeq).catch(() => false);
+                if (!replayed) {
+                    await this.refreshFromBoard();
+                }
+            }
+            this.sendToClient(clientState, REALTIME_MSG_OPS_ACK, {
+                boardId: this.boardId,
+                page: this.page,
+                serverSeq: Number(duplicateBatch.serverSeq || this.serverSeq),
+                clientSeq: Number(duplicateBatch.clientSeq || metadata?.clientSeq || 0),
+                opBatchId: String(duplicateBatch.opBatchId || opBatchId || ''),
+                senderInstanceId: String(duplicateBatch.senderInstanceId || senderInstanceId || ''),
+                actor: duplicateBatch.actor || {
+                    userId: clientState.userId,
+                    username: clientState.username
+                },
+                ops: Array.isArray(duplicateBatch.ops) ? duplicateBatch.ops : []
+            });
+            return true;
         }
         if (!result.committed || !result.board || !appliedOps.length) {
             return false;
@@ -966,6 +1228,8 @@ class BoardRoom {
             page: this.page,
             serverSeq: this.serverSeq,
             clientSeq: Number(metadata?.clientSeq || 0),
+            opBatchId,
+            senderInstanceId,
             actor: {
                 userId: clientState.userId,
                 username: clientState.username
@@ -977,6 +1241,9 @@ class BoardRoom {
             page: this.page,
             serverSeq: this.serverSeq,
             senderClientId: clientState.clientId,
+            senderInstanceId,
+            opBatchId,
+            clientSeq: Number(metadata?.clientSeq || 0),
             actor: {
                 userId: clientState.userId,
                 username: clientState.username
@@ -985,10 +1252,18 @@ class BoardRoom {
         }, {
             exceptClientId: clientState.clientId
         });
+        if (appliedBatch) {
+            await writeJournalBatch(this.boardId, appliedBatch).catch((error) => {
+                console.error('[realtime] journal write failed', this.boardId, error);
+            });
+        }
         await publishRealtimeEvent(this.boardId, {
             type: REALTIME_MSG_OPS,
             serverSeq: this.serverSeq,
             senderClientId: clientState.clientId,
+            senderInstanceId,
+            opBatchId,
+            clientSeq: Number(metadata?.clientSeq || 0),
             actor: {
                 userId: clientState.userId,
                 username: clientState.username
@@ -1161,6 +1436,7 @@ async function handleAdminRoute(request, response, targetUrl) {
             sessionMaxIdleMs: process.env.BNI_SESSION_MAX_IDLE_MS,
             exportRetentionDays: process.env.BNI_EXPORT_RETENTION_DAYS,
             realtimeEventRetentionMs: process.env.BNI_REALTIME_EVENT_RETENTION_MS,
+            realtimeJournalRetentionMs: process.env.BNI_REALTIME_JOURNAL_RETENTION_MS,
         });
         sendJsonResponse(response, 200, {
             ok: true,
@@ -1308,7 +1584,10 @@ wss.on('connection', (socket) => {
                 }
 
                 room = await getOrCreateRoom(access.board);
-                clientState = await room.attachClient(socket, { id: userId, username }, access.role);
+                clientState = await room.attachClient(socket, { id: userId, username }, access.role, {
+                    clientInstanceId: String(message.clientInstanceId || '').trim(),
+                    lastServerSeq: Number(message.lastServerSeq || 0)
+                });
             } catch (error) {
                 socket.send(JSON.stringify({ type: REALTIME_MSG_ERROR, message: error.message || 'Handshake realtime echoue.' }));
                 socket.close(4001, 'auth-failed');

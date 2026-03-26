@@ -23,6 +23,7 @@ export class RealtimeRoomClient {
         this.page = String(options.page || '').trim();
         this.token = String(options.token || '').trim();
         this.url = String(options.url || '').trim();
+        this.clientInstanceId = String(options.clientInstanceId || '').trim();
         this.onSnapshot = typeof options.onSnapshot === 'function' ? options.onSnapshot : () => {};
         this.onRemoteOps = typeof options.onRemoteOps === 'function' ? options.onRemoteOps : () => {};
         this.onPresence = typeof options.onPresence === 'function' ? options.onPresence : () => {};
@@ -80,7 +81,8 @@ export class RealtimeRoomClient {
                 token: this.token,
                 boardId: this.boardId,
                 page: this.page,
-                lastServerSeq: this.serverSeq
+                lastServerSeq: this.serverSeq,
+                clientInstanceId: this.clientInstanceId
             }));
         });
 
@@ -101,7 +103,10 @@ export class RealtimeRoomClient {
                 this.onSnapshot(message.snapshot || null, {
                     serverSeq: this.serverSeq,
                     role: String(message.role || ''),
-                    initial: true
+                    initial: true,
+                    resume: Boolean(message.resume),
+                    replay: Array.isArray(message.replay) ? message.replay : [],
+                    clientInstanceId: String(message.clientInstanceId || this.clientInstanceId || '')
                 });
                 this.onPresence(Array.isArray(message.presence) ? message.presence : []);
                 this.flushPendingMessages();
@@ -128,7 +133,10 @@ export class RealtimeRoomClient {
                 this.onRemoteOps(Array.isArray(message.ops) ? message.ops : [], {
                     serverSeq: this.serverSeq,
                     senderClientId: String(message.senderClientId || ''),
-                    actor: message.actor || null
+                    senderInstanceId: String(message.senderInstanceId || ''),
+                    actor: message.actor || null,
+                    opBatchId: String(message.opBatchId || ''),
+                    clientSeq: Number(message.clientSeq || 0)
                 });
                 return;
             }
@@ -138,9 +146,11 @@ export class RealtimeRoomClient {
                 this.onRemoteOps(Array.isArray(message.ops) ? message.ops : [], {
                     serverSeq: this.serverSeq,
                     senderClientId: this.clientId,
+                    senderInstanceId: String(message.senderInstanceId || this.clientInstanceId || ''),
                     actor: message.actor || null,
                     acknowledged: true,
-                    clientSeq: Number(message.clientSeq || 0)
+                    clientSeq: Number(message.clientSeq || 0),
+                    opBatchId: String(message.opBatchId || '')
                 });
                 return;
             }
@@ -201,7 +211,10 @@ export class RealtimeRoomClient {
         if (!Array.isArray(ops) || !ops.length) return false;
         return this.send(makeRealtimeEnvelope(REALTIME_MSG_OPS, {
             ops,
-            clientSeq: Number(metadata.clientSeq || 0)
+            clientSeq: Number(metadata.clientSeq || 0),
+            opBatchId: String(metadata.opBatchId || '').trim(),
+            baseServerSeq: Number(metadata.baseServerSeq || this.serverSeq || 0),
+            clientInstanceId: String(metadata.clientInstanceId || this.clientInstanceId || '').trim()
         }));
     }
 

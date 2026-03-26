@@ -5,7 +5,7 @@ const { getStore } = require('../../netlify/lib/blob-store.js');
 const { MAX_SCAN_FILES, parseKey, rebuildIndex } = require('../../netlify/lib/db-index.js');
 const { __test: collabTest } = require('../../netlify/lib/collab.js');
 const { getFirebaseDatabase } = require('../../netlify/lib/firebase-admin.js');
-import { buildRealtimeRuntimePath } from './realtime-runtime.mjs';
+import { buildRealtimeRuntimePath, buildRealtimeJournalPath } from './realtime-runtime.mjs';
 
 const COLLAB_STORE_NAME = 'bni-linked-collab';
 const DB_STORE_NAME = 'bni-linked-db';
@@ -13,6 +13,7 @@ const DEFAULT_PRESENCE_TTL_MS = 2 * 60 * 1000;
 const DEFAULT_EXPORT_RETENTION_DAYS = 45;
 const DEFAULT_SCAN_LIMIT = MAX_SCAN_FILES;
 const DEFAULT_REALTIME_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_REALTIME_JOURNAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_SESSION_MAX_IDLE_MS = Math.max(
     60 * 1000,
     Number(collabTest?.SESSION_MAX_IDLE_MS || 30 * 24 * 60 * 60 * 1000) || (30 * 24 * 60 * 60 * 1000)
@@ -203,6 +204,54 @@ async function purgeRealtimeEvents(database, nowMs, options = {}) {
     };
 }
 
+async function purgeRealtimeJournal(database, nowMs, options = {}) {
+    const retentionMs = readNumber(
+        options.realtimeJournalRetentionMs,
+        DEFAULT_REALTIME_JOURNAL_RETENTION_MS,
+        60 * 60 * 1000
+    );
+    const rootRef = database.ref(buildRealtimeRuntimePath('journal'));
+    const snapshot = await rootRef.get().catch(() => null);
+    if (!snapshot?.exists()) {
+        return {
+            retentionMs,
+            scanned: 0,
+            deleted: 0,
+            deletedKeys: []
+        };
+    }
+
+    const payload = snapshot.val();
+    const deletedKeys = [];
+    let scanned = 0;
+    const removals = [];
+
+    Object.entries(payload && typeof payload === 'object' ? payload : {}).forEach(([boardId, rows]) => {
+        Object.entries(rows && typeof rows === 'object' ? rows : {}).forEach(([seqKey, row]) => {
+            scanned += 1;
+            const createdMs = Math.max(
+                readNumber(row?.createdMs, 0, 0),
+                readTimeValue(row?.createdAt)
+            );
+            if (!createdMs || !isExpired(createdMs, retentionMs, nowMs)) return;
+            const journalPath = buildRealtimeJournalPath(boardId, seqKey);
+            deletedKeys.push(journalPath);
+            removals.push(database.ref(journalPath).remove().catch(() => {}));
+        });
+    });
+
+    if (removals.length > 0) {
+        await Promise.all(removals);
+    }
+
+    return {
+        retentionMs,
+        scanned,
+        deleted: deletedKeys.length,
+        deletedKeys
+    };
+}
+
 export async function runRuntimeMaintenance(options = {}) {
     const nowMs = readNumber(options.nowMs, Date.now(), 1);
     const collabStore = options.collabStore || getStore(COLLAB_STORE_NAME);
@@ -210,11 +259,12 @@ export async function runRuntimeMaintenance(options = {}) {
     const database = options.database || getFirebaseDatabase();
     const startedAt = new Date(nowMs).toISOString();
 
-    const [presence, sessions, exports, realtimeEvents] = await Promise.all([
+    const [presence, sessions, exports, realtimeEvents, realtimeJournal] = await Promise.all([
         purgePresence(collabStore, nowMs, options),
         purgeSessions(collabStore, nowMs, options),
         purgeExports(dbStore, nowMs, options),
         purgeRealtimeEvents(database, nowMs, options),
+        purgeRealtimeJournal(database, nowMs, options),
     ]);
 
     const finishedAt = new Date().toISOString();
@@ -227,5 +277,6 @@ export async function runRuntimeMaintenance(options = {}) {
         sessions,
         exports,
         realtimeEvents,
+        realtimeJournal,
     };
 }

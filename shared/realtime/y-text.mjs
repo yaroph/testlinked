@@ -172,6 +172,7 @@ export function createTextFieldYBinding(options = {}) {
     const onValueChange = typeof options.onValueChange === 'function' ? options.onValueChange : () => {};
     const canEdit = typeof options.canEdit === 'function' ? options.canEdit : () => true;
     const onFocusChange = typeof options.onFocusChange === 'function' ? options.onFocusChange : () => {};
+    const onSelectionChange = typeof options.onSelectionChange === 'function' ? options.onSelectionChange : () => {};
     const initialValue = String(options.initialValue || '');
     const { doc, text } = createYTextDoc(initialValue);
 
@@ -209,6 +210,29 @@ export function createTextFieldYBinding(options = {}) {
         onValueChange(nextValue, { origin });
     };
 
+    const emitSelectionChange = (field, options = {}) => {
+        if (!field) {
+            onSelectionChange({
+                key,
+                active: false,
+                selectionStart: null,
+                selectionEnd: null,
+                selectionDirection: 'none'
+            });
+            return;
+        }
+        const isActive = options.active !== false;
+        const selectionStart = typeof field.selectionStart === 'number' ? field.selectionStart : null;
+        const selectionEnd = typeof field.selectionEnd === 'number' ? field.selectionEnd : selectionStart;
+        onSelectionChange({
+            key,
+            active: isActive,
+            selectionStart,
+            selectionEnd,
+            selectionDirection: typeof field.selectionDirection === 'string' ? field.selectionDirection : 'none'
+        });
+    };
+
     doc.on('update', (update, origin) => {
         if (origin === 'remote-text-update' || origin === 'remote-text-state') {
             handleTextChange('remote');
@@ -237,6 +261,7 @@ export function createTextFieldYBinding(options = {}) {
             doc.transact(() => {
                 replaceYTextContent(text, field.value);
             }, 'local-text-input');
+            emitSelectionChange(field, { active: true });
         };
 
         const onFocus = () => {
@@ -244,6 +269,7 @@ export function createTextFieldYBinding(options = {}) {
                 key,
                 active: true
             });
+            emitSelectionChange(field, { active: true });
         };
 
         const onBlur = () => {
@@ -251,15 +277,26 @@ export function createTextFieldYBinding(options = {}) {
                 key,
                 active: false
             });
+            emitSelectionChange(field, { active: false });
+        };
+
+        const onSelectionEvent = () => {
+            emitSelectionChange(field, { active: document.activeElement === field });
         };
 
         field.addEventListener('input', onInput);
         field.addEventListener('focus', onFocus);
         field.addEventListener('blur', onBlur);
+        field.addEventListener('select', onSelectionEvent);
+        field.addEventListener('keyup', onSelectionEvent);
+        field.addEventListener('mouseup', onSelectionEvent);
         detachFieldListener = () => {
             field.removeEventListener('input', onInput);
             field.removeEventListener('focus', onFocus);
             field.removeEventListener('blur', onBlur);
+            field.removeEventListener('select', onSelectionEvent);
+            field.removeEventListener('keyup', onSelectionEvent);
+            field.removeEventListener('mouseup', onSelectionEvent);
             if (activeField === field) {
                 activeField = null;
             }
@@ -280,6 +317,7 @@ export function createTextFieldYBinding(options = {}) {
                     key,
                     active: false
                 });
+                emitSelectionChange(activeField, { active: false });
             }
             if (detachFieldListener) detachFieldListener();
         },

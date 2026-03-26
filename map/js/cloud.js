@@ -97,6 +97,9 @@ const collab = {
     realtimeTextBindings: new Map(),
     activeTextKey: '',
     activeTextLabel: '',
+    activeTextSelectionStart: null,
+    activeTextSelectionEnd: null,
+    activeTextSelectionDirection: 'none',
     suppressAutosave: 0,
     cursorVisible: false,
     cursorMapX: 50,
@@ -376,6 +379,9 @@ function clearMapRealtimeFieldPresence(options = {}) {
     const hadPresence = Boolean(collab.activeTextKey || collab.activeTextLabel);
     collab.activeTextKey = '';
     collab.activeTextLabel = '';
+    collab.activeTextSelectionStart = null;
+    collab.activeTextSelectionEnd = null;
+    collab.activeTextSelectionDirection = 'none';
     if (shouldNotify) {
         updateMapCloudPresence().catch(() => {});
     } else if (hadPresence) {
@@ -389,6 +395,24 @@ function setMapRealtimeFieldPresence(textKey, textLabel) {
     if (collab.activeTextKey === nextKey && collab.activeTextLabel === nextLabel) return;
     collab.activeTextKey = nextKey;
     collab.activeTextLabel = nextLabel;
+    collab.activeTextSelectionStart = null;
+    collab.activeTextSelectionEnd = null;
+    collab.activeTextSelectionDirection = 'none';
+    updateMapCloudPresence().catch(() => {});
+}
+
+function setMapRealtimeFieldSelection(textKey, selection = {}, options = {}) {
+    if (String(collab.activeTextKey || '') !== String(textKey || '')) return;
+    const nextStart = typeof selection?.selectionStart === 'number' ? selection.selectionStart : null;
+    const nextEnd = typeof selection?.selectionEnd === 'number' ? selection.selectionEnd : nextStart;
+    const nextDirection = typeof selection?.selectionDirection === 'string' ? selection.selectionDirection : 'none';
+    const didChange = collab.activeTextSelectionStart !== nextStart
+        || collab.activeTextSelectionEnd !== nextEnd
+        || String(collab.activeTextSelectionDirection || 'none') !== nextDirection;
+    collab.activeTextSelectionStart = nextStart;
+    collab.activeTextSelectionEnd = nextEnd;
+    collab.activeTextSelectionDirection = nextDirection;
+    if (!didChange || options.notify === false) return;
     updateMapCloudPresence().catch(() => {});
 }
 
@@ -410,6 +434,9 @@ function updateMapPresence(entries = []) {
             activeNodeName: String(row?.activeNodeName || ''),
             activeTextKey: String(row?.activeTextKey || ''),
             activeTextLabel: String(row?.activeTextLabel || ''),
+            activeTextSelectionStart: typeof row?.activeTextSelectionStart === 'number' ? row.activeTextSelectionStart : null,
+            activeTextSelectionEnd: typeof row?.activeTextSelectionEnd === 'number' ? row.activeTextSelectionEnd : null,
+            activeTextSelectionDirection: String(row?.activeTextSelectionDirection || 'none'),
             mode: String(row?.mode || 'editing'),
             cursorVisible: cursor.cursorVisible,
             cursorMapX: cursor.cursorMapX,
@@ -442,11 +469,32 @@ function buildMapPresencePayload(extra = {}) {
         activeNodeName: String(extra.activeNodeName || extra.activeLabel || selected?.label || ''),
         activeTextKey: String(extra.activeTextKey || collab.activeTextKey || ''),
         activeTextLabel: String(extra.activeTextLabel || collab.activeTextLabel || ''),
+        activeTextSelectionStart: hasOwnField(extra, 'activeTextSelectionStart')
+            ? (typeof extra.activeTextSelectionStart === 'number' ? extra.activeTextSelectionStart : null)
+            : collab.activeTextSelectionStart,
+        activeTextSelectionEnd: hasOwnField(extra, 'activeTextSelectionEnd')
+            ? (typeof extra.activeTextSelectionEnd === 'number' ? extra.activeTextSelectionEnd : null)
+            : collab.activeTextSelectionEnd,
+        activeTextSelectionDirection: String(
+            extra.activeTextSelectionDirection
+            || collab.activeTextSelectionDirection
+            || 'none'
+        ),
         mode: String(extra.mode || (canEditCloudBoard() ? 'editing' : 'viewing')),
         cursorVisible,
         cursorMapX,
         cursorMapY
     };
+}
+
+function formatMapSelectionAwareness(entry = {}) {
+    const start = Number.isFinite(Number(entry?.activeTextSelectionStart)) ? Number(entry.activeTextSelectionStart) : null;
+    const end = Number.isFinite(Number(entry?.activeTextSelectionEnd)) ? Number(entry.activeTextSelectionEnd) : start;
+    if (start === null || end === null) return '';
+    if (end > start) {
+        return `selection ${start + 1}-${end}`;
+    }
+    return `curseur ${start + 1}`;
 }
 
 function getMapAwarenessMessage(textKey) {
@@ -457,9 +505,10 @@ function getMapAwarenessMessage(textKey) {
     );
     if (!editors.length) return '';
     const names = editors.slice(0, 2).map((entry) => entry.username).filter(Boolean);
-    if (!names.length) return 'Edition distante en cours';
-    if (names.length === 1) return `${names[0]} edite ce champ`;
-    return `${names.join(', ')} editent ce champ`;
+    const selectionHint = formatMapSelectionAwareness(editors[0]);
+    if (!names.length) return selectionHint ? `Edition distante en cours · ${selectionHint}` : 'Edition distante en cours';
+    if (names.length === 1) return selectionHint ? `${names[0]} edite ce champ · ${selectionHint}` : `${names[0]} edite ce champ`;
+    return selectionHint ? `${names.join(', ')} editent ce champ · ${selectionHint}` : `${names.join(', ')} editent ce champ`;
 }
 
 export function syncMapRealtimeAwarenessDecorations() {
@@ -699,6 +748,19 @@ function ensureMapRealtimeTextBinding(entityType, entityId, fieldName) {
             if (collab.activeTextKey === textKey) {
                 clearMapRealtimeFieldPresence({ notify: true });
             }
+        },
+        onSelectionChange: (meta = {}) => {
+            if (!meta.active) {
+                if (collab.activeTextKey === textKey) {
+                    setMapRealtimeFieldSelection(textKey, {
+                        selectionStart: null,
+                        selectionEnd: null,
+                        selectionDirection: 'none'
+                    });
+                }
+                return;
+            }
+            setMapRealtimeFieldSelection(textKey, meta);
         }
     });
 
@@ -898,10 +960,7 @@ async function startCollabRealtime() {
                 collab.realtimeSession = null;
             }
             stopMapRealtimeText();
-            if (!meta.intentional && isCloudBoardActive()) {
-                collab.realtimeFallbackActive = true;
-                startCheckpointCloudTransport();
-            }
+            collab.realtimeFallbackActive = false;
             if (state.selectedPoint || state.selectedZone) {
                 import('./ui-editor.js').then((module) => {
                     module.renderEditor?.();

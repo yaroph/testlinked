@@ -17,6 +17,7 @@ param(
     [long]$PresenceTtlMs = 120000,
     [long]$ExportRetentionDays = 45,
     [long]$RealtimeEventRetentionMs = 86400000,
+    [long]$RealtimeJournalRetentionMs = 604800000,
     [string]$Memory = "1Gi",
     [int]$MaxInstances = 1,
     [int]$MinInstances = 1,
@@ -81,6 +82,7 @@ if ($SessionMaxIdleMs -gt 0) { $baseEnvVars += "BNI_SESSION_MAX_IDLE_MS=$Session
 if ($PresenceTtlMs -gt 0) { $baseEnvVars += "BNI_PRESENCE_TTL_MS=$PresenceTtlMs" }
 if ($ExportRetentionDays -gt 0) { $baseEnvVars += "BNI_EXPORT_RETENTION_DAYS=$ExportRetentionDays" }
 if ($RealtimeEventRetentionMs -gt 0) { $baseEnvVars += "BNI_REALTIME_EVENT_RETENTION_MS=$RealtimeEventRetentionMs" }
+if ($RealtimeJournalRetentionMs -gt 0) { $baseEnvVars += "BNI_REALTIME_JOURNAL_RETENTION_MS=$RealtimeJournalRetentionMs" }
 if ($RealtimeSecret -and -not $RealtimeSecretName) { $baseEnvVars += "BNI_REALTIME_SECRET=$RealtimeSecret" }
 if ($MaintenanceSecret -and -not $MaintenanceSecretName) { $baseEnvVars += "BNI_MAINTENANCE_SECRET=$MaintenanceSecret" }
 if ($baseEnvVars.Count -gt 0) {
@@ -118,6 +120,7 @@ if ($SessionMaxIdleMs -gt 0) { $finalEnvVars += "BNI_SESSION_MAX_IDLE_MS=$Sessio
 if ($PresenceTtlMs -gt 0) { $finalEnvVars += "BNI_PRESENCE_TTL_MS=$PresenceTtlMs" }
 if ($ExportRetentionDays -gt 0) { $finalEnvVars += "BNI_EXPORT_RETENTION_DAYS=$ExportRetentionDays" }
 if ($RealtimeEventRetentionMs -gt 0) { $finalEnvVars += "BNI_REALTIME_EVENT_RETENTION_MS=$RealtimeEventRetentionMs" }
+if ($RealtimeJournalRetentionMs -gt 0) { $finalEnvVars += "BNI_REALTIME_JOURNAL_RETENTION_MS=$RealtimeJournalRetentionMs" }
 if ($RealtimeSecret -and -not $RealtimeSecretName) { $finalEnvVars += "BNI_REALTIME_SECRET=$RealtimeSecret" }
 if ($MaintenanceSecret -and -not $MaintenanceSecretName) { $finalEnvVars += "BNI_MAINTENANCE_SECRET=$MaintenanceSecret" }
 

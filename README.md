@@ -43,7 +43,10 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 - `map/carte.jpg` a ete recompressee pour reduire fortement le poids au chargement
 - `map/carte.webp` sert maintenant de fond prioritaire pour couper encore le trafic Hosting
 - la synchro realtime utilise maintenant un backplane RTDB pour propager `ops`, textes Yjs et presence entre instances
-- le fallback checkpoint reste disponible, mais avec des timeouts et heartbeats moins agressifs
+- les objets `point` et `map` passent maintenant par des ops fines par champ au lieu de `upsert_*` larges
+- un journal durable des batches realtime permet idempotence, reprise et replay au reconnect
+- les champs texte Yjs exposent maintenant l'awareness de caret / selection via la presence
+- le fallback checkpoint HTTP reste disponible comme secours de demarrage, mais n'est plus relance automatiquement apres une session websocket etablie
 - les secrets Cloud Run passent par Secret Manager
 - backups RTDB, cleanup des sessions/presences/evenements realtime et budget mensuel sont maintenant automatises
 - des metriques de logs et des alertes Cloud Monitoring peuvent etre provisionnees depuis le repo
@@ -121,6 +124,7 @@ Backend Cloud Run :
 - `BNI_PRESENCE_TTL_MS`
 - `BNI_EXPORT_RETENTION_DAYS`
 - `BNI_REALTIME_EVENT_RETENTION_MS`
+- `BNI_REALTIME_JOURNAL_RETENTION_MS`
 - `PORT`
 - `PLAYWRIGHT_PORT`
 
