@@ -124,7 +124,7 @@ Backend Cloud Run :
 - `PORT`
 - `PLAYWRIGHT_PORT`
 
-Un exemple complet est fourni dans [.env.example](./.env.example).
+Un exemple complet est fourni dans [.env.example](./.env.example). Pour un usage local, copiez-le vers `.env` puis completez uniquement les secrets necessaires.
 
 ## Deploiement cible
 
