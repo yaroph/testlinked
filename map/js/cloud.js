@@ -92,6 +92,12 @@ const collab = {
     homePanel: 'cloud',
     homeRenderSeq: 0,
     profileFlash: '',
+    activeEditLock: null,
+    editLockTimer: null,
+    editLockLoopToken: 0,
+    editLockLoopRunning: false,
+    editLockRetryMs: 0,
+    editLockInFlight: false,
     realtimeSession: null,
     realtimeFallbackActive: false,
     realtimeTextBindings: new Map(),
@@ -124,6 +130,8 @@ const COLLAB_PRESENCE_HEARTBEAT_MS = 12000;
 const COLLAB_PRESENCE_RETRY_MS = 5000;
 const COLLAB_CURSOR_REALTIME_MS = 80;
 const COLLAB_CURSOR_LEGACY_MS = 180;
+const COLLAB_EDIT_LOCK_HEARTBEAT_MS = 45000;
+const COLLAB_EDIT_LOCK_RETRY_MS = 10000;
 const collabStorage = createStoredCollabStateBridge({
     sessionStorageKey: COLLAB_SESSION_STORAGE_KEY,
     boardStorageKey: COLLAB_ACTIVE_BOARD_STORAGE_KEY,
@@ -577,14 +585,146 @@ function syncCloudStatus() {
 
     if (collab.activeBoardId) {
         const role = collab.activeRole || 'editor';
-        const stateKey = role === 'owner' ? 'cloud-lead' : 'cloud-member';
-        const label = role === 'owner' ? 'Cloud lead' : 'Cloud membre';
-        const meta = collab.activeBoardTitle || collab.activeBoardId || 'Board actif';
+        const lockedByOther = Boolean(collab.activeEditLock?.heldByOther);
+        const stateKey = lockedByOther ? 'cloud-viewer' : (role === 'owner' ? 'cloud-lead' : 'cloud-member');
+        const label = lockedByOther ? 'Cloud lecture' : (role === 'owner' ? 'Cloud lead' : 'Cloud membre');
+        const meta = lockedByOther
+            ? `${collab.activeBoardTitle || collab.activeBoardId || 'Board actif'} · ${getActiveEditLockMessage()}`
+            : (collab.activeBoardTitle || collab.activeBoardId || 'Board actif');
         setStatus(label, stateKey, meta);
         return;
     }
 
     setStatus('Session cloud', 'session', collab.user.username || 'Connecte');
+}
+
+function normalizeActiveEditLock(rawLock = null) {
+    if (!rawLock || typeof rawLock !== 'object') return null;
+    const boardId = String(rawLock.boardId || collab.activeBoardId || '').trim();
+    const userId = String(rawLock.userId || '').trim();
+    if (!boardId || !userId) return null;
+    const username = String(rawLock.username || 'operateur').trim() || 'operateur';
+    const isSelf = Boolean(rawLock.isSelf);
+    const heldByOther = Boolean(rawLock.heldByOther) || (!isSelf && userId !== String(collab.user?.id || ''));
+    return {
+        boardId,
+        userId,
+        username,
+        isSelf,
+        heldByOther,
+        message: String(rawLock.message || (heldByOther ? `${username} modifie deja ce board.` : 'Edition reservee pour toi.')),
+        acquiredAt: String(rawLock.acquiredAt || ''),
+        lastAt: String(rawLock.lastAt || ''),
+        expiresAt: String(rawLock.expiresAt || '')
+    };
+}
+
+function getActiveEditLockMessage(lock = collab.activeEditLock) {
+    if (!lock) return '';
+    if (lock.heldByOther) {
+        return String(lock.message || `${lock.username || 'Une autre personne'} modifie deja ce board.`);
+    }
+    if (lock.isSelf) {
+        return 'Edition exclusive active';
+    }
+    return '';
+}
+
+function updateActiveEditLock(rawLock = null) {
+    collab.activeEditLock = normalizeActiveEditLock(rawLock);
+    applyLocalPersistencePolicy();
+    syncCloudStatus();
+    if (collab.activeEditLock?.heldByOther) {
+        stopCollabRealtime();
+        stopCollabAutosave();
+        stopCollabLiveSync();
+        stopCollabPresence();
+        stopEditLockHeartbeat();
+    }
+}
+
+function stopEditLockHeartbeat() {
+    stopRetriableLoop(collab, {
+        timerKey: 'editLockTimer',
+        tokenKey: 'editLockLoopToken',
+        runningKey: 'editLockLoopRunning',
+        retryKey: 'editLockRetryMs',
+        inFlightKey: 'editLockInFlight'
+    });
+}
+
+function scheduleNextEditLockTick(loopToken, delayMs = COLLAB_EDIT_LOCK_HEARTBEAT_MS) {
+    return scheduleRetriableLoop(collab, {
+        timerKey: 'editLockTimer',
+        tokenKey: 'editLockLoopToken'
+    }, loopToken, delayMs, () => {
+        refreshActiveEditLock(loopToken).catch(() => {});
+    });
+}
+
+async function refreshActiveEditLock(loopToken = collab.editLockLoopToken, options = {}) {
+    const quiet = Boolean(options.quiet);
+    if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (collab.editLockLoopToken !== loopToken && !options.force) return false;
+    if (!canEditCloudBoard() && !options.allowClaim) return false;
+    if (collab.editLockInFlight) return false;
+
+    collab.editLockInFlight = true;
+    try {
+        const result = await collabBoardRequest('refresh_edit_lock', {
+            boardId: collab.activeBoardId
+        });
+        updateActiveEditLock(result?.editLock || null);
+        collab.editLockRetryMs = COLLAB_EDIT_LOCK_RETRY_MS;
+        if (collab.editLockLoopToken === loopToken || options.force) {
+            scheduleNextEditLockTick(loopToken, COLLAB_EDIT_LOCK_HEARTBEAT_MS);
+        }
+        return Boolean(result?.ok);
+    } catch (e) {
+        const lockedByOther = Number(e?.status) === 423 && e?.payload?.editLock;
+        if (lockedByOther) {
+            updateActiveEditLock(e.payload.editLock);
+            if (!quiet) {
+                await customAlert('CLOUD', escapeHtml(getActiveEditLockMessage(e.payload.editLock) || 'Lecture seule active.'));
+            }
+            return false;
+        }
+
+        collab.editLockRetryMs = collab.editLockRetryMs
+            ? Math.min(COLLAB_EDIT_LOCK_HEARTBEAT_MS, collab.editLockRetryMs * 2)
+            : COLLAB_EDIT_LOCK_RETRY_MS;
+        if (collab.editLockLoopToken === loopToken || options.force) {
+            scheduleNextEditLockTick(loopToken, collab.editLockRetryMs);
+        }
+        return false;
+    } finally {
+        collab.editLockInFlight = false;
+    }
+}
+
+function startEditLockHeartbeat() {
+    stopEditLockHeartbeat();
+    if (!isCloudBoardActive() || !collab.user || !collab.token || !canEditCloudBoard()) return false;
+    const loopToken = collab.editLockLoopToken + 1;
+    collab.editLockLoopToken = loopToken;
+    collab.editLockLoopRunning = true;
+    collab.editLockRetryMs = COLLAB_EDIT_LOCK_RETRY_MS;
+    scheduleNextEditLockTick(loopToken, COLLAB_EDIT_LOCK_HEARTBEAT_MS);
+    return true;
+}
+
+async function releaseActiveEditLock(boardId = collab.activeBoardId) {
+    const targetBoardId = String(boardId || '').trim();
+    stopEditLockHeartbeat();
+    if (!targetBoardId || !collab.token) {
+        updateActiveEditLock(null);
+        return false;
+    }
+    try {
+        await collabBoardRequest('release_edit_lock', { boardId: targetBoardId });
+    } catch (e) {}
+    updateActiveEditLock(null);
+    return true;
 }
 
 function applyLocalPersistencePolicy() {
@@ -864,16 +1004,22 @@ export function clearMapLiveCursor(options = {}) {
 
 function startCheckpointCloudTransport() {
     stopCollabRealtime();
-    collab.realtimeFallbackActive = true;
-    startCollabAutosave();
-    startCollabLiveSync();
-    startCollabPresence();
+    stopCollabAutosave();
+    stopCollabLiveSync();
+    stopCollabPresence();
+    collab.realtimeFallbackActive = false;
+    if (canEditCloudBoard()) {
+        startEditLockHeartbeat();
+    } else {
+        stopEditLockHeartbeat();
+    }
 }
 
 async function activateCloudTransport() {
     stopCollabAutosave();
     stopCollabLiveSync();
     stopCollabPresence();
+    stopEditLockHeartbeat();
     mapDebugLogger.log('activate-cloud-transport', getMapDiagState({
         shouldUseRealtime: shouldUseRealtimeCloud()
     }));
@@ -883,9 +1029,6 @@ async function activateCloudTransport() {
     }
 
     if (!shouldUseRealtimeCloud()) {
-        mapDebugLogger.warn('activate-cloud-transport-legacy', getMapDiagState({
-            reason: 'realtime-disabled'
-        }));
         startCheckpointCloudTransport();
         return false;
     }
@@ -1352,6 +1495,7 @@ function setActiveCloudBoardFromSummary(summary = null) {
     if (boardChanged || !nextBoardId) {
         clearMapCursorSyncTimer();
         clearMapLiveCursor({ broadcast: false, resetPosition: true });
+        stopEditLockHeartbeat();
         stopCollabRealtime();
         stopCollabAutosave();
         stopCollabLiveSync();
@@ -1363,6 +1507,7 @@ function setActiveCloudBoardFromSummary(summary = null) {
         collab.activeBoardTitle = '';
         collab.ownerId = '';
         collab.activeBoardUpdatedAt = '';
+        collab.activeEditLock = null;
         collab.lastSavedFingerprint = '';
         collab.shadowData = null;
         collab.presence = [];
@@ -1375,6 +1520,9 @@ function setActiveCloudBoardFromSummary(summary = null) {
         collab.activeBoardTitle = String(summary.title || '');
         collab.ownerId = String(summary.ownerId || '');
         collab.activeBoardUpdatedAt = String(summary.updatedAt || '');
+        if (boardChanged) {
+            collab.activeEditLock = null;
+        }
     }
 
     if (previousBoardId && previousBoardId !== collab.activeBoardId) {
@@ -1450,6 +1598,7 @@ async function openCloudBoard(boardId, options = {}) {
     }));
 
     setActiveCloudBoardFromSummary(summary);
+    updateActiveEditLock(result?.editLock || null);
     applyCloudMapData(result.board.data);
     updateMapPresence(result.presence || []);
     setCloudShadowData(result.board.data);
@@ -1463,7 +1612,10 @@ async function openCloudBoard(boardId, options = {}) {
     }));
 
     if (!options.quiet) {
-        await customAlert('CLOUD', `☁️ Board ouvert : ${escapeHtml(summary.title)}`);
+        const lockMessage = collab.activeEditLock?.heldByOther
+            ? ` Lecture seule. ${getActiveEditLockMessage()}`
+            : '';
+        await customAlert('CLOUD', `☁️ Board ouvert : ${escapeHtml(summary.title)}${escapeHtml(lockMessage)}`);
     }
 }
 
@@ -1478,8 +1630,15 @@ export async function saveActiveCloudBoard(options = {}) {
     }
 
     if (!canEditCloudBoard()) {
-        if (manual && !quiet) await customAlert('CLOUD', "Tu n'as pas les droits d'edition cloud.");
-        return false;
+        await refreshActiveEditLock(collab.editLockLoopToken, {
+            force: true,
+            quiet: true,
+            allowClaim: true
+        }).catch(() => {});
+        if (!canEditCloudBoard()) {
+            if (manual && !quiet) await customAlert('CLOUD', escapeHtml(getActiveEditLockMessage() || "Tu n'as pas les droits d'edition cloud."));
+            return false;
+        }
     }
     if (isRealtimeCloudActive()) {
         const hadChanges = hasLocalCloudChanges();
@@ -1522,6 +1681,8 @@ export async function saveActiveCloudBoard(options = {}) {
         if (result?.board) {
             collab.activeBoardTitle = String(result.board.title || title);
             collab.activeBoardUpdatedAt = String(result.board.updatedAt || collab.activeBoardUpdatedAt || '');
+            updateActiveEditLock(result?.editLock || null);
+            startEditLockHeartbeat();
             state.currentFileName = collab.activeBoardTitle;
             persistCollabState();
             syncCloudStatus();
@@ -1552,6 +1713,11 @@ export async function saveActiveCloudBoard(options = {}) {
         }
         return true;
     } catch (e) {
+        if (e && Number(e.status) === 423) {
+            updateActiveEditLock(e?.payload?.editLock || null);
+            if (!quiet) await customAlert('CLOUD', escapeHtml(getActiveEditLockMessage() || e.message || 'Edition deja reservee.'));
+            return false;
+        }
         if (e && Number(e.status) === 409) {
             await syncActiveCloudBoard({ quiet: true, allowDuringSave: true });
             queueCloudAutosave(25);
@@ -1596,6 +1762,7 @@ async function createCloudBoardFromCurrent() {
         ownerId: result.board.ownerId || collab.user.id,
         updatedAt: result.board.updatedAt || ''
     });
+    updateActiveEditLock(result?.editLock || null);
 
     state.currentFileName = collab.activeBoardTitle;
     setCloudShadowData(result.board.data || payload);
@@ -1611,6 +1778,7 @@ async function logoutCollab() {
     stopCollabAutosave();
     stopCollabLiveSync();
     stopCollabPresence();
+    await releaseActiveEditLock(collab.activeBoardId).catch(() => {});
     try {
         if (collab.token) await collabAuthRequest('logout');
     } catch (e) {}
@@ -2055,6 +2223,7 @@ async function disconnectCurrentCloudBoard(options = {}) {
     const preservedTitle = String(collab.activeBoardTitle || state.currentFileName || 'Session locale').trim();
 
     await flushPendingCloudAutosave(boardId).catch(() => {});
+    await releaseActiveEditLock(boardId).catch(() => {});
     stopCollabRealtime();
     stopCollabAutosave();
     stopCollabLiveSync();

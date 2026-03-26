@@ -3,6 +3,43 @@ const assert = require('node:assert/strict');
 
 const { __test } = require('../netlify/functions/collab-board.js');
 
+function createMockLockStore() {
+  const values = new Map();
+  const etags = new Map();
+  let etagSeq = 1;
+
+  return {
+    async get(key) {
+      return values.has(key) ? JSON.parse(JSON.stringify(values.get(key))) : null;
+    },
+    async getWithMetadata(key) {
+      if (!values.has(key)) return null;
+      return {
+        data: JSON.parse(JSON.stringify(values.get(key))),
+        etag: etags.get(key) || '',
+        metadata: null,
+      };
+    },
+    async setJSON(key, value, options = {}) {
+      if (options.onlyIfNew && values.has(key)) {
+        return { modified: false, etag: etags.get(key) || '', value: null };
+      }
+      if (options.onlyIfMatch && String(etags.get(key) || '') !== String(options.onlyIfMatch || '')) {
+        return { modified: false, etag: etags.get(key) || '', value: null };
+      }
+      values.set(key, JSON.parse(JSON.stringify(value)));
+      const etag = `etag-${etagSeq++}`;
+      etags.set(key, etag);
+      return { modified: true, etag, value };
+    },
+    async delete(key) {
+      values.delete(key);
+      etags.delete(key);
+      return true;
+    },
+  };
+}
+
 test('canonicalizeBoardPayloadByPage ignore les differences de meta volatile et l ordre pour point', () => {
   const left = {
     meta: { projectName: 'Alpha', date: '2026-03-11T09:00:00.000Z' },
@@ -202,4 +239,51 @@ test('getUnsupportedShareRoleMessage force le transfert pour un nouveau lead', (
     ),
     ''
   );
+});
+
+test('acquireBoardEditLock reserve l edition au premier utilisateur et bloque le second', async () => {
+  const store = createMockLockStore();
+  const board = { id: 'brd_alpha' };
+
+  const first = await __test.acquireBoardEditLock(store, board, {
+    id: 'u_a',
+    username: 'alpha',
+  }, 'editor');
+
+  assert.equal(first.ok, true);
+  assert.equal(first.lock.isSelf, true);
+  assert.equal(first.lock.heldByOther, false);
+
+  const second = await __test.acquireBoardEditLock(store, board, {
+    id: 'u_b',
+    username: 'bravo',
+  }, 'editor');
+
+  assert.equal(second.ok, false);
+  assert.equal(second.statusCode, 423);
+  assert.equal(second.lock.username, 'alpha');
+  assert.equal(second.lock.heldByOther, true);
+});
+
+test('releaseBoardEditLock libere le board et permet une reprise d edition', async () => {
+  const store = createMockLockStore();
+  const board = { id: 'brd_beta' };
+
+  const first = await __test.acquireBoardEditLock(store, board, {
+    id: 'u_a',
+    username: 'alpha',
+  }, 'owner');
+
+  assert.equal(first.ok, true);
+
+  await __test.releaseBoardEditLock(store, board.id, 'u_a');
+
+  const second = await __test.acquireBoardEditLock(store, board, {
+    id: 'u_b',
+    username: 'bravo',
+  }, 'editor');
+
+  assert.equal(second.ok, true);
+  assert.equal(second.lock.username, 'bravo');
+  assert.equal(second.lock.isSelf, true);
 });

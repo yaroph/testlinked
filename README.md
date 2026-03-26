@@ -1,6 +1,6 @@
 # BNI Linked V3
 
-BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet rassemble un graphe relationnel, une carte tactique, une console staff, une vue base de donnees, un backend Node de collaboration temps reel et un stockage Firebase.
+BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet rassemble un graphe relationnel, une carte tactique, une console staff, une vue base de donnees, un backend Node de sauvegarde cloud et un stockage hybride Firebase ou Netlify Blobs.
 
 ## Production
 
@@ -42,6 +42,10 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 - la couleur HVT continue visuellement vers les noeuds relies
 - `map/carte.jpg` a ete recompressee pour reduire fortement le poids au chargement
 - `map/carte.webp` sert maintenant de fond prioritaire pour couper encore le trafic Hosting
+- le mode par defaut est maintenant un mode simple a sauvegarde classique
+- un seul utilisateur peut editer un board a la fois, avec verrou d'edition leger cote backend
+- si un board est deja edite, les autres ouvrent le board en lecture seule jusqu'a liberation du verrou
+- le realtime websocket n'est plus active par defaut et ne repart que sur opt-in explicite
 - la synchro realtime utilise maintenant un backplane RTDB pour propager `ops`, textes Yjs et presence entre instances
 - les objets `point` et `map` passent maintenant par des ops fines par champ au lieu de `upsert_*` larges
 - un journal durable des batches realtime permet idempotence, reprise et replay au reconnect
@@ -56,6 +60,7 @@ BNI Linked V3 est une suite web tactique en HTML, CSS et JavaScript. Le projet r
 - frontend statique HTML / CSS / JavaScript
 - Firebase Hosting
 - Firebase Realtime Database via Admin SDK
+- Netlify Functions + Netlify Blobs en fallback simple
 - Node.js
 - Cloud Run
 - WebSocket `ws`
@@ -129,6 +134,8 @@ Backend Cloud Run :
 - `PLAYWRIGHT_PORT`
 
 Un exemple complet est fourni dans [.env.example](./.env.example). Pour un usage local, copiez-le vers `.env` puis completez uniquement les secrets necessaires.
+
+Pour le mode simple Netlify, `FIREBASE_DATABASE_URL` peut etre absent. Dans ce cas, le backend utilise automatiquement Netlify Blobs si le contexte Netlify est disponible.
 
 ## Deploiement cible
 

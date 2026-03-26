@@ -1,16 +1,16 @@
-const { getFirebaseApp, getFirebaseDatabase } = require("./firebase-admin");
+const { connectLambda: connectNetlifyLambda, getStore: getNetlifyStore } = require("@netlify/blobs");
+const { getFirebaseDatabase } = require("./firebase-admin");
 
 const ROOT_PREFIX = "stores";
 const BLOB_SENTINEL = "__bni_blob";
 const DEFAULT_LIST_PAGE_SIZE = 400;
 const MAX_LIST_PAGE_SIZE = 1000;
 
-let cachedAccessToken = {
-  value: "",
-  expiresAt: 0,
-};
-
-function connectLambda() {}
+function connectLambda(event) {
+  try {
+    connectNetlifyLambda(event);
+  } catch (error) {}
+}
 
 function normalizeStoreName(storeName) {
   return String(storeName || "")
@@ -76,58 +76,29 @@ function encodeRestPath(path) {
     .join("/");
 }
 
-function readDatabaseUrl() {
-  const app = getFirebaseApp();
-  const databaseURL = String(app?.options?.databaseURL || "").trim();
-  if (!databaseURL) {
-    throw new Error("Firebase Database URL manquante. Configure FIREBASE_DATABASE_URL.");
-  }
-  return databaseURL.replace(/\/+$/, "");
+function hasFirebaseStoreConfig() {
+  return Boolean(
+    String(process.env.BNI_FIREBASE_DATABASE_URL || process.env.FIREBASE_DATABASE_URL || "").trim()
+  );
 }
 
-async function getDatabaseAccessToken() {
-  const now = Date.now();
-  if (cachedAccessToken.value && now < (cachedAccessToken.expiresAt - 60 * 1000)) {
-    return cachedAccessToken.value;
-  }
-
-  const app = getFirebaseApp();
-  const credential = app?.options?.credential;
-  if (!credential || typeof credential.getAccessToken !== "function") {
-    throw new Error("Credential Firebase invalide pour les requetes RTDB.");
-  }
-
-  const token = await credential.getAccessToken();
-  cachedAccessToken = {
-    value: String(token?.access_token || ""),
-    expiresAt: Number(token?.expiry_date || 0) || 0,
+function readNetlifyStoreConfig() {
+  const siteID = String(
+    process.env.NETLIFY_SITE_ID ||
+    process.env.SITE_ID ||
+    ""
+  ).trim();
+  const token = String(
+    process.env.NETLIFY_AUTH_TOKEN ||
+    process.env.NETLIFY_TOKEN ||
+    ""
+  ).trim();
+  const apiURL = String(process.env.NETLIFY_API_URL || "").trim();
+  return {
+    siteID,
+    token,
+    apiURL,
   };
-  if (!cachedAccessToken.value) {
-    throw new Error("Impossible d'obtenir un token Firebase RTDB.");
-  }
-  return cachedAccessToken.value;
-}
-
-function buildRestUrl(path, query = null) {
-  const databaseURL = readDatabaseUrl();
-  const encodedPath = encodeRestPath(path);
-  const baseUrl = encodedPath ? `${databaseURL}/${encodedPath}.json` : `${databaseURL}/.json`;
-  const queryText = query ? String(query) : "";
-  return queryText ? `${baseUrl}?${queryText}` : baseUrl;
-}
-
-async function fetchRestJson(path, query = null) {
-  const accessToken = await getDatabaseAccessToken();
-  const response = await fetch(buildRestUrl(path, query), {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Firebase RTDB list failed (${response.status}).`);
-  }
-  return response.json();
 }
 
 function normalizePageSize(value) {
@@ -136,27 +107,24 @@ function normalizePageSize(value) {
   return Math.max(1, Math.min(MAX_LIST_PAGE_SIZE, Math.floor(size)));
 }
 
-async function listDirectStoreEntries(storeName, rawPrefix = "", options = {}) {
+async function listFirebaseEntries(database, storeName, rawPrefix = "", options = {}) {
   const cleanPrefix = trimSlashes(rawPrefix);
   const cursor = String(options.cursor || "").trim();
   const pageSize = normalizePageSize(options.limit);
-  const query = new URLSearchParams();
-  query.set("shallow", "true");
-
-  const payload = await fetchRestJson(buildStorePath(storeName, cleanPrefix), query.toString());
-  if (!payload || typeof payload !== "object") {
+  const snapshot = await database.ref(buildStorePath(storeName, cleanPrefix)).get();
+  if (!snapshot.exists()) {
     return { blobs: [], cursor: null };
   }
 
-  const payloadKeys = Object.keys(payload);
-  if (payloadKeys.includes(BLOB_SENTINEL)) {
+  const payload = snapshot.val();
+  if (isBlobNode(payload)) {
     return {
       blobs: cleanPrefix ? [{ key: cleanPrefix }] : [],
       cursor: null,
     };
   }
 
-  let childKeys = payloadKeys
+  let childKeys = Object.keys(payload || {})
     .map((key) => String(key || "").trim())
     .filter(Boolean)
     .sort((left, right) => left.localeCompare(right));
@@ -180,7 +148,7 @@ async function listDirectStoreEntries(storeName, rawPrefix = "", options = {}) {
   };
 }
 
-function getStore(storeName) {
+function buildFirebaseStore(storeName) {
   const database = getFirebaseDatabase();
   const normalizedStoreName = normalizeStoreName(storeName);
 
@@ -191,9 +159,25 @@ function getStore(storeName) {
       return unwrapBlobValue(snapshot.val());
     },
 
+    async getWithMetadata(key) {
+      const snapshot = await database.ref(buildStorePath(normalizedStoreName, key)).get();
+      if (!snapshot.exists()) {
+        return null;
+      }
+      const rawValue = snapshot.val();
+      return {
+        data: unwrapBlobValue(rawValue),
+        etag: "",
+        metadata: rawValue?.metadata || null,
+      };
+    },
+
     async setJSON(key, value, options = {}) {
       const metadata = options && typeof options === "object" ? options.metadata || null : null;
       await database.ref(buildStorePath(normalizedStoreName, key)).set(wrapBlobValue(value, metadata));
+      if (options.onlyIfMatch || options.onlyIfNew) {
+        return { modified: true, etag: "", value };
+      }
       return value;
     },
 
@@ -203,9 +187,82 @@ function getStore(storeName) {
     },
 
     async list(options = {}) {
-      return listDirectStoreEntries(normalizedStoreName, options.prefix || "", options);
+      return listFirebaseEntries(database, normalizedStoreName, options.prefix || "", options);
     },
   };
+}
+
+function buildNetlifyStore(storeName) {
+  const normalizedStoreName = normalizeStoreName(storeName);
+  const config = readNetlifyStoreConfig();
+  const store = config.siteID && config.token
+    ? getNetlifyStore({
+        name: normalizedStoreName,
+        siteID: config.siteID,
+        token: config.token,
+        ...(config.apiURL ? { apiURL: config.apiURL } : {}),
+      })
+    : getNetlifyStore(normalizedStoreName);
+
+  return {
+    async get(key) {
+      const payload = await store.get(String(key || ""), { type: "json" });
+      return unwrapBlobValue(payload);
+    },
+
+    async getWithMetadata(key) {
+      const entry = await store.getWithMetadata(String(key || ""), { type: "json" });
+      if (!entry) return null;
+      return {
+        data: unwrapBlobValue(entry.data),
+        etag: String(entry.etag || ""),
+        metadata: entry.metadata && typeof entry.metadata === "object" ? entry.metadata : null,
+      };
+    },
+
+    async setJSON(key, value, options = {}) {
+      const metadata = options && typeof options === "object" ? options.metadata || null : null;
+      const writeResult = await store.setJSON(
+        String(key || ""),
+        wrapBlobValue(value, metadata),
+        {
+          ...(options.onlyIfMatch ? { onlyIfMatch: options.onlyIfMatch } : {}),
+          ...(options.onlyIfNew ? { onlyIfNew: true } : {}),
+          ...(metadata ? { metadata } : {}),
+        }
+      );
+      if (options.onlyIfMatch || options.onlyIfNew) {
+        return {
+          modified: writeResult?.modified !== false,
+          etag: String(writeResult?.etag || ""),
+          value,
+        };
+      }
+      return value;
+    },
+
+    async delete(key) {
+      await store.delete(String(key || ""));
+      return true;
+    },
+
+    async list(options = {}) {
+      const listed = await store.list({
+        prefix: String(options.prefix || "").trim(),
+      });
+      return {
+        blobs: Array.isArray(listed?.blobs) ? listed.blobs : [],
+        cursor: null,
+      };
+    },
+  };
+}
+
+function getStore(storeName) {
+  if (hasFirebaseStoreConfig()) {
+    return buildFirebaseStore(storeName);
+  }
+  return buildNetlifyStore(storeName);
 }
 
 module.exports = {

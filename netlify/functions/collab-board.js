@@ -62,6 +62,15 @@ const PRESENCE_MAX_ITEMS = 96;
 const SESSION_ACTIVE_MS = 35000;
 const SESSION_SCAN_MAX = 400;
 const BOARD_ACTIVITY_MAX = 40;
+const BOARD_EDIT_LOCK_TTL_MS = Math.max(
+  45000,
+  Number(
+    process.env.BNI_BOARD_EDIT_LOCK_TTL_MS ||
+    process.env.BOARD_EDIT_LOCK_TTL_MS ||
+    2 * 60 * 1000
+  ) || (2 * 60 * 1000)
+);
+const BOARD_EDIT_LOCK_STALE_GRACE_MS = 15000;
 const COLLAB_NODE_FIELDS = [
   "name",
   "type",
@@ -1038,6 +1047,162 @@ function presenceKey(boardId, userId) {
   return `presence/${boardId}/${userId}`;
 }
 
+function editLockKey(boardId) {
+  return `locks/${boardId}`;
+}
+
+function buildBoardEditLockMessage(lock = {}) {
+  const username = String(lock.username || "").trim();
+  if (!username) return "Une autre personne modifie deja ce board.";
+  return `${username} modifie deja ce board.`;
+}
+
+function normalizeBoardEditLock(rawLock, boardId, currentUserId = "") {
+  if (!rawLock || typeof rawLock !== "object") return null;
+
+  const cleanBoardId = String(rawLock.boardId || boardId || "").trim();
+  const userId = String(rawLock.userId || "").trim();
+  const expiresAt = String(rawLock.expiresAt || "").trim();
+  const expiresAtMs = timeValue(expiresAt);
+  if (!cleanBoardId || !userId || !expiresAtMs) return null;
+  if ((expiresAtMs + BOARD_EDIT_LOCK_STALE_GRACE_MS) <= Date.now()) return null;
+
+  const username = String(rawLock.username || "operateur").trim() || "operateur";
+  const safeCurrentUserId = String(currentUserId || "").trim();
+  const isSelf = Boolean(safeCurrentUserId) && userId === safeCurrentUserId;
+  const heldByOther = Boolean(safeCurrentUserId) && !isSelf;
+
+  return {
+    boardId: cleanBoardId,
+    userId,
+    username,
+    role: sanitizeRole(rawLock.role || ROLE_EDITOR, ROLE_EDITOR),
+    acquiredAt: String(rawLock.acquiredAt || rawLock.lastAt || ""),
+    lastAt: String(rawLock.lastAt || rawLock.acquiredAt || ""),
+    expiresAt,
+    expiresInMs: Math.max(0, expiresAtMs - Date.now()),
+    isSelf,
+    heldByOther,
+    message: isSelf ? "Edition reservee pour toi." : buildBoardEditLockMessage({ username }),
+  };
+}
+
+async function readBoardEditLockRecord(store, boardId, currentUserId = "") {
+  const key = editLockKey(boardId);
+  let record = null;
+  let rawLock = null;
+
+  if (typeof store.getWithMetadata === "function") {
+    record = await store.getWithMetadata(key, { type: "json" }).catch(() => null);
+    rawLock = record?.data || null;
+  } else {
+    rawLock = await store.get(key, { type: "json" }).catch(() => null);
+  }
+
+  const lock = normalizeBoardEditLock(rawLock, boardId, currentUserId);
+  if (!lock && rawLock) {
+    await store.delete(key).catch(() => {});
+  }
+
+  return {
+    key,
+    rawLock: lock ? rawLock : null,
+    lock,
+    etag: String(record?.etag || ""),
+    metadata: record?.metadata || null,
+  };
+}
+
+async function describeBoardEditLock(store, boardId, currentUserId = "") {
+  if (!boardId) return null;
+  const record = await readBoardEditLockRecord(store, boardId, currentUserId);
+  return record.lock;
+}
+
+function buildBoardEditLockEntry(boardId, user, role, previousLock = null) {
+  const now = nowIso();
+  return {
+    boardId: String(boardId || ""),
+    userId: String(user?.id || ""),
+    username: String(user?.username || ""),
+    role: sanitizeRole(role || ROLE_EDITOR, ROLE_EDITOR),
+    acquiredAt: String(previousLock?.acquiredAt || now),
+    lastAt: now,
+    expiresAt: new Date(Date.now() + BOARD_EDIT_LOCK_TTL_MS).toISOString(),
+  };
+}
+
+async function acquireBoardEditLock(store, board, user, role) {
+  const boardId = String(board?.id || "");
+  if (!boardId) {
+    return { ok: false, statusCode: 400, error: "Board invalide.", lock: null };
+  }
+  if (!user?.id || !canEditBoard(role)) {
+    return { ok: false, statusCode: 403, error: "Modification interdite.", lock: null };
+  }
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const current = await readBoardEditLockRecord(store, boardId, user.id);
+    if (current.lock && !current.lock.isSelf) {
+      return {
+        ok: false,
+        statusCode: 423,
+        error: current.lock.message,
+        lock: current.lock,
+      };
+    }
+
+    const nextLock = buildBoardEditLockEntry(boardId, user, role, current.rawLock || current.lock || null);
+
+    if (current.etag) {
+      const writeResult = await store.setJSON(current.key, nextLock, {
+        onlyIfMatch: current.etag,
+      }).catch(() => ({ modified: false }));
+      if (writeResult && writeResult.modified === false) continue;
+    } else if (!current.lock) {
+      const writeResult = await store.setJSON(current.key, nextLock, {
+        onlyIfNew: true,
+      }).catch(() => ({ modified: false }));
+      if (writeResult && writeResult.modified === false) continue;
+    } else {
+      await store.setJSON(current.key, nextLock).catch(() => null);
+    }
+
+    return {
+      ok: true,
+      lock: normalizeBoardEditLock(nextLock, boardId, user.id),
+    };
+  }
+
+  const lock = await describeBoardEditLock(store, boardId, user.id);
+  if (lock && !lock.isSelf) {
+    return {
+      ok: false,
+      statusCode: 423,
+      error: lock.message,
+      lock,
+    };
+  }
+
+  return {
+    ok: false,
+    statusCode: 409,
+    error: "Impossible de reserver l edition du board pour le moment.",
+    lock,
+  };
+}
+
+async function releaseBoardEditLock(store, boardId, userId = "") {
+  if (!boardId) return null;
+  const record = await readBoardEditLockRecord(store, boardId, userId);
+  if (!record.lock) return null;
+  if (userId && String(record.lock.userId || "") !== String(userId || "")) {
+    return record.lock;
+  }
+  await store.delete(record.key).catch(() => {});
+  return record.lock;
+}
+
 async function listOnlineUsers(store, allowedUserIds = null) {
   const keys = await listKeysByPrefix(store, "sessions/", SESSION_SCAN_MAX);
   const rows = await Promise.all(keys.map((key) => store.get(key, { type: "json" }).catch(() => null)));
@@ -1373,6 +1538,7 @@ exports.handler = async (event) => {
 
     await saveBoard(store, board);
     await addUserBoardRef(store, user.id, boardId);
+    const editLockResult = await acquireBoardEditLock(store, board, user, ROLE_OWNER).catch(() => ({ ok: false, lock: null }));
     return jsonResponse(200, {
       ok: true,
       board: {
@@ -1382,6 +1548,7 @@ exports.handler = async (event) => {
         activity: normalizeBoardActivity(board),
       },
       presence: [],
+      editLock: editLockResult?.lock || null,
       boardId,
     });
   }
@@ -1394,6 +1561,13 @@ exports.handler = async (event) => {
     const role = getRoleForUser(board, user.id);
     if (!role) return errorResponse(403, "Acces refuse.");
     const presence = await listBoardPresence(store, boardId);
+    let editLock = await describeBoardEditLock(store, boardId, user.id);
+    if (canEditBoard(role)) {
+      const lockResult = await acquireBoardEditLock(store, board, user, role).catch(() => ({ ok: false, lock: editLock }));
+      if (lockResult?.lock) {
+        editLock = lockResult.lock;
+      }
+    }
     const memberIds = new Set([
       String(board.ownerId || ""),
       ...(Array.isArray(board.members) ? board.members.map((member) => String(member.userId || "")) : []),
@@ -1414,6 +1588,41 @@ exports.handler = async (event) => {
       },
       presence,
       onlineUsers,
+      editLock,
+    });
+  }
+
+  if (action === "refresh_edit_lock") {
+    const boardId = String(body.boardId || "");
+    const board = await loadBoard(store, boardId);
+    if (!board) return errorResponse(404, "Tableau introuvable.");
+
+    const role = getRoleForUser(board, user.id);
+    if (!role) return errorResponse(403, "Acces refuse.");
+    if (!canEditBoard(role)) return errorResponse(403, "Modification interdite.");
+
+    const lockResult = await acquireBoardEditLock(store, board, user, role);
+    if (!lockResult.ok) {
+      return errorResponse(lockResult.statusCode || 423, lockResult.error || "Edition deja reservee.", {
+        editLock: lockResult.lock || null,
+      });
+    }
+
+    return jsonResponse(200, {
+      ok: true,
+      boardId,
+      editLock: lockResult.lock || null,
+    });
+  }
+
+  if (action === "release_edit_lock") {
+    const boardId = String(body.boardId || "");
+    if (boardId) {
+      await releaseBoardEditLock(store, boardId, user.id).catch(() => {});
+    }
+    return jsonResponse(200, {
+      ok: true,
+      boardId,
     });
   }
 
@@ -1534,6 +1743,12 @@ exports.handler = async (event) => {
 
     const role = getRoleForUser(board, user.id);
     if (!canEditBoard(role)) return errorResponse(403, "Modification interdite.");
+    const lockResult = await acquireBoardEditLock(store, board, user, role);
+    if (!lockResult.ok) {
+      return errorResponse(lockResult.statusCode || 423, lockResult.error || "Edition deja reservee.", {
+        editLock: lockResult.lock || null,
+      });
+    }
 
     const data = body.data;
     const page = normalizePage(board.page || body.page || "point");
@@ -1580,6 +1795,7 @@ exports.handler = async (event) => {
       unchanged: true,
       mergedConflict: hadVersionDrift,
       presence,
+      editLock: lockResult.lock || null,
     });
     }
 
@@ -1605,6 +1821,7 @@ exports.handler = async (event) => {
       },
       mergedConflict: hadVersionDrift,
       presence,
+      editLock: lockResult.lock || null,
     });
   }
 
@@ -1818,6 +2035,7 @@ exports.handler = async (event) => {
     appendBoardActivity(board, user, "member", "a quitte le board");
     await saveBoard(store, board);
     await removeUserBoardRef(store, user.id, boardId);
+    await releaseBoardEditLock(store, boardId, user.id).catch(() => {});
     return jsonResponse(200, { ok: true });
   }
 
@@ -1838,5 +2056,9 @@ exports.__test = {
   listBoardPresence,
   touchBoardPresence,
   clearBoardPresence,
+  normalizeBoardEditLock,
+  acquireBoardEditLock,
+  releaseBoardEditLock,
+  describeBoardEditLock,
   searchUsersForBoard,
 };

@@ -2,7 +2,7 @@
   "name": "bni-linked",
   "private": true,
   "version": "3.0.0",
-  "description": "Firebase Hosting frontend + Cloud Run realtime/API backend",
+  "description": "Hybrid cloud save frontend/backend with optional realtime",
   "scripts": {
     "test": "node --test .\\tests\\*.test.cjs",
     "test:smoke": "playwright test",
