@@ -206,6 +206,17 @@ export async function createRealtimeBoardSession(options = {}) {
         }
     }
 
+    function rebuildShadowSnapshot() {
+        let nextShadow = committedShadowSnapshot;
+        pendingLocalBatches.forEach((entry) => {
+            const safeOps = Array.isArray(entry?.ops) ? entry.ops : [];
+            if (!safeOps.length) return;
+            nextShadow = applyOps(nextShadow, safeOps);
+        });
+        shadowSnapshot = nextShadow;
+        return shadowSnapshot;
+    }
+
     function reconcileIncomingOps(ops = [], meta = {}, options = {}) {
         const safeOps = Array.isArray(ops) ? ops : [];
         if (!safeOps.length) {
@@ -229,6 +240,16 @@ export async function createRealtimeBoardSession(options = {}) {
             if (opBatchId) {
                 pendingLocalBatches.delete(opBatchId);
             }
+            const previousShadowSnapshot = shadowSnapshot;
+            const nextShadowSnapshot = rebuildShadowSnapshot();
+            if (!options.suppressApplySnapshot && !valuesEqual(previousShadowSnapshot, nextShadowSnapshot)) {
+                applySnapshot(nextShadowSnapshot, {
+                    remote: true,
+                    acknowledged: true,
+                    replay: Boolean(options.resume),
+                    ...(meta || {})
+                });
+            }
             writeDebug(debug, 'log', options.resume ? 'realtime-local-ops-resume' : 'realtime-local-ops-ack', {
                 page,
                 boardId: shortDebugId(boardId),
@@ -249,9 +270,9 @@ export async function createRealtimeBoardSession(options = {}) {
             flushLocalChanges().catch(() => {});
         }
 
-        shadowSnapshot = applyOps(shadowSnapshot, safeOps);
+        const nextShadowSnapshot = rebuildShadowSnapshot();
         if (!options.suppressApplySnapshot) {
-            applySnapshot(shadowSnapshot, {
+            applySnapshot(nextShadowSnapshot, {
                 remote: true,
                 replay: Boolean(options.resume),
                 ...(meta || {})

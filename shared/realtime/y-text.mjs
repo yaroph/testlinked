@@ -174,39 +174,103 @@ export function createTextFieldYBinding(options = {}) {
     const onFocusChange = typeof options.onFocusChange === 'function' ? options.onFocusChange : () => {};
     const onSelectionChange = typeof options.onSelectionChange === 'function' ? options.onSelectionChange : () => {};
     const initialValue = String(options.initialValue || '');
-    const { doc, text } = createYTextDoc(initialValue);
+    const localSendDebounceMs = Math.max(40, Number(options.localSendDebounceMs) || 160);
+    let { doc, text } = createYTextDoc('');
+    let displayValue = initialValue;
+    let hasServerState = false;
+    let pendingRemoteUpdates = [];
 
     let activeField = null;
     let detachFieldListener = null;
     let suppressFieldEvent = false;
+    let pendingRemoteSelection = null;
+    let suppressRemoteHandleText = false;
+    let localSendTimer = null;
+    let lastFlushedStateVector = Y.encodeStateVector(doc);
 
-    const syncFieldValue = (field) => {
-        if (!field) return;
-        const nextValue = text.toString();
-        const shouldRestoreSelection = document.activeElement === field;
-        const selectionStart = shouldRestoreSelection && typeof field.selectionStart === 'number'
+    const clearLocalSendTimer = () => {
+        if (!localSendTimer) return;
+        clearTimeout(localSendTimer);
+        localSendTimer = null;
+    };
+
+    const flushPendingLocalUpdates = () => {
+        clearLocalSendTimer();
+        if (!hasServerState || !(lastFlushedStateVector instanceof Uint8Array)) return false;
+        const nextUpdate = Y.encodeStateAsUpdate(doc, lastFlushedStateVector);
+        if (!(nextUpdate instanceof Uint8Array) || !nextUpdate.length) return false;
+        lastFlushedStateVector = Y.encodeStateVector(doc);
+        onSendUpdate(key, encodeYUpdate(nextUpdate));
+        return true;
+    };
+
+    const queueLocalUpdate = () => {
+        if (!hasServerState) return false;
+        clearLocalSendTimer();
+        localSendTimer = setTimeout(() => {
+            localSendTimer = null;
+            flushPendingLocalUpdates();
+        }, localSendDebounceMs);
+        return true;
+    };
+
+    const captureFieldSelection = (field) => {
+        if (!field || document.activeElement !== field || !hasServerState) return null;
+        const selectionStart = typeof field.selectionStart === 'number'
             ? field.selectionStart
-            : null;
-        const selectionEnd = shouldRestoreSelection && typeof field.selectionEnd === 'number'
+            : displayValue.length;
+        const selectionEnd = typeof field.selectionEnd === 'number'
             ? field.selectionEnd
+            : selectionStart;
+        return {
+            start: Y.createRelativePositionFromTypeIndex(text, Math.max(0, selectionStart), -1),
+            end: Y.createRelativePositionFromTypeIndex(text, Math.max(0, selectionEnd), -1),
+            direction: field.selectionDirection || 'none'
+        };
+    };
+
+    const resolveSelectionIndex = (relativePosition, fallback = 0) => {
+        const absolute = relativePosition
+            ? Y.createAbsolutePositionFromRelativePosition(relativePosition, doc)
             : null;
-        const selectionDirection = shouldRestoreSelection ? field.selectionDirection || 'none' : 'none';
+        if (!absolute || absolute.type !== text || !Number.isFinite(absolute.index)) {
+            return Math.max(0, Math.min(displayValue.length, Number(fallback) || 0));
+        }
+        return Math.max(0, Math.min(displayValue.length, Number(absolute.index) || 0));
+    };
+
+    const syncFieldValue = (field, selection = null) => {
+        if (!field) return;
+        const nextValue = displayValue;
+        const shouldRestoreSelection = document.activeElement === field;
         suppressFieldEvent = true;
         field.value = nextValue;
-        field.readOnly = !canEdit();
+        field.readOnly = !hasServerState || !canEdit();
         suppressFieldEvent = false;
         if (shouldRestoreSelection && typeof field.setSelectionRange === 'function') {
-            const nextPos = Math.min(nextValue.length, selectionStart ?? nextValue.length);
-            const nextEnd = Math.min(nextValue.length, selectionEnd ?? nextPos);
+            const nextPos = selection
+                ? resolveSelectionIndex(selection.start, field.selectionStart ?? nextValue.length)
+                : Math.min(nextValue.length, field.selectionStart ?? nextValue.length);
+            const nextEnd = selection
+                ? resolveSelectionIndex(selection.end, field.selectionEnd ?? nextPos)
+                : Math.min(nextValue.length, field.selectionEnd ?? nextPos);
+            const selectionDirection = selection?.direction || field.selectionDirection || 'none';
             try {
                 field.setSelectionRange(nextPos, nextEnd, selectionDirection);
             } catch (error) {}
         }
     };
 
-    const handleTextChange = (origin = 'remote') => {
+    const handleTextChange = (origin = 'remote', selection = null) => {
         const nextValue = text.toString();
-        if (activeField) syncFieldValue(activeField);
+        displayValue = nextValue;
+        if (activeField) {
+            if (origin === 'local') {
+                activeField.readOnly = !hasServerState || !canEdit();
+            } else {
+                syncFieldValue(activeField, selection);
+            }
+        }
         onValueChange(nextValue, { origin });
     };
 
@@ -233,18 +297,51 @@ export function createTextFieldYBinding(options = {}) {
         });
     };
 
-    doc.on('update', (update, origin) => {
+    const handleDocUpdate = (update, origin) => {
         if (origin === 'remote-text-update' || origin === 'remote-text-state') {
-            handleTextChange('remote');
+            if (suppressRemoteHandleText) return;
+            const selection = pendingRemoteSelection;
+            pendingRemoteSelection = null;
+            handleTextChange('remote', selection);
             return;
         }
         if (origin === 'local-text-input') {
-            onSendUpdate(key, encodeYUpdate(update));
+            queueLocalUpdate();
             handleTextChange('local');
             return;
         }
         handleTextChange('local');
-    });
+    };
+
+    doc.on('update', handleDocUpdate);
+
+    const replaceDocState = (encodedUpdate) => {
+        const selection = captureFieldSelection(activeField);
+        const nextState = createYTextDoc('');
+        const applied = applyYUpdate(nextState.doc, encodedUpdate, 'remote-text-state');
+        if (!applied) {
+            nextState.doc.destroy();
+            return false;
+        }
+        doc.off('update', handleDocUpdate);
+        doc.destroy();
+        doc = nextState.doc;
+        text = nextState.text;
+        hasServerState = true;
+        doc.on('update', handleDocUpdate);
+        if (pendingRemoteUpdates.length) {
+            const queuedUpdates = [...pendingRemoteUpdates];
+            pendingRemoteUpdates = [];
+            suppressRemoteHandleText = true;
+            queuedUpdates.forEach((queuedUpdate) => {
+                applyYUpdate(doc, queuedUpdate, 'remote-text-update');
+            });
+            suppressRemoteHandleText = false;
+        }
+        lastFlushedStateVector = Y.encodeStateVector(doc);
+        handleTextChange('remote', selection);
+        return true;
+    };
 
     const attachField = (field) => {
         if (!field) return () => {};
@@ -255,6 +352,10 @@ export function createTextFieldYBinding(options = {}) {
         const onInput = () => {
             if (suppressFieldEvent) return;
             if (!canEdit()) {
+                syncFieldValue(field);
+                return;
+            }
+            if (!hasServerState) {
                 syncFieldValue(field);
                 return;
             }
@@ -273,6 +374,7 @@ export function createTextFieldYBinding(options = {}) {
         };
 
         const onBlur = () => {
+            flushPendingLocalUpdates();
             onFocusChange({
                 key,
                 active: false
@@ -307,11 +409,16 @@ export function createTextFieldYBinding(options = {}) {
 
     return {
         key,
-        doc,
-        text,
+        get doc() {
+            return doc;
+        },
+        get text() {
+            return text;
+        },
         attachField,
         attachTextarea: attachField,
         stop() {
+            flushPendingLocalUpdates();
             if (activeField) {
                 onFocusChange({
                     key,
@@ -320,18 +427,32 @@ export function createTextFieldYBinding(options = {}) {
                 emitSelectionChange(activeField, { active: false });
             }
             if (detachFieldListener) detachFieldListener();
+            doc.off('update', handleDocUpdate);
+            doc.destroy();
         },
         applyRemoteUpdate(encodedUpdate, options = {}) {
-            const origin = options.full ? 'remote-text-state' : 'remote-text-update';
-            return applyYUpdate(doc, encodedUpdate, origin);
+            if (options.full) {
+                return replaceDocState(encodedUpdate);
+            }
+            if (!hasServerState) {
+                pendingRemoteUpdates.push(String(encodedUpdate || ''));
+                if (pendingRemoteUpdates.length > 48) {
+                    pendingRemoteUpdates = pendingRemoteUpdates.slice(-48);
+                }
+                return true;
+            }
+            pendingRemoteSelection = captureFieldSelection(activeField);
+            return applyYUpdate(doc, encodedUpdate, 'remote-text-update');
         },
         replaceLocalValue(nextValue) {
+            displayValue = String(nextValue || '');
+            if (!hasServerState) return;
             doc.transact(() => {
-                replaceYTextContent(text, nextValue);
+                replaceYTextContent(text, displayValue);
             }, 'local-text-input');
         },
         getValue() {
-            return text.toString();
+            return displayValue;
         }
     };
 }

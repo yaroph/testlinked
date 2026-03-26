@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import jwt from 'jsonwebtoken';
 import { WebSocketServer } from 'ws';
-import * as Y from 'yjs';
+import * as Y from '../../shared/vendor/yjs.mjs';
 
 import collabLib from '../../netlify/lib/collab.js';
 import { runRuntimeMaintenance } from '../../shared/ops/runtime-maintenance.mjs';
@@ -14,8 +14,8 @@ import {
     formatRealtimeSeqKey,
     parseRealtimeSeqKey
 } from '../../shared/ops/realtime-runtime.mjs';
-import { canonicalizePointPayload, applyPointOps, preservePointRealtimeTextInOps } from '../../shared/realtime/point-doc.mjs';
-import { canonicalizeMapPayload, applyMapOps, preserveMapRealtimeTextInOps } from '../../shared/realtime/map-doc.mjs';
+import { canonicalizePointPayload, applyPointOps, preservePointRealtimeTextInOps, stripPointRealtimeTextFields } from '../../shared/realtime/point-doc.mjs';
+import { canonicalizeMapPayload, applyMapOps, preserveMapRealtimeTextInOps, stripMapRealtimeTextFields } from '../../shared/realtime/map-doc.mjs';
 import {
     makePointTextKey,
     parsePointTextKey,
@@ -60,7 +60,7 @@ const {
     nowIso,
     describeStoreClientConfig
 } = collabLib;
-const { buildStorePath, unwrapBlobValue, wrapBlobValue } = blobStoreLib;
+const { buildStorePath, unwrapBlobValue } = blobStoreLib;
 const { getFirebaseDatabase } = firebaseAdminLib;
 const {
     appendBoardActivity,
@@ -116,6 +116,12 @@ function preserveBoardRealtimeTextInOps(page, snapshot, ops) {
     return page === REALTIME_PAGE_MAP
         ? preserveMapRealtimeTextInOps(snapshot, ops)
         : preservePointRealtimeTextInOps(snapshot, ops);
+}
+
+function stripBoardRealtimeText(page, snapshot) {
+    return page === REALTIME_PAGE_MAP
+        ? stripMapRealtimeTextFields(snapshot)
+        : stripPointRealtimeTextFields(snapshot);
 }
 
 function valuesEqual(leftValue, rightValue) {
@@ -737,7 +743,7 @@ class BoardRoom {
         return access;
     }
 
-    async refreshFromBoard(board = null) {
+    async refreshFromBoard(board = null, options = {}) {
         const sourceBoard = board || await this.store.get(boardKey(this.boardId), { type: 'json' });
         if (!sourceBoard) {
             return { ok: false, status: 404, message: 'Board introuvable.' };
@@ -745,7 +751,14 @@ class BoardRoom {
 
         const nextSnapshot = canonicalizeBoardData(this.page, sourceBoard.data || {});
         const nextServerSeq = normalizeServerSeq(sourceBoard.realtimeSeq, this.serverSeq);
-        if (!valuesEqual(nextSnapshot, this.snapshot)) {
+        const shouldIgnoreRealtimeText = Boolean(options.ignoreRealtimeText);
+        const comparableNextSnapshot = shouldIgnoreRealtimeText
+            ? stripBoardRealtimeText(this.page, nextSnapshot)
+            : nextSnapshot;
+        const comparableCurrentSnapshot = shouldIgnoreRealtimeText
+            ? stripBoardRealtimeText(this.page, this.snapshot)
+            : this.snapshot;
+        if (!valuesEqual(comparableNextSnapshot, comparableCurrentSnapshot)) {
             this.snapshot = nextSnapshot;
             this.syncTextDocsFromSnapshot({
                 userId: String(sourceBoard.lastEditedBy?.userId || sourceBoard.ownerId || ''),
@@ -977,7 +990,9 @@ class BoardRoom {
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: access.message || 'Acces refuse.' });
             return false;
         }
-        await this.refreshFromBoard(access.board);
+        await this.refreshFromBoard(access.board, {
+            ignoreRealtimeText: true
+        });
         const entry = this.ensureTextDoc(key);
         if (!entry) {
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: 'Champ texte introuvable.' });
@@ -999,7 +1014,9 @@ class BoardRoom {
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: access.message || 'Board en lecture seule.' });
             return false;
         }
-        await this.refreshFromBoard(access.board);
+        await this.refreshFromBoard(access.board, {
+            ignoreRealtimeText: true
+        });
         const entry = this.ensureTextDoc(key);
         if (!entry) {
             this.sendToClient(clientState, REALTIME_MSG_ERROR, { message: 'Champ texte introuvable.' });
@@ -1014,18 +1031,27 @@ class BoardRoom {
     }
 
     async transactBoard(updateFn) {
-        const ref = collabStoreRef(boardKey(this.boardId));
+        const ref = collabStoreRef(`${boardKey(this.boardId)}/value`);
+        const preloadedBoard = await this.store.get(boardKey(this.boardId), { type: 'json' }).catch(() => null);
         let transactionError = null;
-        const result = await ref.transaction((wrappedBoard) => {
+        const result = await ref.transaction((rawBoard) => {
             if (transactionError) return undefined;
-            const currentBoard = unwrapBlobValue(wrappedBoard);
+            const hasLiveBoardObject = Boolean(
+                rawBoard
+                && typeof rawBoard === 'object'
+                && !Array.isArray(rawBoard)
+                && Object.keys(rawBoard).length > 0
+            );
+            const currentBoard = hasLiveBoardObject
+                ? rawBoard
+                : (preloadedBoard && typeof preloadedBoard === 'object' ? preloadedBoard : null);
             try {
                 const nextBoard = updateFn(
                     currentBoard ? cloneJson(currentBoard, currentBoard) : null,
                     currentBoard
                 );
                 if (nextBoard === undefined) return undefined;
-                return wrapBlobValue(nextBoard);
+                return nextBoard;
             } catch (error) {
                 transactionError = error;
                 return undefined;
@@ -1034,7 +1060,7 @@ class BoardRoom {
         if (transactionError) throw transactionError;
         return {
             committed: Boolean(result?.committed),
-            board: result?.snapshot?.exists() ? unwrapBlobValue(result.snapshot.val()) : null
+            board: result?.snapshot?.exists() ? cloneJson(result.snapshot.val(), result.snapshot.val()) : null
         };
     }
 
@@ -1602,7 +1628,10 @@ wss.on('connection', (socket) => {
 
         if (type === REALTIME_MSG_OPS) {
             const applied = await room.applyClientOps(clientState, message.ops || [], {
-                clientSeq: Number(message.clientSeq || 0)
+                clientSeq: Number(message.clientSeq || 0),
+                clientInstanceId: String(message.clientInstanceId || clientState.clientInstanceId || '').trim(),
+                opBatchId: String(message.opBatchId || '').trim(),
+                baseServerSeq: Number(message.baseServerSeq || 0)
             });
             if (!applied && socket.readyState === 1 && !room.clients.has(clientState.clientId)) {
                 closeWithRealtimeError('Session realtime fermee.', 4003, 'room-missing');

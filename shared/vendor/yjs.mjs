@@ -1,23 +1,23 @@
-import { ObservableV2 } from 'lib0/observable';
-import * as array from 'lib0/array';
-import * as math from 'lib0/math';
-import * as map from 'lib0/map';
-import * as encoding from 'lib0/encoding';
-import * as decoding from 'lib0/decoding';
-import * as random from 'lib0/random';
-import * as promise from 'lib0/promise';
-import * as buffer from 'lib0/buffer';
-import * as error from 'lib0/error';
-import * as binary from 'lib0/binary';
-import * as f from 'lib0/function';
-import { callAll } from 'lib0/function';
-import * as set from 'lib0/set';
-import * as logging from 'lib0/logging';
-import * as time from 'lib0/time';
-import * as string from 'lib0/string';
-import * as iterator from 'lib0/iterator';
-import * as object from 'lib0/object';
-import * as env from 'lib0/environment';
+import { ObservableV2 } from './lib0/observable.js';
+import * as array from './lib0/array.js';
+import * as math from './lib0/math.js';
+import * as map from './lib0/map.js';
+import * as encoding from './lib0/encoding.js';
+import * as decoding from './lib0/decoding.js';
+import * as random from './lib0/random.js';
+import * as promise from './lib0/promise.js';
+import * as buffer from './lib0/buffer.js';
+import * as error from './lib0/error.js';
+import * as binary from './lib0/binary.js';
+import * as f from './lib0/function.js';
+import { callAll } from './lib0/function.js';
+import * as set from './lib0/set.js';
+import * as logging from './lib0/logging.js';
+import * as time from './lib0/time.js';
+import * as string from './lib0/string.js';
+import * as iterator from './lib0/iterator.js';
+import * as object from './lib0/object.js';
+import * as env from './lib0/environment.js';
 
 /**
  * This is an abstract interface that all Connectors should implement to keep them interchangeable.
