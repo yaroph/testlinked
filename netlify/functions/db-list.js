@@ -5,6 +5,7 @@ const {
   normalizePage,
   rebuildIndex,
 } = require("../lib/db-index");
+const { buildArchiveSummary } = require("../lib/db-summary");
 const {
   jsonResponse,
   preflightResponse,
@@ -24,6 +25,39 @@ function sanitizeOffset(rawValue) {
   const offset = parseInt(rawValue || "0", 10);
   if (!Number.isFinite(offset) || offset < 0) return 0;
   return offset;
+}
+
+function shouldIncludeSummary(rawValue) {
+  const value = String(rawValue || "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+async function hydrateEntrySummary(store, entry) {
+  if (!entry || typeof entry !== "object") return entry;
+
+  let record = null;
+  let data = null;
+  let metadata = null;
+
+  if (typeof store.getWithMetadata === "function") {
+    record = await store.getWithMetadata(entry.key, { type: "json" }).catch(() => null);
+    data = record?.data || null;
+    metadata = record?.metadata && typeof record.metadata === "object" ? record.metadata : null;
+  } else {
+    data = await store.get(entry.key, { type: "json" }).catch(() => null);
+  }
+
+  const summary = metadata?.summary && typeof metadata.summary === "object"
+    ? metadata.summary
+    : buildArchiveSummary(entry.page, entry.action, data || {}, {
+        key: entry.key,
+        createdAt: entry.createdAt,
+      });
+
+  return {
+    ...entry,
+    summary,
+  };
 }
 
 exports.handler = async (event) => {
@@ -48,6 +82,7 @@ exports.handler = async (event) => {
   const limit = sanitizeLimit(event.queryStringParameters?.limit);
   const offset = sanitizeOffset(event.queryStringParameters?.offset);
   const forceRefresh = event.queryStringParameters?.refresh === "1";
+  const includeSummary = shouldIncludeSummary(event.queryStringParameters?.includeSummary);
 
   // Validation stricte de la "page" pour éviter de scanner n'importe quoi
   if (!page) {
@@ -61,12 +96,15 @@ exports.handler = async (event) => {
       : await ensureIndex(store, page, { maxScanFiles: MAX_SCAN_FILES });
     const allEntries = Array.isArray(snapshot.entries) ? snapshot.entries : [];
     const limitedEntries = allEntries.slice(offset, offset + limit);
+    const entries = includeSummary
+      ? await Promise.all(limitedEntries.map((entry) => hydrateEntrySummary(store, entry)))
+      : limitedEntries;
     const nextOffset = offset + limitedEntries.length;
     const hasMore = nextOffset < allEntries.length;
 
     return jsonResponse(200, { 
         ok: true,
-        count: limitedEntries.length,
+        count: entries.length,
         totalScanned: Number(snapshot.scanned || 0),
         totalFound: allEntries.length,
         offset,
@@ -74,7 +112,7 @@ exports.handler = async (event) => {
         hasMore,
         rebuiltIndex: Boolean(snapshot.rebuilt),
         truncated: Boolean(snapshot.truncated),
-        entries: limitedEntries
+        entries
     });
 
   } catch (e) {

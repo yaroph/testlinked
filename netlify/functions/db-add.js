@@ -1,6 +1,7 @@
 const { getStore, connectLambda } = require("../lib/blob-store");
 const crypto = require("crypto");
 const { MAX_SCAN_FILES, appendIndexEntry, normalizePage } = require("../lib/db-index");
+const { buildArchiveSummary } = require("../lib/db-summary");
 const {
   jsonResponse,
   preflightResponse,
@@ -55,8 +56,17 @@ exports.handler = async (event) => {
 
   try {
     const store = getStore(STORE_NAME);
+    const summary = buildArchiveSummary(page, action, data, {
+      key,
+      createdAt: new Date(ts).toISOString(),
+    });
     await store.setJSON(key, data, {
-      metadata: { page, action, ts },
+      metadata: {
+        page,
+        action,
+        ts,
+        summary,
+      },
     });
     await appendIndexEntry(store, page, { key }, { maxScanFiles: MAX_SCAN_FILES });
 
