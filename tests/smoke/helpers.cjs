@@ -123,6 +123,45 @@ async function installNetlifyMocks(page, options = {}) {
             const viewerId = String(authUser.id || 'u-smoke');
             const viewerName = String(authUser.username || 'smoke-user');
             const findBoard = (boardId) => boardsStore.boards.find((entry) => String(entry?.id || '') === String(boardId || '').trim());
+            const canEditBoard = (board) => {
+                const role = String(board?.role || 'editor');
+                return role === 'owner' || role === 'editor';
+            };
+            const normalizeEditLock = (board) => {
+                const lock = board?.editLock && typeof board.editLock === 'object' ? board.editLock : null;
+                const boardId = String(board?.id || '');
+                const userId = String(lock?.userId || '').trim();
+                if (!boardId || !userId) return null;
+                const username = String(lock?.username || 'operateur').trim() || 'operateur';
+                const isSelf = userId === viewerId;
+                const heldByOther = !isSelf;
+                return {
+                    boardId,
+                    userId,
+                    username,
+                    isSelf,
+                    heldByOther,
+                    message: String(lock?.message || (heldByOther ? `${username} modifie deja ce board.` : 'Edition reservee pour toi.')),
+                    acquiredAt: String(lock?.acquiredAt || buildIsoNow()),
+                    lastAt: String(lock?.lastAt || buildIsoNow()),
+                    expiresAt: String(lock?.expiresAt || new Date(Date.now() + 60000).toISOString()),
+                };
+            };
+            const acquireEditLock = (board) => {
+                if (!board || !canEditBoard(board)) return normalizeEditLock(board);
+                const existing = normalizeEditLock(board);
+                if (existing && !existing.isSelf) return existing;
+                const now = buildIsoNow();
+                board.editLock = {
+                    boardId: String(board.id || ''),
+                    userId: viewerId,
+                    username: viewerName,
+                    acquiredAt: String(existing?.acquiredAt || now),
+                    lastAt: now,
+                    expiresAt: new Date(Date.now() + 60000).toISOString(),
+                };
+                return normalizeEditLock(board);
+            };
 
              if (action === 'list_boards') {
                 const requestedPage = String(body.page || '').trim().toLowerCase();
@@ -155,6 +194,7 @@ async function installNetlifyMocks(page, options = {}) {
                         error: 'Board introuvable',
                     });
                 }
+                const editLock = canEditBoard(board) ? acquireEditLock(board) : normalizeEditLock(board);
                 return jsonResponse(route, 200, {
                     ok: true,
                     role: String(board.role || 'editor'),
@@ -171,6 +211,50 @@ async function installNetlifyMocks(page, options = {}) {
                     },
                     presence: Array.isArray(board.presence) ? clone(board.presence) : [],
                     onlineUsers: Array.isArray(board.onlineUsers) ? clone(board.onlineUsers) : [],
+                    editLock,
+                });
+            }
+
+            if (action === 'refresh_edit_lock') {
+                const board = findBoard(body.boardId);
+                if (!board) {
+                    return jsonResponse(route, 404, {
+                        ok: false,
+                        error: 'Board introuvable',
+                    });
+                }
+                if (!canEditBoard(board)) {
+                    return jsonResponse(route, 403, {
+                        ok: false,
+                        error: 'Modification interdite.',
+                    });
+                }
+                const editLock = acquireEditLock(board);
+                if (editLock && editLock.heldByOther) {
+                    return jsonResponse(route, 423, {
+                        ok: false,
+                        error: editLock.message,
+                        editLock,
+                    });
+                }
+                return jsonResponse(route, 200, {
+                    ok: true,
+                    boardId: String(board.id || ''),
+                    editLock,
+                });
+            }
+
+            if (action === 'release_edit_lock') {
+                const board = findBoard(body.boardId);
+                if (board) {
+                    const editLock = normalizeEditLock(board);
+                    if (!editLock || editLock.isSelf) {
+                        board.editLock = null;
+                    }
+                }
+                return jsonResponse(route, 200, {
+                    ok: true,
+                    boardId: String(body.boardId || ''),
                 });
             }
 
@@ -344,6 +428,7 @@ async function installNetlifyMocks(page, options = {}) {
     return {
         requests,
         alertsStore,
+        boardsStore,
     };
 }
 

@@ -2,7 +2,17 @@ import { state, saveState } from './state.js';
 import { getSimulation } from './physics.js';
 import { draw } from './render.js';
 import { screenToWorld, clamp } from './utils.js';
-import { selectNode, renderEditor, updatePathfindingPanel, addLink, clearIntelPairPreview, updatePointLiveCursor, clearPointLiveCursor } from './ui.js';
+import {
+    selectNode,
+    renderEditor,
+    updatePathfindingPanel,
+    addLink,
+    clearIntelPairPreview,
+    updatePointLiveCursor,
+    clearPointLiveCursor,
+    isCloudBoardReadOnly,
+    ensureCloudWriteAccess
+} from './ui.js';
 
 function getD3() {
     if (typeof globalThis !== 'undefined' && globalThis.d3) return globalThis.d3;
@@ -139,6 +149,10 @@ export function setupCanvasEvents(canvas) {
         
         // Cas 1 : Création de lien (Shift + Clic)
         if (e.shiftKey && hit) {
+            if (isCloudBoardReadOnly()) {
+                ensureCloudWriteAccess();
+                return;
+            }
             dragLinkSource = hit;
             state.tempLink = { x1: hit.x, y1: hit.y, x2: hit.x, y2: hit.y };
             draw(); 
@@ -291,6 +305,10 @@ export function setupCanvasEvents(canvas) {
         .on("start", e => {
             const sim = getSimulation();
             if (!sim) return;
+            if (isCloudBoardReadOnly()) {
+                e.on?.('drag', null);
+                return;
+            }
             if (!e.active) sim.alphaTarget(0.3).restart();
             if (e.subject) {
                 e.subject.__dragStartClientX = Number(e.sourceEvent?.clientX || 0);
@@ -301,6 +319,7 @@ export function setupCanvasEvents(canvas) {
             }
         })
         .on("drag", e => {
+            if (isCloudBoardReadOnly()) return;
             if (e.subject) {
                 const dx = Math.abs(Number(e.sourceEvent?.clientX || 0) - Number(e.subject.__dragStartClientX || 0));
                 const dy = Math.abs(Number(e.sourceEvent?.clientY || 0) - Number(e.subject.__dragStartClientY || 0));
@@ -327,7 +346,7 @@ export function setupCanvasEvents(canvas) {
                 delete e.subject.__dragStartClientX;
                 delete e.subject.__dragStartClientY;
 
-                if (moved) {
+                if (moved && !isCloudBoardReadOnly()) {
                     markSuppressedClick(e.sourceEvent?.clientX, e.sourceEvent?.clientY);
                     saveState();
                 }

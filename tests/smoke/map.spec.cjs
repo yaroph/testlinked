@@ -60,7 +60,7 @@ test('map keeps a single interaction controller for draw mode and exposes the mo
     await expect(page.locator('#map-interaction-mode')).toBeHidden();
 });
 
-test('map checkpoint fallback restarts HTTP sync loops when realtime is unavailable', async ({ page }) => {
+test('map cloud opening stays HTTP-only without background sync traffic', async ({ page }) => {
     await page.addInitScript(() => {
         localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
             token: 'smoke-token',
@@ -99,10 +99,68 @@ test('map checkpoint fallback restarts HTTP sync loops when realtime is unavaila
 
     expect(
         api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'touch_presence').length
-    ).toBeGreaterThan(0);
+    ).toBe(0);
     expect(
         api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'watch_board').length
+    ).toBe(0);
+});
+
+test('map cloud can stop editing then reclaim the lock with refresh', async ({ page }) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('bniLinkedCollabSession_v1', JSON.stringify({
+            token: 'smoke-token',
+            user: { id: 'u-smoke', username: 'smoke-user' },
+        }));
+    });
+
+    const api = await installNetlifyMocks(page, {
+        authSession: true,
+        authUser: { id: 'u-smoke', username: 'smoke-user' },
+        boards: [{
+            id: 'board-map-lock',
+            title: 'Lock Map',
+            role: 'editor',
+            page: 'map',
+            updatedAt: new Date().toISOString(),
+            data: {
+                groups: [{
+                    id: 'grp-a',
+                    name: 'Allies',
+                    color: '#73fbf7',
+                    visible: true,
+                    points: [],
+                    zones: [],
+                }],
+                tacticalLinks: [],
+            },
+            members: [{ userId: 'u-smoke', username: 'smoke-user', role: 'editor' }],
+        }],
+    });
+
+    await page.goto('/map/?board=board-map-lock');
+    await waitForMapReady(page);
+
+    await page.click('#btnDataFileToggle');
+    await expect(page.locator('#cloud-save-active')).toBeEnabled();
+    await expect(page.locator('#cloud-stop-editing')).toBeEnabled();
+
+    await page.click('#cloud-stop-editing');
+    await expect(page.locator('#cloud-save-active')).toBeDisabled();
+    await expect(page.locator('#cloud-stop-editing')).toBeDisabled();
+    await expect(page.locator('#cloudModalSyncInfo')).toContainText('Lecture seule');
+
+    expect(
+        api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'release_edit_lock').length
     ).toBeGreaterThan(0);
+
+    await page.click('#cloud-refresh-active');
+    await expect(page.locator('#cloud-save-active')).toBeEnabled();
+    await expect(page.locator('#cloud-stop-editing')).toBeEnabled();
+    await expect(page.locator('#cloudModalSyncInfo')).toContainText('Edition active');
+
+    expect(
+        api.requests.filter((entry) => entry.endpoint === 'collab-board' && entry.action === 'get_board').length
+    ).toBeGreaterThan(1);
 });
 
 test('map local tab does not relaunch board listing', async ({ page }) => {

@@ -3,7 +3,7 @@ import { renderAll, getMapPercentCoords } from './render.js';
 import { handlePointClick } from './ui.js';
 import { percentageToGps } from './utils.js';
 import { handleMapMouseDown, handleMapMouseMove, handleMapMouseUp } from './zone-editor.js';
-import { updateMapLiveCursor, clearMapLiveCursor } from './cloud.js';
+import { updateMapLiveCursor, clearMapLiveCursor, isCloudBoardReadOnly } from './cloud.js';
 
 const viewport = document.getElementById('viewport');
 const mapWorld = document.getElementById('map-world');
@@ -117,6 +117,10 @@ export function updateTransform() {
 }
 
 export function startMarkerDrag(e, gIndex, pIndex) {
+    if (isCloudBoardReadOnly()) {
+        handlePointClick(gIndex, pIndex);
+        return false;
+    }
     const mouseStart = getMapPercentCoords(e.clientX, e.clientY);
     const point = state.groups[gIndex].points[pIndex];
 
@@ -131,6 +135,7 @@ export function startMarkerDrag(e, gIndex, pIndex) {
     };
     // Force cursor grabbing via CSS class on body usually, or inline
     viewport.style.cursor = 'grabbing';
+    return true;
 }
 
 export function initEngine() {

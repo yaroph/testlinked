@@ -6,7 +6,7 @@ import { gpsToPercentage } from './utils.js';
 import { renderAll, getMapPercentCoords } from './render.js';
 import { ICONS } from './constants.js';
 import { api } from './api.js';
-import { initCloudCollab, openCloudMenu, getCloudSaveModalOptions, mapDebugLogger } from './cloud.js';
+import { initCloudCollab, openCloudMenu, getCloudSaveModalOptions, mapDebugLogger, ensureCloudWriteAccess } from './cloud.js';
 import { initAlertPickerMode, loadAlertFromUrl } from './alerts.js';
 import { createMapGroup } from '../../shared/js/map-board.mjs';
 import { startDrawingCircle } from './zone-editor.js';
@@ -291,6 +291,7 @@ function getViewportCenterPercent() {
 }
 
 function createInitialMapPoint() {
+    if (!ensureCloudWriteAccess()) return false;
     pushHistory();
     const { group, groupIndex } = ensurePrimaryGroup();
     const coords = getViewportCenterPercent();
@@ -311,15 +312,17 @@ function createInitialMapPoint() {
     renderAll();
     saveLocalState();
     selectItem('point', groupIndex, group.points.length - 1);
+    return true;
 }
 
 function startInitialZone() {
+    if (!ensureCloudWriteAccess()) return false;
     pushHistory();
     const { groupIndex } = ensurePrimaryGroup();
     renderGroupsList();
     renderAll();
     saveLocalState();
-    startDrawingCircle(groupIndex);
+    return startDrawingCircle(groupIndex);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -484,6 +487,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnTriggerImport && fileImport) {
         btnTriggerImport.onclick = () => fileImport.click();
         fileImport.onchange = (e) => {
+            if (!ensureCloudWriteAccess()) {
+                fileImport.value = '';
+                return;
+            }
             const file = e.target.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -509,6 +516,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btnTriggerMerge && fileMerge) {
         btnTriggerMerge.onclick = () => fileMerge.click();
         fileMerge.onchange = (e) => {
+            if (!ensureCloudWriteAccess()) {
+                fileMerge.value = '';
+                return;
+            }
             const file = e.target.files[0];
             if (!file) return;
             const reader = new FileReader();
@@ -535,6 +546,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btnReset = document.getElementById('btnResetMap');
     if (btnReset) {
         btnReset.onclick = async () => {
+            if (!ensureCloudWriteAccess()) return;
             if (await customConfirm("RESET CARTE", "Tout effacer ?")) {
                 pushHistory();
                 state.groups = [];
@@ -550,6 +562,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btnAddGroup = document.getElementById('btnAddGroup');
     if(btnAddGroup) {
         btnAddGroup.onclick = () => {
+            if (!ensureCloudWriteAccess()) return;
             pushHistory();
             const colors = ['#73fbf7', '#ff6b81', '#ff922b', '#a9e34b', '#fcc2d7'];
             state.groups.push(createMapGroup({
@@ -571,6 +584,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btnCloseGps = document.querySelector('.close-gps');
     if(btnToggleGps && gpsPanel) {
         btnToggleGps.onclick = () => {
+            if (!ensureCloudWriteAccess()) return;
             const select = document.getElementById('gpsGroupSelect');
             const iconSelect = document.getElementById('gpsIconType');
             if(select) {
@@ -595,6 +609,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btnAddGpsPoint = document.getElementById('btnAddGpsPoint');
     if(btnAddGpsPoint) {
         btnAddGpsPoint.onclick = async () => {
+            if (!ensureCloudWriteAccess()) return;
             const inpX = document.getElementById('gpsInputX');
             const inpY = document.getElementById('gpsInputY');
             const nameVal = document.getElementById('gpsName').value || 'Point GPS';

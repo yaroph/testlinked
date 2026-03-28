@@ -3,7 +3,23 @@ import { ensureNode, mergeNodes, updatePersonColors } from './logic.js';
 import { renderEditorHTML } from './templates.js';
 import { restartSim } from './physics.js';
 import { draw, updateDegreeCache } from './render.js';
-import { addLink as addUILink, logNodeAdded, refreshLists, updatePathfindingPanel, selectNode, showCustomConfirm, showCustomAlert, showCustomPrompt, refreshHvt, bindRealtimeDescriptionField, bindRealtimePointField, unbindRealtimePointFields } from './ui.js';
+import {
+    addLink as addUILink,
+    logNodeAdded,
+    refreshLists,
+    updatePathfindingPanel,
+    selectNode,
+    showCustomConfirm,
+    showCustomAlert,
+    showCustomPrompt,
+    refreshHvt,
+    bindRealtimeDescriptionField,
+    bindRealtimePointField,
+    unbindRealtimePointFields,
+    ensureCloudWriteAccess,
+    isCloudBoardReadOnly,
+    getCloudReadOnlyMessage
+} from './ui.js';
 import { escapeHtml, kindToLabel, linkKindEmoji, computeLinkColor, sanitizeNodeColor, normalizePersonStatus } from './utils.js';
 import { TYPES, KINDS, KIND_LABELS, PERSON_PERSON_KINDS, PERSON_ORG_KINDS, ORG_ORG_KINDS, PERSON_STATUS, PERSON_STATUS_LABELS } from './constants.js';
 import { clearFocusMode, setFocusMode, refreshFocusMode } from './focus.js';
@@ -19,6 +35,34 @@ const editorDragState = {
     offsetX: 0,
     offsetY: 0
 };
+
+function decorateReadOnlyEditor(editorRoot) {
+    if (!editorRoot || !isCloudBoardReadOnly()) return;
+    if (!editorRoot.querySelector('.cloud-readonly-banner')) {
+        const banner = document.createElement('div');
+        banner.className = 'cloud-readonly-banner';
+        banner.textContent = getCloudReadOnlyMessage() || 'Lecture seule sur ce board.';
+        banner.style.cssText = 'margin:0 0 12px; padding:10px 12px; border-radius:12px; border:1px dashed rgba(255, 204, 138, 0.32); background:rgba(18, 12, 4, 0.72); color:#ffd8a4; font-size:0.78rem; line-height:1.45;';
+        editorRoot.prepend(banner);
+    }
+
+    const allowedButtonIds = new Set(['btnClose', 'btnCenterNode', 'btnFocusNode', 'btnExportRP']);
+    editorRoot.querySelectorAll('input, select, textarea, button').forEach((field) => {
+        if (field instanceof HTMLButtonElement && allowedButtonIds.has(field.id)) return;
+        if (field instanceof HTMLButtonElement) {
+            field.disabled = true;
+            return;
+        }
+        if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+            field.readOnly = true;
+            field.disabled = true;
+            return;
+        }
+        if (field instanceof HTMLSelectElement) {
+            field.disabled = true;
+        }
+    });
+}
 
 function nodeTypeLabel(type) {
     if (type === TYPES.COMPANY) return 'Entreprise';
@@ -512,6 +556,7 @@ export function renderEditor() {
 
     ui.editorTitle.style.display = 'none';
     ui.editorBody.innerHTML = renderEditorHTML(n, state);
+    decorateReadOnlyEditor(ui.editorBody);
     syncEditorRailHeight(ui.editorBody);
     ui.editorBody.querySelectorAll('input:not([type="color"]), textarea').forEach((field) => {
         field.setAttribute('autocomplete', 'off');
@@ -555,6 +600,7 @@ function setupEditorListeners(n) {
     };
 
     document.getElementById('btnDelete').onclick = () => {
+        if (!ensureCloudWriteAccess()) return;
         showCustomConfirm(`Supprimer "${n.name}" ?`, () => {
             pushHistory();
             state.nodes = state.nodes.filter(x => x.id !== n.id);
@@ -799,6 +845,7 @@ function setupEditorListeners(n) {
     };
 
     const submitQuickLink = () => {
+        if (!ensureCloudWriteAccess()) return;
         const name = String(linkNameInput?.value || '').trim();
         const kind = String(linkKindSelect?.value || '').trim();
         const selectedType = String(linkTypeSelect?.value || TYPES.PERSON);
@@ -848,6 +895,7 @@ function setupEditorListeners(n) {
     syncQuickLinkComposer();
 
     const runMerge = (targetName) => {
+        if (!ensureCloudWriteAccess()) return;
         const normalizedTarget = normalizeNodeLookupName(targetName);
         const target = state.nodes.find((item) => normalizeNodeLookupName(item.name || '') === normalizedTarget);
         if (target && target.id !== n.id) {
@@ -1039,6 +1087,7 @@ function renderActiveLinks(n) {
 
         const delBtn = e.target.closest('.x');
         if(delBtn) {
+            if (!ensureCloudWriteAccess()) return;
             pushHistory();
             const linkId = delBtn.dataset.id;
             state.links = state.links.filter(l => String(l.id) !== String(linkId));
@@ -1051,6 +1100,7 @@ function renderActiveLinks(n) {
 
         const badge = e.target.closest('.chip-badge');
         if (badge) {
+            if (!ensureCloudWriteAccess()) return;
             e.preventDefault();
             e.stopPropagation();
             if (activeBadge && badge === activeBadge) return;

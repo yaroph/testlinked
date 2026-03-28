@@ -150,8 +150,8 @@ const COLLAB_WATCH_RETRY_MIN_MS = 1000;
 const COLLAB_WATCH_RETRY_MAX_MS = 8000;
 const COLLAB_CURSOR_REALTIME_MS = 80;
 const COLLAB_CURSOR_LEGACY_MS = 180;
-const COLLAB_EDIT_LOCK_HEARTBEAT_MS = 45000;
-const COLLAB_EDIT_LOCK_RETRY_MS = 10000;
+const COLLAB_EDIT_LOCK_HEARTBEAT_MS = 20000;
+const COLLAB_EDIT_LOCK_RETRY_MS = 5000;
 const collabStorage = createStoredCollabStateBridge({
     sessionStorageKey: COLLAB_SESSION_STORAGE_KEY,
     boardStorageKey: COLLAB_ACTIVE_BOARD_STORAGE_KEY
@@ -631,6 +631,37 @@ function canEditCloudBoard() {
     return canSharedEditCloudBoard(collab);
 }
 
+function hasCloudEditRole() {
+    const role = String(collab.activeRole || '');
+    return role === 'owner' || role === 'editor';
+}
+
+export function isCloudBoardReadOnly() {
+    return isCloudBoardActive() && !canEditCloudBoard();
+}
+
+export function getCloudReadOnlyMessage() {
+    if (!isCloudBoardActive()) return '';
+    if (collab.activeEditLock?.heldByOther) {
+        return getActiveEditLockMessage(collab.activeEditLock);
+    }
+    if (hasCloudEditRole()) {
+        return 'Lecture seule. Clique sur Rafraichir pour reprendre la main.';
+    }
+    return 'Lecture seule sur ce board.';
+}
+
+function showCloudReadOnlyAlert() {
+    const message = getCloudReadOnlyMessage() || 'Lecture seule sur ce board.';
+    showCustomAlert(`☁️ ${escapeHtml(message)}`);
+}
+
+export function ensureCloudWriteAccess() {
+    if (!isCloudBoardReadOnly()) return true;
+    showCloudReadOnlyAlert();
+    return false;
+}
+
 function shouldUseRealtimeCloud() {
     return shouldSharedUseRealtimeCloud(collab, canUseRealtimeTransport());
 }
@@ -718,8 +749,10 @@ function syncCloudStatus() {
     }
 
     if (collab.activeBoardId) {
-        const lockMessage = getActiveEditLockMessage();
-        const isReadOnlyLock = Boolean(collab.activeEditLock?.heldByOther);
+        const lockMessage = isCloudBoardReadOnly()
+            ? getCloudReadOnlyMessage()
+            : getActiveEditLockMessage();
+        const isReadOnlyLock = isCloudBoardReadOnly();
         const label = isReadOnlyLock
             ? 'Lecture'
             : (collab.activeRole === 'owner' ? 'Lead' : 'Board');
@@ -788,13 +821,15 @@ function updateActiveEditLock(rawLock = null, options = {}) {
     applyLocalPersistencePolicy();
     syncCloudStatus();
 
-    if (nextLock?.heldByOther) {
+    if (!nextLock?.isSelf) {
         stopCollabRealtime();
         stopCollabAutosave();
         stopCollabLiveSync();
         stopCollabPresence();
         stopEditLockHeartbeat();
-        setCloudSyncState('session', getActiveEditLockMessage(nextLock));
+        if (isCloudBoardActive()) {
+            setCloudSyncState('session', getCloudReadOnlyMessage() || getActiveEditLockMessage(nextLock));
+        }
     }
 
     if (options.refreshEditor !== false && JSON.stringify(nextLock || null) !== previous && state.selection) {
@@ -1604,17 +1639,11 @@ function buildPointPresencePayload(extra = {}) {
 }
 
 async function updatePointCloudPresence(extra = {}) {
+    void extra;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (!isRealtimeCloudActive()) return false;
     const payload = buildPointPresencePayload(extra);
-    if (isRealtimeCloudActive()) {
-        return collab.realtimeSession?.updatePresence(payload) || false;
-    }
-    const result = await collabBoardRequest('touch_presence', {
-        boardId: collab.activeBoardId,
-        ...payload
-    });
-    updateCollabPresence(result?.presence || []);
-    return Boolean(result?.ok);
+    return collab.realtimeSession?.updatePresence(payload) || false;
 }
 
 async function flushPointCursorPresence() {
@@ -2026,7 +2055,10 @@ function startCheckpointCloudTransport(options = {}) {
     stopCollabLiveSync();
     stopCollabPresence();
     collab.realtimeFallbackActive = false;
+    updateCollabPresence([]);
+    ensureCollabAutosaveListener();
     if (canEditCloudBoard()) {
+        startCollabAutosave();
         startEditLockHeartbeat();
     } else {
         stopEditLockHeartbeat();
@@ -2035,7 +2067,7 @@ function startCheckpointCloudTransport(options = {}) {
         'session',
         String(options.label || (canEditCloudBoard()
             ? 'Edition exclusive active'
-            : (getActiveEditLockMessage() || 'Lecture seule sur ce board')))
+            : (getCloudReadOnlyMessage() || 'Lecture seule sur ce board')))
     );
 }
 
@@ -2049,33 +2081,15 @@ async function activateCloudTransport() {
     }));
     if (!isCloudBoardActive() || !collab.user || !collab.token) {
         stopCollabRealtime();
+        updateCollabPresence([]);
         return false;
     }
 
-    if (!shouldUseRealtimeCloud()) {
-        startCheckpointCloudTransport({
-            label: canEditCloudBoard()
-                ? 'Edition exclusive active'
-                : (getActiveEditLockMessage() || 'Lecture seule sur ce board')
-        });
-        return false;
-    }
-
-    try {
-        const started = await startCollabRealtime();
-        if (started) return true;
-    } catch (e) {
-        pointDebugLogger.error('activate-cloud-transport-error', getPointDiagState({
-            message: e?.message || 'Erreur realtime'
-        }));
-        appendActionLog(`cloud: fallback legacy (${sanitizeLogText(e?.message, 'temps reel indisponible')})`);
-    }
-
-    pointDebugLogger.warn('activate-cloud-transport-fallback', getPointDiagState({
-        reason: 'realtime-start-failed'
-    }));
-    startCheckpointCloudTransport();
-    setCloudSyncState('session', 'Fallback checkpoint actif');
+    startCheckpointCloudTransport({
+        label: canEditCloudBoard()
+            ? 'Edition exclusive active'
+            : (getCloudReadOnlyMessage() || 'Lecture seule sur ce board')
+    });
     return false;
 }
 
@@ -2337,29 +2351,12 @@ async function clearCollabPresence(boardId = collab.activeBoardId) {
 async function touchCollabPresence(loopToken = collab.presenceLoopToken, options = {}) {
     if (collab.presenceLoopToken !== loopToken && !options.force) return false;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
-    const isRealtime = isRealtimeCloudActive();
+    if (!isRealtimeCloudActive()) return false;
 
     try {
         const sent = await updatePointCloudPresence(options.extra || {});
-        if (!isRealtime && (collab.presenceLoopToken === loopToken || options.force)) {
-            collab.presenceRetryMs = COLLAB_PRESENCE_RETRY_MS;
-            scheduleNextPresenceTick(loopToken, COLLAB_PRESENCE_HEARTBEAT_MS);
-        }
         return sent;
     } catch (e) {
-        if (!isRealtime && (collab.presenceLoopToken === loopToken || options.force)) {
-            const status = Number(e?.status || 0);
-            if (status === 401 || status === 403 || status === 404) {
-                collab.presenceLoopRunning = false;
-                stopCollabPresence();
-                updateCollabPresence([]);
-                return false;
-            }
-            collab.presenceRetryMs = collab.presenceRetryMs
-                ? Math.min(COLLAB_WATCH_RETRY_MAX_MS, collab.presenceRetryMs * 2)
-                : COLLAB_PRESENCE_RETRY_MS;
-            scheduleNextPresenceTick(loopToken, collab.presenceRetryMs);
-        }
         throw e;
     }
 }
@@ -2659,11 +2656,55 @@ async function openCloudBoard(boardId, options = {}) {
     setCloudWorkspaceBusy(false);
 
     if (!options.quiet) {
-        const lockMessage = collab.activeEditLock?.heldByOther
-            ? ` Lecture seule. ${getActiveEditLockMessage()}`
+        const lockMessage = isCloudBoardReadOnly()
+            ? ` ${getCloudReadOnlyMessage()}`
             : '';
         showCustomAlert(`☁️ Board cloud ouvert : ${escapeHtml(summary.title)}${escapeHtml(lockMessage)}`);
     }
+}
+
+async function refreshActiveCloudBoard(options = {}) {
+    const quiet = Boolean(options.quiet);
+    if (!isCloudBoardActive()) {
+        if (!quiet) showCustomAlert('Aucun board cloud actif.');
+        return false;
+    }
+
+    await flushPendingCloudAutosave(collab.activeBoardId).catch(() => {});
+    await openCloudBoard(collab.activeBoardId, { quiet: true });
+
+    if (!quiet) {
+        showCustomAlert(canEditCloudBoard()
+            ? '☁️ Board rafraichi. Edition active.'
+            : `☁️ ${escapeHtml(getCloudReadOnlyMessage() || 'Lecture seule sur ce board.')}`);
+    }
+    return true;
+}
+
+async function stopEditingCurrentCloudBoard(options = {}) {
+    const quiet = Boolean(options.quiet);
+    if (!isCloudBoardActive()) {
+        if (!quiet) showCustomAlert('Aucun board cloud actif.');
+        return false;
+    }
+    if (!canEditCloudBoard()) {
+        if (!quiet) showCustomAlert(escapeHtml(getCloudReadOnlyMessage() || 'Lecture seule sur ce board.'));
+        return false;
+    }
+
+    await flushPendingCloudAutosave(collab.activeBoardId).catch(() => {});
+    stopCollabAutosave();
+    stopCollabLiveSync();
+    stopCollabPresence();
+    stopCollabRealtime();
+    await releaseActiveEditLock(collab.activeBoardId).catch(() => {});
+    updateCollabPresence([]);
+    setCloudSyncState('session', 'Lecture seule. Clique sur Rafraichir pour reprendre la main.');
+
+    if (!quiet) {
+        showCustomAlert('☁️ Edition relachee. Les autres peuvent reprendre la main.');
+    }
+    return true;
 }
 
 async function saveActiveCloudBoard(options = {}) {
@@ -2676,17 +2717,10 @@ async function saveActiveCloudBoard(options = {}) {
         return false;
     }
     if (!canEditCloudBoard()) {
-        await refreshActiveEditLock(collab.editLockLoopToken, {
-            force: true,
-            quiet: true,
-            allowClaim: true
-        }).catch(() => {});
-        if (!canEditCloudBoard()) {
-            if (manual && !quiet) {
-                showCustomAlert(escapeHtml(getActiveEditLockMessage() || "Tu n'as pas les droits d'edition cloud."));
-            }
-            return false;
+        if (manual && !quiet) {
+            showCustomAlert(escapeHtml(getCloudReadOnlyMessage() || "Tu n'as pas les droits d'edition cloud."));
         }
+        return false;
     }
     if (isRealtimeCloudActive()) {
         const hadChanges = hasLocalCloudChanges();
@@ -2713,7 +2747,7 @@ async function saveActiveCloudBoard(options = {}) {
         return false;
     }
     if (!force && !manual && !hasLocalCloudChanges()) {
-        setCloudSyncState('session', canEditCloudBoard() ? 'Sauvegarde cloud a jour' : (getActiveEditLockMessage() || 'Lecture seule sur ce board'));
+        setCloudSyncState('session', canEditCloudBoard() ? 'Sauvegarde cloud a jour' : (getCloudReadOnlyMessage() || 'Lecture seule sur ce board'));
         return true;
     }
 
@@ -2725,7 +2759,7 @@ async function saveActiveCloudBoard(options = {}) {
         const localFingerprint = fingerprintFromPointPayload(plainData);
         if (!force && !manual && localFingerprint === String(collab.lastSavedFingerprint || '')) {
             captureCloudSavedState(collab.localChangeSeq, localFingerprint);
-            setCloudSyncState('session', canEditCloudBoard() ? 'Sauvegarde cloud a jour' : (getActiveEditLockMessage() || 'Lecture seule sur ce board'));
+            setCloudSyncState('session', canEditCloudBoard() ? 'Sauvegarde cloud a jour' : (getCloudReadOnlyMessage() || 'Lecture seule sur ce board'));
             return true;
         }
 
@@ -2765,8 +2799,8 @@ async function saveActiveCloudBoard(options = {}) {
     } catch (e) {
         if (e && Number(e.status) === 423) {
             updateActiveEditLock(e?.payload?.editLock || null);
-            setCloudSyncState('session', getActiveEditLockMessage() || 'Lecture seule sur ce board');
-            if (!quiet) showCustomAlert(`☁️ ${escapeHtml(getActiveEditLockMessage() || e.message || 'Edition deja reservee.')}`);
+            setCloudSyncState('session', getCloudReadOnlyMessage() || 'Lecture seule sur ce board');
+            if (!quiet) showCustomAlert(`☁️ ${escapeHtml(getCloudReadOnlyMessage() || e.message || 'Edition deja reservee.')}`);
             return false;
         }
         setCloudSyncState('error');
@@ -3138,7 +3172,7 @@ function buildCloudLocalPanelMarkup(localSaveLocked) {
             <div class="cloud-local-badge">Actions locales</div>
         </div>
         <div class="cloud-local-panel">
-            ${localSaveLocked ? '<div class="cloud-local-note">Mode partage: les exports locaux sont bloques pour les membres non lead.</div>' : ''}
+            ${localSaveLocked ? '<div class="cloud-local-note">Lecture seule: les exports locaux restent bloques tant que tu n as pas repris la main sur le board.</div>' : ''}
             <div class="cloud-local-action-grid">
                 ${buildCloudLocalChoiceShell({
                     id: 'open',
@@ -3178,7 +3212,7 @@ function buildCloudLocalPanelMarkup(localSaveLocked) {
 
 function bindCloudLocalActions(localSaveLocked) {
     const runLockedLocalAction = () => {
-        showCustomAlert('Export local interdit pour les membres partages.');
+        showCustomAlert('Export local bloque tant que ce board est en lecture seule.');
     };
 
     const toggleButtons = Array.from(document.querySelectorAll('[data-local-toggle]'));
@@ -3589,7 +3623,9 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
     const safePanel = localPanel === 'local' ? 'local' : 'cloud';
     const title = collab.user ? escapeHtml(collab.user.username) : 'Cloud';
     const syncLabel = collab.user
-        ? (isCloudBoardActive() ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})` : 'Aucun board cloud actif')
+        ? (isCloudBoardActive()
+            ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} · ${escapeHtml(canEditCloudBoard() ? 'Edition active' : (getCloudReadOnlyMessage() || 'Lecture seule'))}`
+            : 'Aucun board cloud actif')
         : 'Mode local';
 
     msgEl.innerHTML = `
@@ -3632,6 +3668,8 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
         ? `
             <button type="button" id="cloud-create-board" class="primary">Nouveau</button>
             <button type="button" id="cloud-save-active">Sauvegarder</button>
+            <button type="button" id="cloud-refresh-active">Rafraichir</button>
+            <button type="button" id="cloud-stop-editing">Arreter de modifier</button>
             <button type="button" id="cloud-open-profile" class="cloud-auth-secondary">Profil</button>
             <button type="button" id="cloud-logout">Deconnexion</button>
         `
@@ -3652,6 +3690,22 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
         };
     }
 
+    const refreshBtn = document.getElementById('cloud-refresh-active');
+    if (refreshBtn) {
+        refreshBtn.onclick = async () => {
+            await refreshActiveCloudBoard({ quiet: true });
+            await renderCloudHome();
+        };
+    }
+
+    const stopEditingBtn = document.getElementById('cloud-stop-editing');
+    if (stopEditingBtn) {
+        stopEditingBtn.onclick = async () => {
+            await stopEditingCurrentCloudBoard({ quiet: true });
+            await renderCloudHome();
+        };
+    }
+
     const profileBtn = document.getElementById('cloud-open-profile');
     if (profileBtn) {
         profileBtn.onclick = () => {
@@ -3666,6 +3720,18 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
             await logoutCollab();
             await renderCloudHome();
         };
+    }
+    if (saveBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
+        saveBtn.disabled = true;
+        saveBtn.title = isCloudBoardActive() ? (getCloudReadOnlyMessage() || 'Lecture seule sur ce board') : 'Aucun board actif';
+    }
+    if (refreshBtn && !isCloudBoardActive()) {
+        refreshBtn.disabled = true;
+        refreshBtn.title = 'Aucun board actif';
+    }
+    if (stopEditingBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
+        stopEditingBtn.disabled = true;
+        stopEditingBtn.title = isCloudBoardActive() ? (getCloudReadOnlyMessage() || 'Lecture seule sur ce board') : 'Aucun board actif';
     }
     bindCloudHomeTabs();
 }
@@ -3813,7 +3879,9 @@ async function renderCloudHome() {
             <div class="cloud-status-bar">
                 <span class="cloud-status-pill">Compte: ${escapeHtml(collab.user.username)}</span>
                 <span id="cloudModalSyncInfo" class="cloud-status-pill ${isCloudBoardActive() ? 'cloud-status-active' : ''}">
-                    ${isCloudBoardActive() ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})` : 'Aucun board cloud actif'}
+                    ${isCloudBoardActive()
+                        ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} · ${escapeHtml(canEditCloudBoard() ? 'Edition active' : (getCloudReadOnlyMessage() || 'Lecture seule'))}`
+                        : 'Aucun board cloud actif'}
                 </span>
             </div>
         </div>
@@ -3823,6 +3891,8 @@ async function renderCloudHome() {
         ? `
             <button type="button" id="cloud-create-board" class="primary">Nouveau</button>
             <button type="button" id="cloud-save-active">Sauvegarder</button>
+            <button type="button" id="cloud-refresh-active">Rafraichir</button>
+            <button type="button" id="cloud-stop-editing">Arreter de modifier</button>
             <button type="button" id="cloud-open-profile" class="cloud-auth-secondary">Profil</button>
             <button type="button" id="cloud-logout">Deconnexion</button>
         `
@@ -3845,6 +3915,20 @@ async function renderCloudHome() {
             await renderCloudHome();
         };
     }
+    const refreshBtn = document.getElementById('cloud-refresh-active');
+    if (refreshBtn) {
+        refreshBtn.onclick = async () => {
+            await refreshActiveCloudBoard({ quiet: true });
+            await renderCloudHome();
+        };
+    }
+    const stopEditingBtn = document.getElementById('cloud-stop-editing');
+    if (stopEditingBtn) {
+        stopEditingBtn.onclick = async () => {
+            await stopEditingCurrentCloudBoard({ quiet: true });
+            await renderCloudHome();
+        };
+    }
     const profileBtn = document.getElementById('cloud-open-profile');
     if (profileBtn) {
         profileBtn.onclick = () => {
@@ -3861,7 +3945,15 @@ async function renderCloudHome() {
     }
     if (saveBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
         saveBtn.disabled = true;
-        saveBtn.title = isCloudBoardActive() ? 'Droits insuffisants' : 'Aucun board actif';
+        saveBtn.title = isCloudBoardActive() ? (getCloudReadOnlyMessage() || 'Lecture seule sur ce board') : 'Aucun board actif';
+    }
+    if (refreshBtn && !isCloudBoardActive()) {
+        refreshBtn.disabled = true;
+        refreshBtn.title = 'Aucun board actif';
+    }
+    if (stopEditingBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
+        stopEditingBtn.disabled = true;
+        stopEditingBtn.title = isCloudBoardActive() ? (getCloudReadOnlyMessage() || 'Lecture seule sur ce board') : 'Aucun board actif';
     }
     bindCloudHomeTabs();
     bindCloudLocalActions(localSaveLocked);
@@ -3903,7 +3995,7 @@ export async function initCloudCollab() {
     try {
         const me = await collabAuthRequest('me');
         collab.user = me.user || collab.user;
-        setCloudSyncState(collab.activeBoardId ? 'live' : 'session');
+        setCloudSyncState('session', collab.activeBoardId ? 'Board cloud pret' : 'Session cloud active');
         pointDebugLogger.log('init-cloud-collab-authenticated', getPointDiagState());
     } catch (e) {
         pointDebugLogger.error('init-cloud-collab-auth-failed', getPointDiagState({
@@ -6206,7 +6298,7 @@ function mergeImportedNodeIntoExisting(existingNode, incomingNode) {
 
 function downloadJSON() {
     if (isLocalSaveLocked()) {
-        showCustomAlert("Export local bloque: seul le lead peut dupliquer/sauvegarder en local.");
+        showCustomAlert("Export local bloque tant que ce board est en lecture seule.");
         return;
     }
 
@@ -7566,6 +7658,7 @@ function placeNodeAtWorldPosition(node, position = null) {
 }
 
 function createNodeAtPosition(type, name, position = null) {
+    if (!ensureCloudWriteAccess()) return null;
     const node = ensureNode(type, name, position && Number.isFinite(Number(position.x)) && Number.isFinite(Number(position.y))
         ? { x: Number(position.x), y: Number(position.y) }
         : {});
@@ -7592,9 +7685,11 @@ function createNode(type, baseName, options = {}) {
         x: viewportCenter.x + (Math.cos(angle) * radius),
         y: viewportCenter.y + (Math.sin(angle) * radius)
     });
+    if (!n) return null;
     logNodeAdded(n.name, options.actor);
     zoomToNode(n.id); restartSim();
     scheduleSave();
+    return n;
 }
 
 function resolveNodeForAction(ref) {
@@ -7604,6 +7699,7 @@ function resolveNodeForAction(ref) {
 }
 
 export function addLink(a, b, kind, options = {}) {
+    if (!ensureCloudWriteAccess()) return false;
     const res = logicAddLink(a, b, kind);
     if (res) {
         const sourceNode = resolveNodeForAction(a);

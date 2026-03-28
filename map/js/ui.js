@@ -6,7 +6,7 @@ import { renderGroupsList } from './ui-list.js';
 import { initContextMenu, handleLinkClick, handleLinkHover, handleLinkOut, moveTooltip } from './ui-menus.js';
 import { stopDrawing } from './zone-editor.js';
 import { addTacticalLink } from './state.js'; // Correction import
-import { updateMapCloudPresence } from './cloud.js';
+import { updateMapCloudPresence, ensureCloudWriteAccess } from './cloud.js';
 
 export { handleLinkClick, handleLinkHover, handleLinkOut, moveTooltip };
 
@@ -183,6 +183,13 @@ export function handlePointClick(gIndex, pIndex) {
     
     // Mode création de lien
     if (state.linkingMode) {
+        if (!ensureCloudWriteAccess()) {
+            state.linkingMode = false;
+            state.linkStartId = null;
+            document.body.style.cursor = 'default';
+            renderAll();
+            return;
+        }
         if (state.linkStartId && state.linkStartId !== point.id) {
             const success = addTacticalLink(state.linkStartId, point.id);
             if (success) {

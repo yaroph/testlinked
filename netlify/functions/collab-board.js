@@ -63,12 +63,12 @@ const SESSION_ACTIVE_MS = 35000;
 const SESSION_SCAN_MAX = 400;
 const BOARD_ACTIVITY_MAX = 40;
 const BOARD_EDIT_LOCK_TTL_MS = Math.max(
-  45000,
+  60000,
   Number(
     process.env.BNI_BOARD_EDIT_LOCK_TTL_MS ||
     process.env.BOARD_EDIT_LOCK_TTL_MS ||
-    2 * 60 * 1000
-  ) || (2 * 60 * 1000)
+    60 * 1000
+  ) || (60 * 1000)
 );
 const BOARD_EDIT_LOCK_STALE_GRACE_MS = 15000;
 const COLLAB_NODE_FIELDS = [

@@ -5,7 +5,14 @@ import { percentageToGps, gpsToPercentage, escapeHtml } from './utils.js';
 import { renderAll } from './render.js';
 import { renderGroupsList } from './ui-list.js';
 import { deselect } from './ui.js';
-import { bindMapRealtimeTextField, unbindMapRealtimeTextFields, syncMapRealtimeAwarenessDecorations } from './cloud.js';
+import {
+    bindMapRealtimeTextField,
+    unbindMapRealtimeTextFields,
+    syncMapRealtimeAwarenessDecorations,
+    ensureCloudWriteAccess,
+    isCloudBoardReadOnly,
+    getCloudReadOnlyMessage
+} from './cloud.js';
 
 const sidebarRight = document.getElementById('sidebar-right');
 const editorContent = document.getElementById('editor-content');
@@ -21,6 +28,34 @@ function renderEmptyEditor() {
             <strong>Sélectionnez un point ou une zone.</strong>
         </div>
     `;
+}
+
+function decorateReadOnlyEditor() {
+    if (!editorContent || !isCloudBoardReadOnly()) return;
+    if (!editorContent.querySelector('.cloud-readonly-banner')) {
+        const banner = document.createElement('div');
+        banner.className = 'cloud-readonly-banner';
+        banner.textContent = getCloudReadOnlyMessage() || 'Lecture seule sur ce board.';
+        banner.style.cssText = 'margin:0 0 12px; padding:10px 12px; border-radius:12px; border:1px dashed rgba(255, 204, 138, 0.32); background:rgba(18, 12, 4, 0.72); color:#ffd8a4; font-size:0.78rem; line-height:1.45;';
+        editorContent.prepend(banner);
+    }
+
+    const allowedButtonIds = new Set(['btnClose', 'btnCopyId', 'btnCopyCoords']);
+    editorContent.querySelectorAll('input, select, textarea, button').forEach((field) => {
+        if (field instanceof HTMLButtonElement && allowedButtonIds.has(field.id)) return;
+        if (field instanceof HTMLButtonElement) {
+            field.disabled = true;
+            return;
+        }
+        if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+            field.readOnly = true;
+            field.disabled = true;
+            return;
+        }
+        if (field instanceof HTMLSelectElement) {
+            field.disabled = true;
+        }
+    });
 }
 
 export function renderEditor() {
@@ -119,6 +154,7 @@ function renderZoneEditor() {
             </div>
         </div>
     `;
+    decorateReadOnlyEditor();
 
     const zoneNameInput = document.getElementById('ezName');
     if (!bindMapRealtimeTextField('zone', zone, 'name', zoneNameInput)) {
@@ -131,6 +167,7 @@ function renderZoneEditor() {
     }
 
     document.getElementById('ezGroup').onchange = (event) => {
+        if (!ensureCloudWriteAccess()) return;
         const nextGroupIndex = parseInt(event.target.value, 10);
         group.zones.splice(zoneIndex, 1);
         state.groups[nextGroupIndex].zones.push(zone);
@@ -150,6 +187,7 @@ function renderZoneEditor() {
         const inpY = document.getElementById('ezY');
 
         const updateGeometry = () => {
+            if (!ensureCloudWriteAccess()) return;
             zone.r = parseFloat(inpR.value) || 0;
             const percentCoords = gpsToPercentage(
                 parseFloat(inpX.value) || 0,
@@ -167,6 +205,7 @@ function renderZoneEditor() {
     }
 
     document.getElementById('btnDeleteZone').onclick = async () => {
+        if (!ensureCloudWriteAccess()) return;
         if (await customConfirm('SUPPRESSION', 'Supprimer cette zone ?')) {
             group.zones.splice(zoneIndex, 1);
             renderGroupsList();
@@ -278,6 +317,7 @@ function renderPointEditor() {
             </div>
         </div>
     `;
+    decorateReadOnlyEditor();
 
     const pointNameInput = document.getElementById('edName');
     if (!bindMapRealtimeTextField('point', point, 'name', pointNameInput)) {
@@ -290,6 +330,7 @@ function renderPointEditor() {
     }
 
     document.getElementById('edIcon').onchange = (event) => {
+        if (!ensureCloudWriteAccess()) return;
         point.iconType = event.target.value;
         renderAll();
         saveLocalState();
@@ -313,6 +354,7 @@ function renderPointEditor() {
     }
 
     const updateCoords = () => {
+        if (!ensureCloudWriteAccess()) return;
         const percent = gpsToPercentage(
             parseFloat(document.getElementById('edX').value) || 0,
             parseFloat(document.getElementById('edY').value) || 0
@@ -327,6 +369,7 @@ function renderPointEditor() {
     document.getElementById('edY').oninput = updateCoords;
 
     document.getElementById('edGroup').onchange = (event) => {
+        if (!ensureCloudWriteAccess()) return;
         const nextGroupIndex = parseInt(event.target.value, 10);
         group.points.splice(pointIndex, 1);
         state.groups[nextGroupIndex].points.push(point);
@@ -341,6 +384,7 @@ function renderPointEditor() {
     };
 
     document.getElementById('btnLinkPoint').onclick = () => {
+        if (!ensureCloudWriteAccess()) return;
         state.linkingMode = true;
         state.linkStartId = point.id;
         closeEditor();
@@ -352,6 +396,7 @@ function renderPointEditor() {
     document.getElementById('btnCopyCoords').onclick = () => navigator.clipboard.writeText(`${gpsCoords.x.toFixed(2)}, ${gpsCoords.y.toFixed(2)}`);
 
     document.getElementById('btnDelete').onclick = async () => {
+        if (!ensureCloudWriteAccess()) return;
         if (await customConfirm('SUPPRESSION', 'Supprimer ce point ?')) {
             const removedId = point.id;
             group.points.splice(pointIndex, 1);

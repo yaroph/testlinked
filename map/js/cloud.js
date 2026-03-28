@@ -121,7 +121,7 @@ export const mapDebugLogger = createBrowserDebugLogger({
     windowFlags: ['BNI_DEBUG_MAP', 'BNI_DEBUG_CLOUD']
 });
 
-const COLLAB_AUTOSAVE_DEBOUNCE_MS = 700;
+const COLLAB_AUTOSAVE_DEBOUNCE_MS = 1600;
 const COLLAB_AUTOSAVE_RETRY_MS = 250;
 const COLLAB_WATCH_TIMEOUT_MS = 12000;
 const COLLAB_WATCH_RETRY_MIN_MS = 1000;
@@ -130,8 +130,8 @@ const COLLAB_PRESENCE_HEARTBEAT_MS = 12000;
 const COLLAB_PRESENCE_RETRY_MS = 5000;
 const COLLAB_CURSOR_REALTIME_MS = 80;
 const COLLAB_CURSOR_LEGACY_MS = 180;
-const COLLAB_EDIT_LOCK_HEARTBEAT_MS = 45000;
-const COLLAB_EDIT_LOCK_RETRY_MS = 10000;
+const COLLAB_EDIT_LOCK_HEARTBEAT_MS = 20000;
+const COLLAB_EDIT_LOCK_RETRY_MS = 5000;
 const collabStorage = createStoredCollabStateBridge({
     sessionStorageKey: COLLAB_SESSION_STORAGE_KEY,
     boardStorageKey: COLLAB_ACTIVE_BOARD_STORAGE_KEY,
@@ -315,6 +315,37 @@ export function isLocalSaveLocked() {
 
 export function canEditCloudBoard() {
     return canSharedEditCloudBoard(collab);
+}
+
+function hasCloudEditRole() {
+    const role = String(collab.activeRole || '');
+    return role === 'owner' || role === 'editor';
+}
+
+export function isCloudBoardReadOnly() {
+    return isCloudBoardActive() && !canEditCloudBoard();
+}
+
+export function getCloudReadOnlyMessage() {
+    if (!isCloudBoardActive()) return '';
+    if (collab.activeEditLock?.heldByOther) {
+        return getActiveEditLockMessage(collab.activeEditLock);
+    }
+    if (hasCloudEditRole()) {
+        return 'Lecture seule. Clique sur Rafraichir pour reprendre la main.';
+    }
+    return 'Lecture seule sur ce board.';
+}
+
+function showCloudReadOnlyAlert() {
+    const message = getCloudReadOnlyMessage() || 'Lecture seule sur ce board.';
+    customAlert('CLOUD', message).catch(() => {});
+}
+
+export function ensureCloudWriteAccess() {
+    if (!isCloudBoardReadOnly()) return true;
+    showCloudReadOnlyAlert();
+    return false;
 }
 
 function shouldUseRealtimeCloud() {
@@ -585,11 +616,11 @@ function syncCloudStatus() {
 
     if (collab.activeBoardId) {
         const role = collab.activeRole || 'editor';
-        const lockedByOther = Boolean(collab.activeEditLock?.heldByOther);
+        const lockedByOther = isCloudBoardReadOnly();
         const stateKey = lockedByOther ? 'cloud-viewer' : (role === 'owner' ? 'cloud-lead' : 'cloud-member');
         const label = lockedByOther ? 'Cloud lecture' : (role === 'owner' ? 'Cloud lead' : 'Cloud membre');
         const meta = lockedByOther
-            ? `${collab.activeBoardTitle || collab.activeBoardId || 'Board actif'} · ${getActiveEditLockMessage()}`
+            ? `${collab.activeBoardTitle || collab.activeBoardId || 'Board actif'} · ${getCloudReadOnlyMessage()}`
             : (collab.activeBoardTitle || collab.activeBoardId || 'Board actif');
         setStatus(label, stateKey, meta);
         return;
@@ -634,7 +665,12 @@ function updateActiveEditLock(rawLock = null) {
     collab.activeEditLock = normalizeActiveEditLock(rawLock);
     applyLocalPersistencePolicy();
     syncCloudStatus();
-    if (collab.activeEditLock?.heldByOther) {
+    if (isCloudBoardActive() && (state.selectedPoint || state.selectedZone)) {
+        import('./ui-editor.js').then((module) => {
+            module.renderEditor?.();
+        }).catch(() => {});
+    }
+    if (!collab.activeEditLock?.isSelf) {
         stopCollabRealtime();
         stopCollabAutosave();
         stopCollabLiveSync();
@@ -935,17 +971,11 @@ export function unbindMapRealtimeTextFields() {
 }
 
 export async function updateMapCloudPresence(extra = {}) {
+    void extra;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
+    if (!isRealtimeCloudActive()) return false;
     const payload = buildMapPresencePayload(extra);
-    if (isRealtimeCloudActive()) {
-        return collab.realtimeSession?.updatePresence(payload) || false;
-    }
-    const result = await collabBoardRequest('touch_presence', {
-        boardId: collab.activeBoardId,
-        ...payload
-    });
-    updateMapPresence(result?.presence || []);
-    return Boolean(result?.ok);
+    return collab.realtimeSession?.updatePresence(payload) || false;
 }
 
 async function flushMapCursorPresence() {
@@ -1008,7 +1038,10 @@ function startCheckpointCloudTransport() {
     stopCollabLiveSync();
     stopCollabPresence();
     collab.realtimeFallbackActive = false;
+    updateMapPresence([]);
+    ensureCollabAutosaveListener();
     if (canEditCloudBoard()) {
+        startCollabAutosave();
         startEditLockHeartbeat();
     } else {
         stopEditLockHeartbeat();
@@ -1025,26 +1058,10 @@ async function activateCloudTransport() {
     }));
     if (!isCloudBoardActive() || !collab.user || !collab.token) {
         stopCollabRealtime();
+        updateMapPresence([]);
         return false;
     }
 
-    if (!shouldUseRealtimeCloud()) {
-        startCheckpointCloudTransport();
-        return false;
-    }
-
-    try {
-        const started = await startCollabRealtime();
-        if (started) return true;
-    } catch (e) {
-        mapDebugLogger.error('activate-cloud-transport-error', getMapDiagState({
-            message: e?.message || 'Erreur realtime'
-        }));
-    }
-
-    mapDebugLogger.warn('activate-cloud-transport-fallback', getMapDiagState({
-        reason: 'realtime-start-failed'
-    }));
     startCheckpointCloudTransport();
     return false;
 }
@@ -1239,29 +1256,12 @@ async function clearCollabPresence(boardId = collab.activeBoardId) {
 async function touchCollabPresence(loopToken = collab.presenceLoopToken, options = {}) {
     if (collab.presenceLoopToken !== loopToken && !options.force) return false;
     if (!isCloudBoardActive() || !collab.user || !collab.token) return false;
-    const isRealtime = isRealtimeCloudActive();
+    if (!isRealtimeCloudActive()) return false;
 
     try {
         const sent = await updateMapCloudPresence(options.extra || {});
-        if (!isRealtime && (collab.presenceLoopToken === loopToken || options.force)) {
-            collab.presenceRetryMs = COLLAB_PRESENCE_RETRY_MS;
-            scheduleNextPresenceTick(loopToken, COLLAB_PRESENCE_HEARTBEAT_MS);
-        }
         return sent;
     } catch (e) {
-        if (!isRealtime && (collab.presenceLoopToken === loopToken || options.force)) {
-            const status = Number(e?.status || 0);
-            if (status === 401 || status === 403 || status === 404) {
-                collab.presenceLoopRunning = false;
-                stopCollabPresence();
-                updateMapPresence([]);
-                return false;
-            }
-            collab.presenceRetryMs = collab.presenceRetryMs
-                ? Math.min(COLLAB_WATCH_RETRY_MAX_MS, collab.presenceRetryMs * 2)
-                : COLLAB_PRESENCE_RETRY_MS;
-            scheduleNextPresenceTick(loopToken, collab.presenceRetryMs);
-        }
         throw e;
     }
 }
@@ -1612,11 +1612,57 @@ async function openCloudBoard(boardId, options = {}) {
     }));
 
     if (!options.quiet) {
-        const lockMessage = collab.activeEditLock?.heldByOther
-            ? ` Lecture seule. ${getActiveEditLockMessage()}`
+        const lockMessage = isCloudBoardReadOnly()
+            ? ` ${getCloudReadOnlyMessage()}`
             : '';
         await customAlert('CLOUD', `☁️ Board ouvert : ${escapeHtml(summary.title)}${escapeHtml(lockMessage)}`);
     }
+}
+
+async function refreshActiveCloudBoard(options = {}) {
+    const quiet = Boolean(options.quiet);
+    if (!isCloudBoardActive()) {
+        if (!quiet) await customAlert('CLOUD', 'Aucun board cloud actif.');
+        return false;
+    }
+
+    await flushPendingCloudAutosave(collab.activeBoardId).catch(() => {});
+    await openCloudBoard(collab.activeBoardId, { quiet: true });
+
+    if (!quiet) {
+        await customAlert(
+            'CLOUD',
+            canEditCloudBoard()
+                ? '☁️ Board rafraichi. Edition active.'
+                : `☁️ ${escapeHtml(getCloudReadOnlyMessage() || 'Lecture seule sur ce board.')}`
+        );
+    }
+    return true;
+}
+
+async function stopEditingCurrentCloudBoard(options = {}) {
+    const quiet = Boolean(options.quiet);
+    if (!isCloudBoardActive()) {
+        if (!quiet) await customAlert('CLOUD', 'Aucun board cloud actif.');
+        return false;
+    }
+    if (!canEditCloudBoard()) {
+        if (!quiet) await customAlert('CLOUD', escapeHtml(getCloudReadOnlyMessage() || 'Lecture seule sur ce board.'));
+        return false;
+    }
+
+    await flushPendingCloudAutosave(collab.activeBoardId).catch(() => {});
+    stopCollabAutosave();
+    stopCollabLiveSync();
+    stopCollabPresence();
+    stopCollabRealtime();
+    await releaseActiveEditLock(collab.activeBoardId).catch(() => {});
+    updateMapPresence([]);
+
+    if (!quiet) {
+        await customAlert('CLOUD', '☁️ Edition relachee. Les autres peuvent reprendre la main.');
+    }
+    return true;
 }
 
 export async function saveActiveCloudBoard(options = {}) {
@@ -1630,15 +1676,8 @@ export async function saveActiveCloudBoard(options = {}) {
     }
 
     if (!canEditCloudBoard()) {
-        await refreshActiveEditLock(collab.editLockLoopToken, {
-            force: true,
-            quiet: true,
-            allowClaim: true
-        }).catch(() => {});
-        if (!canEditCloudBoard()) {
-            if (manual && !quiet) await customAlert('CLOUD', escapeHtml(getActiveEditLockMessage() || "Tu n'as pas les droits d'edition cloud."));
-            return false;
-        }
+        if (manual && !quiet) await customAlert('CLOUD', escapeHtml(getCloudReadOnlyMessage() || "Tu n'as pas les droits d'edition cloud."));
+        return false;
     }
     if (isRealtimeCloudActive()) {
         const hadChanges = hasLocalCloudChanges();
@@ -1715,7 +1754,7 @@ export async function saveActiveCloudBoard(options = {}) {
     } catch (e) {
         if (e && Number(e.status) === 423) {
             updateActiveEditLock(e?.payload?.editLock || null);
-            if (!quiet) await customAlert('CLOUD', escapeHtml(getActiveEditLockMessage() || e.message || 'Edition deja reservee.'));
+            if (!quiet) await customAlert('CLOUD', escapeHtml(getCloudReadOnlyMessage() || e.message || 'Edition deja reservee.'));
             return false;
         }
         if (e && Number(e.status) === 409) {
@@ -1835,7 +1874,7 @@ function bindCloudActionButton(button, handler) {
 function getCloudModalStatusLabel() {
     if (!collab.user) return 'Mode local';
     return isCloudBoardActive()
-        ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})`
+        ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} · ${escapeHtml(canEditCloudBoard() ? 'Edition active' : (getCloudReadOnlyMessage() || 'Lecture seule'))}`
         : 'Aucun board cloud actif';
 }
 
@@ -1883,9 +1922,37 @@ function renderCloudHomeLoading(localPanel = 'cloud', note = 'Chargement du clou
             </div>
         `,
         collab.user && safePanel === 'cloud'
-            ? `<button type="button" id="cloud-open-profile" class="btn-modal-cancel cloud-auth-secondary">Profil</button>`
+            ? `
+                <button type="button" id="cloud-refresh-active" class="btn-modal-cancel">Rafraichir</button>
+                <button type="button" id="cloud-stop-editing" class="btn-modal-cancel">Arreter de modifier</button>
+                <button type="button" id="cloud-open-profile" class="btn-modal-cancel cloud-auth-secondary">Profil</button>
+            `
             : ''
     );
+
+    const refreshBtn = document.getElementById('cloud-refresh-active');
+    if (refreshBtn) {
+        bindCloudActionButton(refreshBtn, async () => {
+            await refreshActiveCloudBoard({ quiet: true });
+            await renderCloudHome();
+        });
+        if (!isCloudBoardActive()) {
+            refreshBtn.disabled = true;
+            refreshBtn.title = 'Aucun board actif';
+        }
+    }
+
+    const stopEditingBtn = document.getElementById('cloud-stop-editing');
+    if (stopEditingBtn) {
+        bindCloudActionButton(stopEditingBtn, async () => {
+            await stopEditingCurrentCloudBoard({ quiet: true });
+            await renderCloudHome();
+        });
+        if (!isCloudBoardActive() || !canEditCloudBoard()) {
+            stopEditingBtn.disabled = true;
+            stopEditingBtn.title = isCloudBoardActive() ? (getCloudReadOnlyMessage() || 'Lecture seule sur ce board') : 'Aucun board actif';
+        }
+    }
 
     const profileBtn = document.getElementById('cloud-open-profile');
     if (profileBtn) {
@@ -1990,7 +2057,7 @@ function buildCloudLocalPanelMarkup(localSaveLocked) {
             <div class="cloud-local-badge">Actions locales</div>
         </div>
         <div class="cloud-local-panel">
-            ${localSaveLocked ? '<div class="cloud-local-note">Mode partage: les exports locaux sont bloques pour les membres non lead.</div>' : ''}
+            ${localSaveLocked ? '<div class="cloud-local-note">Lecture seule: les exports locaux restent bloques tant que tu n as pas repris la main sur le board.</div>' : ''}
             <div class="cloud-local-action-grid">
                 ${buildCloudLocalActionCard({
                     action: 'open-file',
@@ -2668,7 +2735,6 @@ async function renderCloudMembers(boardId) {
 }
 
 async function renderCloudHome() {
-    {
     const renderToken = ++collab.homeRenderSeq;
     const localSaveLocked = isLocalSaveLocked();
     const localPanel = collab.homePanel === 'local' ? 'local' : 'cloud';
@@ -2830,6 +2896,8 @@ async function renderCloudHome() {
             ? `
                 <button type="button" id="cloud-create-board" class="btn-modal-confirm">Nouveau</button>
                 <button type="button" id="cloud-save-active" class="btn-modal-cancel">Sauvegarder</button>
+                <button type="button" id="cloud-refresh-active" class="btn-modal-cancel">Rafraichir</button>
+                <button type="button" id="cloud-stop-editing" class="btn-modal-cancel">Arreter de modifier</button>
                 <button type="button" id="cloud-open-profile" class="btn-modal-cancel cloud-auth-secondary">Profil</button>
                 <button type="button" id="cloud-logout" class="btn-modal-cancel">Deconnexion</button>
             `
@@ -2843,7 +2911,21 @@ async function renderCloudHome() {
     if (saveActiveBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
         saveActiveBtn.disabled = true;
         saveActiveBtn.style.opacity = '0.45';
-        saveActiveBtn.title = isCloudBoardActive() ? 'Droits insuffisants' : 'Aucun board actif';
+        saveActiveBtn.title = isCloudBoardActive() ? (getCloudReadOnlyMessage() || 'Lecture seule sur ce board') : 'Aucun board actif';
+    }
+
+    const refreshBtn = document.getElementById('cloud-refresh-active');
+    if (refreshBtn && !isCloudBoardActive()) {
+        refreshBtn.disabled = true;
+        refreshBtn.style.opacity = '0.45';
+        refreshBtn.title = 'Aucun board actif';
+    }
+
+    const stopEditingBtn = document.getElementById('cloud-stop-editing');
+    if (stopEditingBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
+        stopEditingBtn.disabled = true;
+        stopEditingBtn.style.opacity = '0.45';
+        stopEditingBtn.title = isCloudBoardActive() ? (getCloudReadOnlyMessage() || 'Lecture seule sur ce board') : 'Aucun board actif';
     }
 
     const createBtn = document.getElementById('cloud-create-board');
@@ -2864,6 +2946,20 @@ async function renderCloudHome() {
     if (saveActiveBtn) {
         bindCloudActionButton(saveActiveBtn, async () => {
             await saveActiveCloudBoard({ manual: true, quiet: false });
+            await renderCloudHome();
+        });
+    }
+
+    if (refreshBtn) {
+        bindCloudActionButton(refreshBtn, async () => {
+            await refreshActiveCloudBoard({ quiet: true });
+            await renderCloudHome();
+        });
+    }
+
+    if (stopEditingBtn) {
+        bindCloudActionButton(stopEditingBtn, async () => {
+            await stopEditingCurrentCloudBoard({ quiet: true });
             await renderCloudHome();
         });
     }
@@ -2887,320 +2983,6 @@ async function renderCloudHome() {
     bindCloudHomeTabs();
     bindCloudLocalActions(localSaveLocked);
     bindCloudBoardListActions();
-    return;
-    }
-    /*
-
-    const localPanel = collab.homePanel === 'local' ? 'local' : 'cloud';
-
-    if (!collab.user) {
-        openCloudModal(
-            'CLOUD COLLABORATIF',
-            `
-                <div class="cloud-auth-shell">
-                    <div class="cloud-auth-badge">Cloud</div>
-                    <h3 class="cloud-auth-title">Connexion au cloud</h3>
-                    <div class="cloud-auth-copy">Entre simplement un identifiant et un mot de passe. Si le compte n existe pas encore, tu peux le creer ici.</div>
-                    <div class="cloud-auth-grid">
-                        <label class="cloud-auth-field">
-                            <span class="cloud-auth-label">Identifiant</span>
-                            <input id="cloud-auth-user" type="text" placeholder="operateur_nord" class="cloud-auth-input" autocomplete="username" />
-                        </label>
-                        <label class="cloud-auth-field">
-                            <span class="cloud-auth-label">Mot de passe</span>
-                            <input id="cloud-auth-pass" type="password" placeholder="Mot de passe" class="cloud-auth-input" autocomplete="current-password" />
-                        </label>
-                    </div>
-                    <div class="cloud-auth-hint">Le meme compte fonctionne aussi sur l interface reseau. Sans connexion, la carte reste en local.</div>
-                </div>
-            `,
-            `
-                <button type="button" id="cloud-auth-register" class="btn-modal-cancel cloud-auth-secondary">Creer un compte</button>
-                <button type="button" id="cloud-auth-login" class="btn-modal-confirm cloud-auth-primary">Se connecter</button>
-            `
-        );
-
-        const runAuth = async (action) => {
-            const userEl = document.getElementById('cloud-auth-user');
-            const passEl = document.getElementById('cloud-auth-pass');
-            const username = String(userEl?.value || '').trim();
-            const password = String(passEl?.value || '');
-
-            if (!username || !password) {
-                await customAlert('AUTH', 'Renseigne l identifiant et le mot de passe.');
-                return;
-            }
-
-            try {
-                const res = await collabAuthRequest(action, { username, password });
-                collab.token = String(res.token || '');
-                collab.user = res.user || null;
-                persistCollabState();
-                syncCloudStatus();
-
-                if (collab.pendingBoardId) {
-                    const pendingId = collab.pendingBoardId;
-                    collab.pendingBoardId = '';
-                    try {
-                        await openCloudBoard(pendingId, { quiet: true });
-                    } catch (e) {
-                        await customAlert('ERREUR CLOUD', escapeHtml(e.message || "Impossible d'ouvrir le board."));
-                    }
-                }
-
-                await renderCloudHome();
-            } catch (e) {
-                await customAlert('ERREUR AUTH', escapeHtml(e.message || 'Erreur inconnue.'));
-            }
-        };
-
-        const registerBtn = document.getElementById('cloud-auth-register');
-        if (registerBtn) {
-            bindCloudActionButton(registerBtn, async () => {
-                await runAuth('register');
-            });
-        }
-
-        const loginBtn = document.getElementById('cloud-auth-login');
-        if (loginBtn) {
-            bindCloudActionButton(loginBtn, async () => {
-                await runAuth('login');
-            });
-        }
-
-        const passBtn = document.getElementById('cloud-auth-pass');
-        if (passBtn) {
-            passBtn.onkeydown = (event) => {
-                if (event.key === 'Enter') {
-                    runAuth('login').catch(() => {});
-                }
-            };
-        }
-        return;
-    }
-
-    let boards = [];
-    if (localPanel === 'cloud') {
-        renderCloudHomeLoading('cloud', 'Chargement des boards map...');
-        await flushPendingCloudAutosave(collab.activeBoardId).catch(() => {});
-        try {
-            const res = await collabBoardRequest('list_boards', { page: 'map' });
-            const allBoards = Array.isArray(res.boards) ? res.boards : [];
-            boards = allBoards.filter((board) => String(board.page || 'point') === 'map');
-        } catch (e) {
-            await customAlert('ERREUR CLOUD', escapeHtml(e.message || 'Erreur inconnue.'));
-            return;
-        }
-    }
-
-    const localSaveLocked = isLocalSaveLocked();
-    const boardRows = boards.map((board) => {
-        const active = board.id === collab.activeBoardId;
-        const role = String(board.role || '');
-
-        return `
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin:6px 0; padding:10px; border:1px solid ${active ? 'rgba(115,251,247,0.45)' : 'rgba(255,255,255,0.08)'}; border-radius:10px; background:${active ? 'rgba(115,251,247,0.08)' : 'rgba(0,0,0,0.2)'};">
-                <div style="min-width:0; display:flex; flex-direction:column; gap:4px;">
-                    <div style="font-size:0.95rem; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(board.title || 'Sans nom')}</div>
-                    <div style="font-size:0.72rem; color:#8b9bb4; text-transform:uppercase;">${escapeHtml(role)} · MAP</div>
-                </div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; flex-shrink:0;">
-                    <button type="button" class="mini-btn cloud-open-board" data-board="${escapeHtml(board.id)}">Ouvrir</button>
-                    ${role === 'owner' ? `<button type="button" class="mini-btn cloud-manage-board" data-board="${escapeHtml(board.id)}">Gerer</button>` : ''}
-                    ${role !== 'owner' ? `<button type="button" class="mini-btn cloud-leave-board" data-board="${escapeHtml(board.id)}">Quitter</button>` : ''}
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    const localRows = `
-        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin:6px 0 10px; padding:10px; border:1px solid rgba(115,251,247,0.34); border-radius:10px; background:rgba(115,251,247,0.08);">
-            <div style="min-width:0; display:flex; flex-direction:column; gap:4px;">
-                <div style="font-size:0.95rem; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(state.currentFileName || 'Session locale')}</div>
-                <div style="font-size:0.72rem; color:#8b9bb4; text-transform:uppercase;">local · map</div>
-            </div>
-            <div style="align-self:center; padding:6px 10px; border:1px solid rgba(115,251,247,0.18); border-radius:999px; background:rgba(115,251,247,0.08); color:var(--accent-cyan); font-size:0.7rem; letter-spacing:1.2px; text-transform:uppercase; white-space:nowrap;">Actions locales</div>
-        </div>
-        ${localSaveLocked ? '<div style="margin:0 0 8px; padding:10px 12px; border-radius:10px; border:1px dashed rgba(255, 204, 138, 0.18); background:rgba(3, 10, 24, 0.6); color:#ffd8a4; font-size:0.74rem; line-height:1.45;">Mode partage: les exports locaux sont bloques pour les membres non lead.</div>' : ''}
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
-            <button type="button" class="data-hub-card data-hub-card-local" data-local-action="open-file">
-                <span class="data-hub-card-title">Ouvrir</span>
-                <span class="data-hub-card-meta">JSON</span>
-            </button>
-            <button type="button" class="data-hub-card data-hub-card-local ${localSaveLocked ? 'is-disabled-visual' : ''}" data-local-action="save-file">
-                <span class="data-hub-card-title">Sauvegarder</span>
-                <span class="data-hub-card-meta">JSON</span>
-            </button>
-            <button type="button" class="data-hub-card data-hub-card-local ${localSaveLocked ? 'is-disabled-visual' : ''}" data-local-action="save-text">
-                <span class="data-hub-card-title">Copier JSON</span>
-                <span class="data-hub-card-meta">Texte</span>
-            </button>
-            <button type="button" class="data-hub-card data-hub-card-local" data-local-action="merge-file">
-                <span class="data-hub-card-title">Fusionner</span>
-                <span class="data-hub-card-meta">Fichier</span>
-            </button>
-            <button type="button" class="data-hub-card data-hub-card-danger" data-local-action="reset-all">
-                <span class="data-hub-card-title">Reset</span>
-            </button>
-        </div>
-    `;
-    const panelBody = localPanel === 'local'
-        ? localRows
-        : (boardRows || '<div style="padding:18px 0; color:#8b9bb4;">Aucun board map cloud.</div>');
-
-    openCloudModal(
-        'CLOUD COLLABORATIF',
-        `
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; padding-bottom:10px; border-bottom:2px solid rgba(115,251,247,0.32);">
-                <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button type="button" id="cloud-home-tab-cloud" class="mini-btn" style="opacity:${localPanel === 'cloud' ? '1' : '0.58'};">Cloud</button>
-                    <button type="button" id="cloud-home-tab-local" class="mini-btn" style="opacity:${localPanel === 'local' ? '1' : '0.58'};">Local</button>
-                </div>
-            </div>
-            <div style="max-height:320px; overflow:auto; padding-right:4px;">${panelBody}</div>
-            <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:10px; color:#9bb0c7; font-size:0.82rem;">
-                <span>Connecte: ${escapeHtml(collab.user.username || '')}</span>
-                <span style="color:${isCloudBoardActive() ? 'var(--accent-cyan)' : '#9bb0c7'};">
-                ${isCloudBoardActive() ? `Board actif: ${escapeHtml(collab.activeBoardTitle || collab.activeBoardId)} (${escapeHtml(collab.activeRole || '')})` : 'Aucun board cloud actif'}
-                </span>
-            </div>
-        `,
-        localPanel === 'cloud'
-            ? `
-                <button type="button" id="cloud-create-board" class="btn-modal-confirm">Nouveau</button>
-                <button type="button" id="cloud-save-active" class="btn-modal-cancel">Sauver</button>
-                <button type="button" id="cloud-logout" class="btn-modal-cancel">Deconnexion</button>
-            `
-            : `<button type="button" id="cloud-logout" class="btn-modal-cancel">Deconnexion</button>`
-    );
-
-    const saveActiveBtn = document.getElementById('cloud-save-active');
-    if (saveActiveBtn && (!isCloudBoardActive() || !canEditCloudBoard())) {
-        saveActiveBtn.disabled = true;
-        saveActiveBtn.style.opacity = '0.45';
-        saveActiveBtn.title = isCloudBoardActive() ? 'Droits insuffisants' : 'Aucun board actif';
-    }
-
-    const createBtn = document.getElementById('cloud-create-board');
-    if (createBtn) {
-        bindCloudActionButton(createBtn, async () => {
-            try {
-                const created = await createCloudBoardFromCurrent();
-                if (created) {
-                    await customAlert('CLOUD', `Board cree: ${escapeHtml(collab.activeBoardTitle || '')}`);
-                }
-                await renderCloudHome();
-            } catch (e) {
-                await customAlert('ERREUR CLOUD', escapeHtml(e.message || 'Erreur inconnue.'));
-            }
-        });
-    }
-
-    if (saveActiveBtn) {
-        bindCloudActionButton(saveActiveBtn, async () => {
-            await saveActiveCloudBoard({ manual: true, quiet: false });
-            await renderCloudHome();
-        });
-    }
-
-    const logoutBtn = document.getElementById('cloud-logout');
-    if (logoutBtn) {
-        bindCloudActionButton(logoutBtn, async () => {
-            await logoutCollab();
-            await renderCloudHome();
-        });
-    }
-
-    const tabCloud = document.getElementById('cloud-home-tab-cloud');
-    if (tabCloud) {
-        bindCloudActionButton(tabCloud, async () => {
-            collab.homePanel = 'cloud';
-            renderCloudHomeLoading('cloud', 'Chargement des boards map...');
-            await renderCloudHome();
-        });
-    }
-
-    const tabLocal = document.getElementById('cloud-home-tab-local');
-    if (tabLocal) {
-        bindCloudActionButton(tabLocal, async () => {
-            collab.homePanel = 'local';
-            await renderCloudHome();
-        });
-    }
-
-    Array.from(document.querySelectorAll('[data-local-action]')).forEach((btn) => {
-        bindCloudActionButton(btn, async () => {
-            const action = btn.getAttribute('data-local-action') || '';
-
-            if (action === 'open-file') {
-                closeCloudModal();
-                triggerFileInput('fileImport');
-                return;
-            }
-            if (action === 'save-file') {
-                await saveLocalMapSnapshot();
-                return;
-            }
-            if (action === 'save-text') {
-                await copyLocalMapSnapshot();
-                return;
-            }
-            if (action === 'merge-file') {
-                closeCloudModal();
-                triggerFileInput('fileMerge');
-                return;
-            }
-            if (action === 'reset-all') {
-                closeCloudModal();
-                window.setTimeout(() => {
-                    document.getElementById('btnResetMap')?.click();
-                }, 40);
-            }
-        });
-    });
-
-    Array.from(document.querySelectorAll('.cloud-open-board')).forEach((btn) => {
-        bindCloudActionButton(btn, async () => {
-            const boardId = btn.getAttribute('data-board') || '';
-            if (!boardId) return;
-            try {
-                await openCloudBoard(boardId, { quiet: false });
-                await renderCloudHome();
-            } catch (e) {
-                await customAlert('ERREUR CLOUD', escapeHtml(e.message || 'Erreur inconnue.'));
-            }
-        });
-    });
-
-    Array.from(document.querySelectorAll('.cloud-manage-board')).forEach((btn) => {
-        bindCloudActionButton(btn, async () => {
-            const boardId = btn.getAttribute('data-board') || '';
-            if (!boardId) return;
-            await renderCloudMembers(boardId);
-        });
-    });
-
-    Array.from(document.querySelectorAll('.cloud-leave-board')).forEach((btn) => {
-        bindCloudActionButton(btn, async () => {
-            const boardId = btn.getAttribute('data-board') || '';
-            if (!boardId) return;
-
-            const confirmed = await customConfirm('CLOUD', 'Quitter ce board partage ?');
-            if (!confirmed) return;
-
-            try {
-                await collabBoardRequest('leave_board', { boardId });
-                if (boardId === collab.activeBoardId) {
-                    setActiveCloudBoardFromSummary(null);
-                    setBoardQueryParam('');
-                }
-                await renderCloudHome();
-            } catch (e) {
-                await customAlert('ERREUR CLOUD', escapeHtml(e.message || 'Erreur inconnue.'));
-            }
-        });
-    });
-    */
 }
 
 export function openCloudMenu(initialPanel = '') {

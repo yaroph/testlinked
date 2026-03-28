@@ -3,6 +3,7 @@ import { renderAll, getMapPercentCoords } from './render.js';
 import { renderGroupsList, selectItem } from './ui.js';
 import { customAlert, customConfirm, customColorPicker } from './ui-modals.js';
 import { startDrawingCircle, startDrawingFree } from './zone-editor.js';
+import { ensureCloudWriteAccess } from './cloud.js';
 
 let contextMenuOpen = false;
 let contextClickPos = { x: 0, y: 0 };
@@ -60,6 +61,7 @@ export function initContextMenu() {
     // A. NOUVEAU POINT
     if (btnNewPoint) {
         btnNewPoint.onclick = () => {
+            if (!ensureCloudWriteAccess()) return;
             if (state.groups.length === 0) {
                 customAlert("ERREUR", "Créez d'abord un groupe dans le menu de gauche.");
                 return;
@@ -94,6 +96,7 @@ export function initContextMenu() {
     // B. NOUVELLE ZONE (Cercle)
     if (btnNewZone) {
         btnNewZone.onclick = () => {
+            if (!ensureCloudWriteAccess()) return;
             if (state.groups.length === 0) {
                 customAlert("ERREUR", "Créez d'abord un groupe dans le menu de gauche.");
                 return;
@@ -105,6 +108,7 @@ export function initContextMenu() {
     // C. DESSIN LIBRE
     if (btnNewFree) {
         btnNewFree.onclick = () => {
+            if (!ensureCloudWriteAccess()) return;
             if (state.groups.length === 0) {
                 customAlert("ERREUR", "Créez d'abord un groupe dans le menu de gauche.");
                 return;
@@ -149,6 +153,7 @@ export function handleLinkClick(e, link) {
 
     // Action : Changer Couleur (Visuel)
     document.getElementById('btnLinkColor').onclick = async () => {
+        if (!ensureCloudWriteAccess()) return;
         menu.remove(); // On ferme le petit menu d'abord
         
         // On ouvre le sélecteur visuel (palettes)
@@ -164,6 +169,7 @@ export function handleLinkClick(e, link) {
 
     // Action : Supprimer
     document.getElementById('btnLinkDelete').onclick = async () => {
+        if (!ensureCloudWriteAccess()) return;
         menu.remove();
         if(await customConfirm("SUPPRESSION", "Supprimer cette liaison ?")) {
             pushHistory(); // Undo support

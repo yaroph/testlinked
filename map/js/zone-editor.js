@@ -2,17 +2,22 @@ import { state, generateID, saveLocalState, pushHistory } from './state.js';
 import { renderAll, getMapPercentCoords } from './render.js';
 import { selectItem, renderGroupsList } from './ui.js'; // Import de renderGroupsList pour mettre à jour l'UI
 import { customAlert } from './ui-modals.js';
+import { ensureCloudWriteAccess, isCloudBoardReadOnly } from './cloud.js';
 
 // --- INITIALISATION DES MODES ---
 
 export function startDrawingCircle(groupIndex) {
+    if (!ensureCloudWriteAccess()) return false;
     setupDrawingMode('CIRCLE', groupIndex, "MODE CERCLE: Cliquez + Glissez pour le rayon");
+    return true;
 }
 
 // Mode Dessin Libre
 export function startDrawingFree(groupIndex) {
+    if (!ensureCloudWriteAccess()) return false;
     setupDrawingMode('POLYGON', groupIndex, "✏️ DESSIN LIBRE: Maintenez clic gauche. Relâchez pour éditer.");
     state.isFreeMode = true; 
+    return true;
 }
 
 function setupDrawingMode(type, groupIndex, msg) {
@@ -100,6 +105,10 @@ function hideToolbar() {
 // --- HANDLERS SOURIS (MAP) ---
 
 export function handleMapMouseDown(e) {
+    if (isCloudBoardReadOnly()) {
+        if (state.drawingMode || state.draggingItem) ensureCloudWriteAccess();
+        return;
+    }
     // Si on est en attente de validation (toolbar ouverte), on bloque le clic sur la map
     if (state.drawingPending) return; 
 
@@ -138,6 +147,7 @@ export function handleMapMouseDown(e) {
 }
 
 export function handleMapMouseMove(e) {
+    if (isCloudBoardReadOnly()) return;
     if (state.drawingPending) return;
 
     const coords = getMapPercentCoords(e.clientX, e.clientY);
@@ -198,6 +208,10 @@ export function handleMapMouseMove(e) {
 }
 
 export function handleMapMouseUp(e) {
+    if (isCloudBoardReadOnly()) {
+        if (state.draggingItem) state.draggingItem = null;
+        return;
+    }
     // 1. FIN CERCLE
     if (state.drawingMode && state.drawingType === 'CIRCLE' && state.tempZone) {
         finishCircle();
@@ -336,6 +350,7 @@ export function stopDrawing() {
 
 // Initialise le drag d'une zone (appelé depuis render.js lors du mousedown sur une zone)
 export function handleZoneMouseDown(e, gIndex, zIndex) {
+    if (isCloudBoardReadOnly()) return false;
     const coords = getMapPercentCoords(e.clientX, e.clientY);
     const zone = state.groups[gIndex].zones[zIndex];
 
@@ -349,4 +364,5 @@ export function handleZoneMouseDown(e, gIndex, zIndex) {
         origCy: zone.cy || 0,
         origPoints: zone.points ? JSON.parse(JSON.stringify(zone.points)) : []
     };
+    return true;
 }
