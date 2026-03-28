@@ -81,6 +81,8 @@ const collab = {
     ownerId: '',
     activeBoardUpdatedAt: '',
     pendingBoardId: '',
+    pendingRemoteUpdatedAt: '',
+    pendingRemoteEditedBy: '',
     autosaveDebounceTimer: null,
     syncTimer: null,
     syncLoopToken: 0,
@@ -125,7 +127,12 @@ const collab = {
     cursorWorldX: 0,
     cursorWorldY: 0,
     cursorSyncTimer: null,
-    cursorLastSentAt: 0
+    cursorLastSentAt: 0,
+    noticeTimer: null,
+    noticeLoopToken: 0,
+    noticeLoopRunning: false,
+    noticeRetryMs: 0,
+    noticeInFlight: false
 };
 
 const pointDebugLogger = createBrowserDebugLogger({
@@ -140,6 +147,9 @@ const COLLAB_AUTOSAVE_RETRY_MS = 700;
 const COLLAB_WATCH_TIMEOUT_MS = 12000;
 const COLLAB_WATCH_RETRY_MIN_MS = 1000;
 const COLLAB_WATCH_RETRY_MAX_MS = 8000;
+const COLLAB_NOTICE_TIMEOUT_MS = 15000;
+const COLLAB_NOTICE_RETRY_MIN_MS = 5000;
+const COLLAB_NOTICE_RETRY_MAX_MS = 30000;
 const COLLAB_CURSOR_REALTIME_MS = 80;
 const COLLAB_CURSOR_LEGACY_MS = 180;
 const COLLAB_EDIT_LOCK_HEARTBEAT_MS = 20000;
@@ -703,7 +713,7 @@ function syncCloudStatus() {
 
     if (collab.activeBoardId) {
         const lockMessage = isCloudBoardReadOnly()
-            ? getCloudReadOnlyMessage()
+            ? (getCloudUpdateNoticeLabel() || getCloudReadOnlyMessage())
             : getActiveEditLockMessage();
         const isReadOnlyLock = isCloudBoardReadOnly();
         const label = isReadOnlyLock
@@ -767,6 +777,113 @@ function getActiveEditLockMessage(lock = collab.activeEditLock) {
     return '';
 }
 
+function getCloudUpdateNoticeLabel() {
+    const updatedAt = String(collab.pendingRemoteUpdatedAt || '').trim();
+    if (!updatedAt) return '';
+    const editedBy = String(collab.pendingRemoteEditedBy || '').trim();
+    return editedBy
+        ? `Nouvelles modifs de ${editedBy}. Appuie sur Rafraichir.`
+        : 'Nouvelles modifs dispo. Appuie sur Rafraichir.';
+}
+
+function ensureCloudToastStyle() {
+    if (document.getElementById('cloud-toast-style')) return;
+    const style = document.createElement('style');
+    style.id = 'cloud-toast-style';
+    style.textContent = `
+        .cloud-update-toast {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 10020;
+            width: min(360px, calc(100vw - 28px));
+            padding: 12px 14px;
+            border-radius: 14px;
+            border: 1px solid rgba(115, 251, 247, 0.32);
+            background:
+                linear-gradient(180deg, rgba(7, 16, 33, 0.96), rgba(4, 10, 23, 0.96)),
+                radial-gradient(circle at top right, rgba(115, 251, 247, 0.08), transparent 34%);
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+            color: #dffaff;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(12px);
+            transition: opacity 180ms ease, transform 180ms ease;
+        }
+        .cloud-update-toast.is-visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .cloud-update-toast-title {
+            display: block;
+            margin-bottom: 4px;
+            color: #73fbf7;
+            font-size: 0.74rem;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+        }
+        .cloud-update-toast-copy {
+            display: block;
+            color: #dffaff;
+            font-size: 0.88rem;
+            line-height: 1.45;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+function showCloudUpdateToast(message) {
+    const copy = String(message || '').trim();
+    if (!copy) return;
+    ensureCloudToastStyle();
+    const previous = document.getElementById('cloud-update-toast');
+    if (previous) previous.remove();
+    const toast = document.createElement('div');
+    toast.id = 'cloud-update-toast';
+    toast.className = 'cloud-update-toast';
+    toast.innerHTML = `
+        <span class="cloud-update-toast-title">Cloud</span>
+        <span class="cloud-update-toast-copy">${escapeHtml(copy)}</span>
+    `;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('is-visible'));
+    window.setTimeout(() => {
+        toast.classList.remove('is-visible');
+        window.setTimeout(() => toast.remove(), 220);
+    }, 3400);
+}
+
+function clearCloudUpdateNotice(options = {}) {
+    const hadNotice = Boolean(collab.pendingRemoteUpdatedAt || collab.pendingRemoteEditedBy);
+    collab.pendingRemoteUpdatedAt = '';
+    collab.pendingRemoteEditedBy = '';
+    syncCloudStatus();
+    if (hadNotice && options.syncState !== false && isCloudBoardActive() && isCloudBoardReadOnly()) {
+        setCloudSyncState('session', getCloudReadOnlyMessage() || 'Lecture seule sur ce board');
+    }
+    return hadNotice;
+}
+
+function markCloudUpdateNotice(updatedAt = '', lastEditedBy = null) {
+    const nextUpdatedAt = String(updatedAt || '').trim();
+    if (!nextUpdatedAt) return false;
+    const nextEditedBy = String(lastEditedBy?.username || lastEditedBy || '').trim();
+    const changed = nextUpdatedAt !== String(collab.pendingRemoteUpdatedAt || '')
+        || nextEditedBy !== String(collab.pendingRemoteEditedBy || '');
+    collab.pendingRemoteUpdatedAt = nextUpdatedAt;
+    collab.pendingRemoteEditedBy = nextEditedBy;
+    syncCloudStatus();
+    if (changed) {
+        appendActionLog('nouvelles modifs cloud dispo, appuie sur Rafraichir');
+        showCloudUpdateToast(getCloudUpdateNoticeLabel());
+    }
+    if (isCloudBoardActive() && isCloudBoardReadOnly()) {
+        setCloudSyncState('session', getCloudUpdateNoticeLabel());
+    }
+    return changed;
+}
+
 function updateActiveEditLock(rawLock = null, options = {}) {
     const previous = JSON.stringify(collab.activeEditLock || null);
     const nextLock = normalizeActiveEditLock(rawLock);
@@ -780,9 +897,13 @@ function updateActiveEditLock(rawLock = null, options = {}) {
         stopCollabLiveSync();
         stopCollabPresence();
         stopEditLockHeartbeat();
+        startCollabUpdateNotice();
         if (isCloudBoardActive()) {
-            setCloudSyncState('session', getCloudReadOnlyMessage() || getActiveEditLockMessage(nextLock));
+            setCloudSyncState('session', getCloudUpdateNoticeLabel() || getCloudReadOnlyMessage() || getActiveEditLockMessage(nextLock));
         }
+    } else {
+        stopCollabUpdateNotice();
+        clearCloudUpdateNotice({ syncState: false });
     }
 
     if (options.refreshEditor !== false && JSON.stringify(nextLock || null) !== previous && state.selection) {
@@ -798,6 +919,88 @@ function stopEditLockHeartbeat() {
         retryKey: 'editLockRetryMs',
         inFlightKey: 'editLockInFlight'
     });
+}
+
+function stopCollabUpdateNotice() {
+    stopRetriableLoop(collab, {
+        timerKey: 'noticeTimer',
+        tokenKey: 'noticeLoopToken',
+        runningKey: 'noticeLoopRunning',
+        retryKey: 'noticeRetryMs',
+        inFlightKey: 'noticeInFlight'
+    });
+}
+
+function scheduleNextNoticeTick(loopToken, delayMs = 0) {
+    scheduleRetriableLoop(collab, {
+        timerKey: 'noticeTimer',
+        tokenKey: 'noticeLoopToken'
+    }, loopToken, delayMs, () => {
+        runCollabUpdateNoticeLoop(loopToken).catch(() => {});
+    });
+}
+
+async function runCollabUpdateNoticeLoop(loopToken) {
+    if (collab.noticeLoopToken !== loopToken) return;
+    if (!isCloudBoardActive() || !collab.user || !collab.token || canEditCloudBoard()) {
+        collab.noticeLoopRunning = false;
+        return;
+    }
+    if (collab.noticeInFlight) return;
+
+    collab.noticeInFlight = true;
+    try {
+        const watch = await collabBoardRequest('watch_board', {
+            boardId: collab.activeBoardId,
+            sinceUpdatedAt: String(collab.pendingRemoteUpdatedAt || collab.activeBoardUpdatedAt || ''),
+            timeoutMs: COLLAB_NOTICE_TIMEOUT_MS
+        });
+
+        if (collab.noticeLoopToken !== loopToken) return;
+        collab.noticeRetryMs = COLLAB_NOTICE_RETRY_MIN_MS;
+
+        if (watch?.deleted || watch?.revoked) {
+            setActiveCloudBoardFromSummary(null);
+            setBoardQueryParam('');
+            appendActionLog('cloud: board indisponible');
+            collab.noticeLoopRunning = false;
+            return;
+        }
+
+        if (watch?.changed) {
+            const watchedUpdatedAt = String(watch.updatedAt || '');
+            if (watchedUpdatedAt && watchedUpdatedAt !== String(collab.activeBoardUpdatedAt || '')) {
+                markCloudUpdateNotice(watchedUpdatedAt, watch?.lastEditedBy);
+            }
+        }
+
+        scheduleNextNoticeTick(loopToken, 0);
+    } catch (e) {
+        if (collab.noticeLoopToken !== loopToken) return;
+        const status = Number(e?.status || 0);
+        if (status === 401 || status === 403 || status === 404) {
+            collab.noticeLoopRunning = false;
+            stopCollabUpdateNotice();
+            return;
+        }
+
+        collab.noticeRetryMs = collab.noticeRetryMs
+            ? Math.min(COLLAB_NOTICE_RETRY_MAX_MS, collab.noticeRetryMs * 2)
+            : COLLAB_NOTICE_RETRY_MIN_MS;
+        scheduleNextNoticeTick(loopToken, collab.noticeRetryMs);
+    } finally {
+        collab.noticeInFlight = false;
+    }
+}
+
+function startCollabUpdateNotice() {
+    stopCollabUpdateNotice();
+    if (!isCloudBoardActive() || !collab.user || !collab.token || canEditCloudBoard()) return;
+    const loopToken = collab.noticeLoopToken + 1;
+    collab.noticeLoopToken = loopToken;
+    collab.noticeLoopRunning = true;
+    collab.noticeRetryMs = COLLAB_NOTICE_RETRY_MIN_MS;
+    scheduleNextNoticeTick(loopToken, 0);
 }
 
 function scheduleNextEditLockTick(loopToken, delayMs = COLLAB_EDIT_LOCK_HEARTBEAT_MS) {
@@ -1864,16 +2067,19 @@ function startCheckpointCloudTransport(options = {}) {
     updateCollabPresence([]);
     ensureCollabAutosaveListener();
     if (canEditCloudBoard()) {
+        stopCollabUpdateNotice();
+        clearCloudUpdateNotice({ syncState: false });
         startCollabAutosave();
         startEditLockHeartbeat();
     } else {
         stopEditLockHeartbeat();
+        startCollabUpdateNotice();
     }
     setCloudSyncState(
         'session',
         String(options.label || (canEditCloudBoard()
             ? 'Edition exclusive active'
-            : (getCloudReadOnlyMessage() || 'Lecture seule sur ce board')))
+            : (getCloudUpdateNoticeLabel() || getCloudReadOnlyMessage() || 'Lecture seule sur ce board')))
     );
 }
 
@@ -2273,6 +2479,7 @@ function setActiveCloudBoardFromSummary(summary = null) {
         clearPointCursorSyncTimer();
         clearPointLiveCursor({ broadcast: false, resetPosition: true });
         stopEditLockHeartbeat();
+        stopCollabUpdateNotice();
         stopCollabRealtime();
         stopCollabAutosave();
         stopCollabLiveSync();
@@ -2284,6 +2491,8 @@ function setActiveCloudBoardFromSummary(summary = null) {
         collab.activeBoardTitle = '';
         collab.ownerId = '';
         collab.activeBoardUpdatedAt = '';
+        collab.pendingRemoteUpdatedAt = '';
+        collab.pendingRemoteEditedBy = '';
         collab.activeEditLock = null;
         collab.lastSavedFingerprint = '';
         collab.localChangeSeq = 0;
@@ -2298,6 +2507,8 @@ function setActiveCloudBoardFromSummary(summary = null) {
         collab.ownerId = String(summary.ownerId || '');
         collab.activeBoardUpdatedAt = String(summary.updatedAt || '');
         if (boardChanged) {
+            collab.pendingRemoteUpdatedAt = '';
+            collab.pendingRemoteEditedBy = '';
             collab.activeEditLock = null;
         }
     }
@@ -2346,7 +2557,8 @@ async function openCloudBoard(boardId, options = {}) {
     }));
 
     setActiveCloudBoardFromSummary(summary);
-    updateActiveEditLock(result?.editLock || null, { refreshEditor: false });
+    clearCloudUpdateNotice({ syncState: false });
+    updateActiveEditLock(result?.editLock || null);
     updateCollabPresence(result?.presence || []);
     applyCloudBoardData(result.board.data, { quiet: true, projectName: summary.title });
     setBoardQueryParam(summary.id);
@@ -4598,7 +4810,7 @@ async function createCloudBoardFromPayload(title, plainData) {
         ownerId: result.board.ownerId || collab.user.id,
         updatedAt: result.board.updatedAt || ''
     });
-    updateActiveEditLock(result?.editLock || null, { refreshEditor: false });
+    updateActiveEditLock(result?.editLock || null);
     state.projectName = collab.activeBoardTitle;
     updateCollabPresence(result?.presence || []);
     applyCloudBoardData(result.board.data || payload, { quiet: true, projectName: collab.activeBoardTitle });
