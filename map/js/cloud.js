@@ -93,9 +93,6 @@ const collab = {
     editLockLoopRunning: false,
     editLockRetryMs: 0,
     editLockInFlight: false,
-    realtimeSession: null,
-    realtimeFallbackActive: false,
-    realtimeTextBindings: new Map(),
     activeTextKey: '',
     activeTextLabel: '',
     activeTextSelectionStart: null,
@@ -403,7 +400,7 @@ function clearMapRealtimeFieldPresence(options = {}) {
     if (shouldNotify) {
         updateMapCloudPresence().catch(() => {});
     } else if (hadPresence) {
-        syncMapRealtimeAwarenessDecorations();
+        syncMapFieldAwarenessDecorations();
     }
 }
 
@@ -416,7 +413,7 @@ function setMapRealtimeFieldPresence(textKey, textLabel) {
     collab.activeTextSelectionStart = null;
     collab.activeTextSelectionEnd = null;
     collab.activeTextSelectionDirection = 'none';
-    syncMapRealtimeAwarenessDecorations();
+    syncMapFieldAwarenessDecorations();
 }
 
 function setMapRealtimeFieldSelection(textKey, selection = {}, options = {}) {
@@ -431,7 +428,7 @@ function setMapRealtimeFieldSelection(textKey, selection = {}, options = {}) {
     collab.activeTextSelectionEnd = nextEnd;
     collab.activeTextSelectionDirection = nextDirection;
     if (!didChange || options.notify === false) return;
-    syncMapRealtimeAwarenessDecorations();
+    syncMapFieldAwarenessDecorations();
 }
 
 function clearMapCursorSyncTimer() {
@@ -468,7 +465,7 @@ function updateMapPresence(entries = []) {
         return String(a.username || '').localeCompare(String(b.username || ''));
     });
     syncMapRemoteCursors(collab.presence);
-    syncMapRealtimeAwarenessDecorations();
+    syncMapFieldAwarenessDecorations();
 }
 
 function buildMapPresencePayload(extra = {}) {
@@ -520,7 +517,7 @@ function getMapAwarenessMessage(textKey) {
     return '';
 }
 
-export function syncMapRealtimeAwarenessDecorations() {
+export function syncMapFieldAwarenessDecorations() {
     const selected = getMapSelectedEntity();
     Object.entries(MAP_REALTIME_TEXT_FIELDS).forEach(([entityType, fields]) => {
         Object.entries(fields).forEach(([fieldName, config]) => {
@@ -800,8 +797,6 @@ function withoutCloudAutosave(fn) {
 function stopCollabRealtime() {
     clearMapCursorSyncTimer();
     stopMapRealtimeText();
-    collab.realtimeSession = null;
-    collab.realtimeFallbackActive = false;
 }
 
 function stopMapRealtimeText() {
@@ -828,7 +823,7 @@ function handleMapRealtimeTextUpdate(payload = {}) {
     void payload;
 }
 
-export function bindMapRealtimeTextField(entityType, entity, fieldName, field) {
+export function bindMapCloudTextField(entityType, entity, fieldName, field) {
     void entityType;
     void entity;
     void fieldName;
@@ -836,7 +831,7 @@ export function bindMapRealtimeTextField(entityType, entity, fieldName, field) {
     return false;
 }
 
-export function unbindMapRealtimeTextFields() {
+export function unbindMapCloudTextFields() {
     clearMapRealtimeFieldPresence({ notify: false });
 }
 
@@ -871,7 +866,6 @@ function startCheckpointCloudTransport() {
     stopCollabAutosave();
     stopCollabLiveSync();
     stopCollabPresence();
-    collab.realtimeFallbackActive = false;
     updateMapPresence([]);
     ensureCollabAutosaveListener();
     if (canEditCloudBoard()) {
@@ -1155,7 +1149,7 @@ async function syncActiveCloudBoard(options = {}) {
         captureCloudSavedFingerprint();
         return true;
     } catch (e) {
-        if (!quiet) await customAlert('ERREUR CLOUD', escapeHtml(e.message || 'Erreur sync live.'));
+        if (!quiet) await customAlert('ERREUR CLOUD', escapeHtml(e.message || 'Erreur sync cloud.'));
         return false;
     } finally {
         collab.syncInFlight = false;
@@ -1306,7 +1300,7 @@ function applyCloudMapData(rawData) {
         renderAll();
         saveLocalState();
         syncSharedMapSnapshot(normalized);
-        syncMapRealtimeAwarenessDecorations();
+        syncMapFieldAwarenessDecorations();
         return normalized;
     });
 }
@@ -1423,25 +1417,6 @@ export async function saveActiveCloudBoard(options = {}) {
         if (manual && !quiet) await customAlert('CLOUD', escapeHtml(getCloudReadOnlyMessage() || "Tu n'as pas les droits d'edition cloud."));
         return false;
     }
-    if (isRealtimeCloudActive()) {
-        const hadChanges = hasLocalCloudChanges();
-        if (!hadChanges) {
-            if (manual && !quiet) await customAlert('CLOUD', '☁️ Temps reel deja synchronise.');
-            return true;
-        }
-
-        const flushed = await collab.realtimeSession.flushLocalChanges();
-        if (flushed || !hasLocalCloudChanges()) {
-            if (manual && !quiet) await customAlert('CLOUD', '☁️ Synchro temps reel envoyee.');
-            return true;
-        }
-
-        if (manual && !quiet) {
-            await customAlert('CLOUD', 'Connexion temps reel en cours. Les modifs restent locales pour le moment.');
-        }
-        return false;
-    }
-
     if (collab.saveInFlight) {
         if (!manual) queueCloudAutosave(COLLAB_AUTOSAVE_RETRY_MS);
         return false;

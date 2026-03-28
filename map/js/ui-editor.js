@@ -6,9 +6,9 @@ import { renderAll } from './render.js';
 import { renderGroupsList } from './ui-list.js';
 import { deselect } from './ui.js';
 import {
-    bindMapRealtimeTextField,
-    unbindMapRealtimeTextFields,
-    syncMapRealtimeAwarenessDecorations,
+    bindMapCloudTextField,
+    unbindMapCloudTextFields,
+    syncMapFieldAwarenessDecorations,
     ensureCloudWriteAccess,
     isCloudBoardReadOnly,
     getCloudReadOnlyMessage
@@ -59,7 +59,7 @@ function decorateReadOnlyEditor() {
 }
 
 export function renderEditor() {
-    unbindMapRealtimeTextFields();
+    unbindMapCloudTextFields();
     if (state.selectedPoint) {
         renderPointEditor();
         return;
@@ -137,7 +137,6 @@ function renderZoneEditor() {
                     value="${escapeAttr(zone.name || '')}"
                     class="cyber-input"
                 >
-                <div id="mapAwZoneName" class="editor-realtime-presence" style="display:none; min-height:14px; margin-top:6px; font-size:0.68rem; color:#ffcc8a;"></div>
             </div>
 
             ${geometryBlock}
@@ -157,7 +156,7 @@ function renderZoneEditor() {
     decorateReadOnlyEditor();
 
     const zoneNameInput = document.getElementById('ezName');
-    if (!bindMapRealtimeTextField('zone', zone, 'name', zoneNameInput)) {
+    if (!bindMapCloudTextField('zone', zone, 'name', zoneNameInput)) {
         zoneNameInput.oninput = (event) => {
             zone.name = event.target.value;
             renderAll();
@@ -215,7 +214,7 @@ function renderZoneEditor() {
     };
 
     document.getElementById('btnClose').onclick = deselect;
-    syncMapRealtimeAwarenessDecorations();
+    syncMapFieldAwarenessDecorations();
 }
 
 function renderPointEditor() {
@@ -253,7 +252,6 @@ function renderPointEditor() {
                         value="${escapeAttr(point.name || '')}"
                         class="cyber-input"
                     >
-                    <div id="mapAwPointName" class="editor-realtime-presence" style="display:none; min-height:14px; margin-top:6px; font-size:0.68rem; color:#ffcc8a;"></div>
                     <input
                         type="text"
                         id="edType"
@@ -261,7 +259,6 @@ function renderPointEditor() {
                         placeholder="Type / affiliation"
                         class="cyber-input"
                     >
-                    <div id="mapAwPointType" class="editor-realtime-presence" style="display:none; min-height:14px; margin-top:6px; font-size:0.68rem; color:#ffcc8a;"></div>
                 </div>
             </div>
 
@@ -309,7 +306,6 @@ function renderPointEditor() {
                     <span>Intel</span>
                 </div>
                 <textarea id="edNotes" class="cyber-input" placeholder="Notes...">${escapeHtml(point.notes || '')}</textarea>
-                <div id="mapAwPointNotes" class="editor-realtime-presence" style="display:none; min-height:14px; margin-top:6px; font-size:0.68rem; color:#ffcc8a;"></div>
             </div>
 
             <div class="editor-actions-row editor-actions-row-single">
@@ -320,7 +316,7 @@ function renderPointEditor() {
     decorateReadOnlyEditor();
 
     const pointNameInput = document.getElementById('edName');
-    if (!bindMapRealtimeTextField('point', point, 'name', pointNameInput)) {
+    if (!bindMapCloudTextField('point', point, 'name', pointNameInput)) {
         pointNameInput.oninput = (event) => {
             point.name = event.target.value;
             renderAll();
@@ -337,7 +333,7 @@ function renderPointEditor() {
     };
 
     const pointTypeInput = document.getElementById('edType');
-    if (!bindMapRealtimeTextField('point', point, 'type', pointTypeInput)) {
+    if (!bindMapCloudTextField('point', point, 'type', pointTypeInput)) {
         pointTypeInput.oninput = (event) => {
             point.type = event.target.value;
             renderGroupsList();
@@ -346,7 +342,7 @@ function renderPointEditor() {
     }
 
     const pointNotesInput = document.getElementById('edNotes');
-    if (!bindMapRealtimeTextField('point', point, 'notes', pointNotesInput)) {
+    if (!bindMapCloudTextField('point', point, 'notes', pointNotesInput)) {
         pointNotesInput.oninput = (event) => {
             point.notes = event.target.value;
             saveLocalState();
@@ -408,10 +404,10 @@ function renderPointEditor() {
     };
 
     document.getElementById('btnClose').onclick = deselect;
-    syncMapRealtimeAwarenessDecorations();
+    syncMapFieldAwarenessDecorations();
 }
 
 export function closeEditor() {
     sidebarRight.classList.remove('active');
-    unbindMapRealtimeTextFields();
+    unbindMapCloudTextFields();
 }

@@ -28,5 +28,6 @@ export function shouldUseRealtimeCloud(collab = {}, transportAvailable = true) {
 }
 
 export function isRealtimeCloudActive(collab = {}) {
-    return Boolean(collab && collab.realtimeSession);
+    void collab;
+    return false;
 }

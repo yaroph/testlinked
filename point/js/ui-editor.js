@@ -13,9 +13,7 @@ import {
     showCustomAlert,
     showCustomPrompt,
     refreshHvt,
-    bindRealtimeDescriptionField,
-    bindRealtimePointField,
-    unbindRealtimePointFields,
+    unbindCloudPointFields,
     ensureCloudWriteAccess,
     isCloudBoardReadOnly,
     getCloudReadOnlyMessage
@@ -542,7 +540,7 @@ export function renderEditor() {
     updatePathfindingPanel();
     const editorPanel = document.getElementById('editor');
     const focusSnapshot = captureEditorFocusState();
-    unbindRealtimePointFields();
+    unbindCloudPointFields();
 
     if (!n) {
         if (editorPanel) editorPanel.style.display = 'none';
@@ -668,34 +666,16 @@ function setupEditorListeners(n) {
         scheduleSave();
     };
 
-    // --- CORRECTION YJS BINDING : PROTECTION DES VALEURS LOCALES ---
-
     const edQuickName = document.getElementById('edQuickNameInline');
     if (edQuickName) {
         edQuickName.addEventListener('input', syncEditorNameLayout);
         edQuickName.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') event.preventDefault();
         });
-        
-        const originalName = String(n.name || '');
-        const hasRealtimeNameBinding = bindRealtimePointField(n, 'name', edQuickName);
-        
-        if (!hasRealtimeNameBinding) {
-            edQuickName.oninput = (e) => applyNodeName(e.target.value);
-        } else if (originalName && !edQuickName.value) {
-            edQuickName.value = originalName;
-            edQuickName.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+        edQuickName.oninput = (e) => applyNodeName(e.target.value);
 
         edQuickName.addEventListener('blur', () => {
             const finalizedName = normalizeNodeNameDraft(edQuickName.value, { finalize: true });
-            if (hasRealtimeNameBinding) {
-                if (edQuickName.value !== finalizedName) {
-                    edQuickName.value = finalizedName;
-                    edQuickName.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-                return;
-            }
             if (edQuickName.value !== finalizedName || String(n.name || '') !== finalizedName) {
                 applyNodeName(finalizedName, { finalize: true });
             }
@@ -705,14 +685,7 @@ function setupEditorListeners(n) {
 
     const edQuickNum = document.getElementById('edQuickNum');
     if (edQuickNum) {
-        const originalNum = String(n.num || '');
-        const hasBinding = bindRealtimePointField(n, 'num', edQuickNum);
-        if (!hasBinding) {
-            edQuickNum.oninput = (e) => applyNodePhone(e.target.value);
-        } else if (originalNum && !edQuickNum.value) {
-            edQuickNum.value = originalNum;
-            edQuickNum.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+        edQuickNum.oninput = (e) => applyNodePhone(e.target.value);
     }
 
     const quickType = document.getElementById('edQuickType');
@@ -743,53 +716,32 @@ function setupEditorListeners(n) {
 
     const inpQuickAccountNumber = document.getElementById('edQuickAccountNumber');
     if (inpQuickAccountNumber) {
-        const originalAccount = String(n.accountNumber || '');
-        const hasBinding = bindRealtimePointField(n, 'accountNumber', inpQuickAccountNumber);
-        if (!hasBinding) {
-            inpQuickAccountNumber.oninput = (e) => {
-                queueHistory();
-                n.accountNumber = e.target.value;
-                syncMetaDisplays();
-                scheduleSave();
-            };
-        } else if (originalAccount && !inpQuickAccountNumber.value) {
-            inpQuickAccountNumber.value = originalAccount;
-            inpQuickAccountNumber.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+        inpQuickAccountNumber.oninput = (e) => {
+            queueHistory();
+            n.accountNumber = e.target.value;
+            syncMetaDisplays();
+            scheduleSave();
+        };
     }
 
     const inpQuickCitizenNumber = document.getElementById('edQuickCitizenNumber');
     if (inpQuickCitizenNumber) {
-        const originalCitizen = String(n.citizenNumber || '');
-        const hasBinding = bindRealtimePointField(n, 'citizenNumber', inpQuickCitizenNumber);
-        if (!hasBinding) {
-            inpQuickCitizenNumber.oninput = (e) => {
-                queueHistory();
-                n.citizenNumber = e.target.value;
-                syncMetaDisplays();
-                scheduleSave();
-            };
-        } else if (originalCitizen && !inpQuickCitizenNumber.value) {
-            inpQuickCitizenNumber.value = originalCitizen;
-            inpQuickCitizenNumber.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+        inpQuickCitizenNumber.oninput = (e) => {
+            queueHistory();
+            n.citizenNumber = e.target.value;
+            syncMetaDisplays();
+            scheduleSave();
+        };
     }
 
     const inpDescription = document.getElementById('edDescription');
     if (inpDescription) {
-        const originalDesc = String(n.description || '');
-        const hasBinding = bindRealtimeDescriptionField(n, inpDescription);
-        if (!hasBinding) {
-            inpDescription.oninput = (e) => {
-                queueHistory();
-                n.description = e.target.value;
-                n.notes = e.target.value;
-                scheduleSave();
-            };
-        } else if (originalDesc && !inpDescription.value) {
-            inpDescription.value = originalDesc;
-            inpDescription.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+        inpDescription.oninput = (e) => {
+            queueHistory();
+            n.description = e.target.value;
+            n.notes = e.target.value;
+            scheduleSave();
+        };
     }
 
     Array.from(document.querySelectorAll('[data-person-status]')).forEach((btn) => {

@@ -114,9 +114,6 @@ const collab = {
     editLockLoopRunning: false,
     editLockRetryMs: 0,
     editLockInFlight: false,
-    realtimeSession: null,
-    realtimeFallbackActive: false,
-    realtimeTextBindings: new Map(),
     activeTextKey: '',
     activeTextLabel: '',
     activeTextSelectionStart: null,
@@ -452,7 +449,7 @@ function clearRealtimeFieldPresence(options = {}) {
     collab.activeTextSelectionEnd = null;
     collab.activeTextSelectionDirection = 'none';
     if (shouldNotify && hadPresence) {
-        syncPointRealtimeAwarenessDecorations();
+        syncPointFieldAwarenessDecorations();
     }
 }
 
@@ -465,7 +462,7 @@ function setRealtimeFieldPresence(textKey, textLabel) {
     collab.activeTextSelectionStart = null;
     collab.activeTextSelectionEnd = null;
     collab.activeTextSelectionDirection = 'none';
-    syncPointRealtimeAwarenessDecorations();
+    syncPointFieldAwarenessDecorations();
 }
 
 function setRealtimeFieldSelection(textKey, selection = {}, options = {}) {
@@ -480,7 +477,7 @@ function setRealtimeFieldSelection(textKey, selection = {}, options = {}) {
     collab.activeTextSelectionEnd = nextEnd;
     collab.activeTextSelectionDirection = nextDirection;
     if (!didChange || options.notify === false) return;
-    syncPointRealtimeAwarenessDecorations();
+    syncPointFieldAwarenessDecorations();
 }
 
 function getPointFieldAwarenessContainerId(fieldName) {
@@ -502,7 +499,7 @@ function getPointFieldAwarenessMessage(textKey) {
     return '';
 }
 
-function syncPointRealtimeAwarenessDecorations(nodeId = state.selection) {
+function syncPointFieldAwarenessDecorations(nodeId = state.selection) {
     const cleanNodeId = String(nodeId || '').trim();
     Object.keys(POINT_REALTIME_TEXT_FIELDS).forEach((fieldName) => {
         const awarenessId = getPointFieldAwarenessContainerId(fieldName);
@@ -1683,7 +1680,7 @@ function updateCollabPresence(rawPresence = []) {
     collab.presence = nextPresence;
     setPointRemoteCursors(nextPresence);
     syncCloudStatus();
-    syncPointRealtimeAwarenessDecorations();
+    syncPointFieldAwarenessDecorations();
     scheduleDraw();
 }
 
@@ -1787,7 +1784,7 @@ function applyCloudBoardData(rawData, options = {}) {
         draw();
     }
     if (!quiet) {
-        appendActionLog('sync live: board mis a jour');
+        appendActionLog('board cloud mis a jour');
     }
 }
 
@@ -1813,8 +1810,6 @@ function hasLocalCloudChanges() {
 function stopCollabRealtime() {
     clearPointCursorSyncTimer();
     stopCollabRealtimeText();
-    collab.realtimeSession = null;
-    collab.realtimeFallbackActive = false;
     if (state.selection) {
         renderEditor();
     }
@@ -1842,22 +1837,22 @@ function handleCollabRealtimeTextUpdate(payload = {}) {
     void payload;
 }
 
-export function bindRealtimePointField(node, fieldName, field) {
+export function bindCloudPointField(node, fieldName, field) {
     void node;
     void fieldName;
     void field;
     return false;
 }
 
-export function bindRealtimeDescriptionField(node, textarea) {
-    return bindRealtimePointField(node, 'description', textarea);
+export function bindCloudDescriptionField(node, textarea) {
+    return bindCloudPointField(node, 'description', textarea);
 }
 
-export function unbindRealtimeDescriptionField() {
+export function unbindCloudDescriptionField() {
     stopCollabRealtimeText();
 }
 
-export function unbindRealtimePointFields() {
+export function unbindCloudPointFields() {
     stopCollabRealtimeText();
 }
 
@@ -1866,7 +1861,6 @@ function startCheckpointCloudTransport(options = {}) {
     stopCollabAutosave();
     stopCollabLiveSync();
     stopCollabPresence();
-    collab.realtimeFallbackActive = false;
     updateCollabPresence([]);
     ensureCollabAutosaveListener();
     if (canEditCloudBoard()) {
@@ -2188,12 +2182,12 @@ async function syncActiveCloudBoard(options = {}) {
         applyCloudBoardData(result.board.data, { quiet, projectName: remoteSummary.title });
         setCloudSyncState('live');
         if (!quiet) {
-            appendActionLog('sync live: board mis a jour');
+        appendActionLog('board cloud mis a jour');
         }
         return true;
     } catch (e) {
         setCloudSyncState('error');
-        if (!quiet) showCustomAlert(`Erreur sync live: ${escapeHtml(e.message || 'inconnue')}`);
+        if (!quiet) showCustomAlert(`Erreur sync cloud: ${escapeHtml(e.message || 'inconnue')}`);
         return false;
     } finally {
         collab.syncInFlight = false;
@@ -2428,26 +2422,6 @@ async function saveActiveCloudBoard(options = {}) {
         if (manual && !quiet) {
             showCustomAlert(escapeHtml(getCloudReadOnlyMessage() || "Tu n'as pas les droits d'edition cloud."));
         }
-        return false;
-    }
-    if (isRealtimeCloudActive()) {
-        const hadChanges = hasLocalCloudChanges();
-        if (!hadChanges) {
-            setCloudSyncState('live', 'Temps reel actif');
-            if (manual && !quiet) showCustomAlert('☁️ Temps reel deja synchronise.');
-            return true;
-        }
-
-        setCloudSyncState('syncing', 'Envoi temps reel...');
-        const flushed = await collab.realtimeSession.flushLocalChanges();
-        if (flushed || !hasLocalCloudChanges()) {
-            setCloudSyncState('live', 'Temps reel actif');
-            if (manual && !quiet) showCustomAlert('☁️ Synchro temps reel envoyee.');
-            return true;
-        }
-
-        setCloudSyncState('pending', 'Connexion temps reel en cours');
-        if (manual && !quiet) showCustomAlert('Connexion temps reel en cours. Les modifs restent locales pour le moment.');
         return false;
     }
     if (collab.saveInFlight) {
