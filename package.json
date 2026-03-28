@@ -2,13 +2,11 @@
   "name": "bni-linked",
   "private": true,
   "version": "3.0.0",
-  "description": "Hybrid cloud save frontend/backend with optional realtime",
+  "description": "Single-editor cloud save frontend/backend",
   "scripts": {
     "test": "node --test .\\tests\\*.test.cjs",
     "test:smoke": "playwright test",
     "test:verify": "npm test && npm run test:smoke",
-    "realtime:server": "node realtime/server/index.mjs",
-    "realtime:verify": "node scripts/verify-realtime-prod.mjs",
     "migrate:netlify": "node scripts/migrate-netlify-to-firebase.mjs"
   },
   "dependencies": {

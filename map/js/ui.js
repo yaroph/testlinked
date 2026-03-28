@@ -6,7 +6,7 @@ import { renderGroupsList } from './ui-list.js';
 import { initContextMenu, handleLinkClick, handleLinkHover, handleLinkOut, moveTooltip } from './ui-menus.js';
 import { stopDrawing } from './zone-editor.js';
 import { addTacticalLink } from './state.js'; // Correction import
-import { updateMapCloudPresence, ensureCloudWriteAccess } from './cloud.js';
+import { ensureCloudWriteAccess } from './cloud.js';
 
 export { handleLinkClick, handleLinkHover, handleLinkOut, moveTooltip };
 
@@ -223,7 +223,6 @@ export function selectItem(type, gIndex, index) {
     }
     renderAll(); 
     renderEditor(); 
-    updateMapCloudPresence().catch(() => {});
     syncInteractionModeHud();
 }
 
@@ -234,7 +233,6 @@ export function deselect() {
     state.selectedZone = null; 
     renderAll(); 
     closeEditor(); 
-    updateMapCloudPresence().catch(() => {});
     syncInteractionModeHud();
 }
 
