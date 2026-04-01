@@ -946,6 +946,16 @@ function formatPointNodeLabel(node, fallbackId = "") {
   return "fiche sans nom";
 }
 
+function hasMeaningfulManualColorChange(previousNode, nextNode) {
+  const previousManual = Boolean(previousNode?.manualColor);
+  const nextManual = Boolean(nextNode?.manualColor);
+  if (!previousManual && !nextManual) return false;
+  return (
+    previousManual !== nextManual
+    || String(previousNode?.color || "") !== String(nextNode?.color || "")
+  );
+}
+
 function buildPointLinkPairMap(links = []) {
   const pairs = new Map();
   (Array.isArray(links) ? links : []).forEach((link) => {
@@ -1087,9 +1097,7 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
       }
 
       if (
-        String(previousNode?.color || "")
-        !== String(nextNode?.color || "")
-        || Boolean(previousNode?.manualColor) !== Boolean(nextNode?.manualColor)
+        hasMeaningfulManualColorChange(previousNode, nextNode)
       ) {
         entries.push({
           type: "field",

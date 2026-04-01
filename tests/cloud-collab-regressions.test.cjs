@@ -355,6 +355,104 @@ test('buildBoardSaveActivityEntriesByPage detaille les changements metier sur un
   assert.ok(texts.includes('a repositionne Bob'));
 });
 
+test('buildBoardSaveActivityEntriesByPage ignore les recolorations auto des personnes', () => {
+  const previous = {
+    meta: {},
+    physicsSettings: {},
+    nodes: [
+      {
+        id: 'n1',
+        name: 'Dutch Coleman',
+        type: 'person',
+        color: '#111111',
+        manualColor: false,
+        description: 'Dutch',
+        notes: 'Dutch',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+      {
+        id: 'n2',
+        name: 'Hudson Longston',
+        type: 'person',
+        color: '#222222',
+        manualColor: false,
+        description: '',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+    ],
+    links: [],
+    deletedNodes: [],
+    deletedLinks: [],
+    _collab: { updatedAt: '2026-04-01T21:00:00.000Z', updatedBy: 'dutch' },
+  };
+
+  const next = {
+    meta: {},
+    physicsSettings: {},
+    nodes: [
+      {
+        id: 'n1',
+        name: 'Dutch Coleman',
+        type: 'person',
+        color: '#333333',
+        manualColor: false,
+        description: 'Dutch Coleman',
+        notes: 'Dutch Coleman',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+      {
+        id: 'n2',
+        name: 'Hudson Longston',
+        type: 'person',
+        color: '#444444',
+        manualColor: false,
+        description: '',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+    ],
+    links: [],
+    deletedNodes: [],
+    deletedLinks: [],
+    _collab: { updatedAt: '2026-04-01T21:01:00.000Z', updatedBy: 'dutch' },
+  };
+
+  const entries = __test.buildBoardSaveActivityEntriesByPage('point', previous, next);
+  const texts = entries.map((entry) => entry.text);
+
+  assert.ok(texts.includes('a modifie la description de Dutch Coleman'));
+  assert.equal(texts.some((text) => text.includes('a modifie la couleur')), false);
+});
+
 test('acquireBoardEditLock reserve l edition au premier utilisateur et bloque le second', async () => {
   const store = createMockLockStore();
   const board = { id: 'brd_alpha' };
