@@ -709,6 +709,18 @@ body {
   transition: 0.2s;
 }
 .modal-btn:hover { color: #fff; border-color: #fff; }
+.modal-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  color: var(--text-muted);
+  border-color: rgba(255,255,255,0.12);
+  box-shadow: none;
+}
+.modal-btn:disabled:hover {
+  color: var(--text-muted);
+  border-color: rgba(255,255,255,0.12);
+  box-shadow: none;
+}
 
 .modal-btn.confirm {
   background: var(--accent-cyan); border-color: var(--accent-cyan); color: #000;

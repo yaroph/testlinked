@@ -131,6 +131,7 @@
         btn.type = "button";
         btn.className = `modal-btn ${button.className || ""}`.trim();
         btn.textContent = cleanText(button.label, "OK");
+        btn.disabled = Boolean(button.disabled);
         btn.addEventListener("click", () => finishModal(button.value));
         modalFooter.appendChild(btn);
       });
@@ -252,6 +253,20 @@
     });
     const out = await res.json().catch(() => ({}));
     if (!res.ok || !out.ok) throw new Error(out.error || "Erreur suppression");
+    return out;
+  }
+
+  async function apiClearBoardActivity(boardId) {
+    const res = await fetch("/.netlify/functions/db-boards", {
+      method: "POST",
+      headers: withViewerAuth({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        action: "clear_activity",
+        boardId,
+      }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || !out.ok) throw new Error(out.error || "Erreur purge journal");
     return out;
   }
 
@@ -694,6 +709,14 @@
     updateToolbar();
   }
 
+  function replaceBoardEntry(nextBoard) {
+    const targetId = cleanText(nextBoard?.id);
+    if (!targetId) return;
+    appState.boards.entries = appState.boards.entries.map((entry) =>
+      cleanText(entry?.id) === targetId ? nextBoard : entry
+    );
+  }
+
   function renderActiveTab() {
     Object.entries(panels).forEach(([key, panel]) => {
       panel.classList.toggle("active", key === appState.activeTab);
@@ -861,13 +884,58 @@
     `;
   }
 
+  async function clearBoardActivity(board) {
+    const boardId = cleanText(board?.id);
+    if (!boardId) throw new Error("Board introuvable");
+    const out = await apiClearBoardActivity(boardId);
+    const nextBoard = out?.board && typeof out.board === "object"
+      ? out.board
+      : {
+          ...board,
+          activity: [],
+          activityCount: 0,
+        };
+    replaceBoardEntry(nextBoard);
+    if (appState.activeTab === "boards") {
+      renderBoardsPanel();
+    }
+    return nextBoard;
+  }
+
   async function showBoardDetails(board) {
-    await showModal({
-      title: cleanText(board.title, "Board sans nom"),
-      html: buildBoardDetailHtml(board),
-      dialogClass: "modal-box-wide",
-      buttons: [{ label: "Fermer", value: true, className: "confirm" }],
-    });
+    let currentBoard = board;
+    while (currentBoard) {
+      const hasActivity = Array.isArray(currentBoard.activity) && currentBoard.activity.length > 0;
+      const action = await showModal({
+        title: cleanText(currentBoard.title, "Board sans nom"),
+        html: buildBoardDetailHtml(currentBoard),
+        dialogClass: "modal-box-wide",
+        dismissValue: "close",
+        buttons: [
+          { label: "Vider le journal", value: "clear-activity", className: "danger", disabled: !hasActivity },
+          { label: "Fermer", value: "close", className: "confirm" },
+        ],
+      });
+
+      if (action !== "clear-activity") return;
+
+      const confirmed = await showModal({
+        title: "Etes-vous sur ?",
+        text: `Voulez-vous vraiment vider definitivement le journal du board "${cleanText(currentBoard.title, "Board sans nom")}" ?`,
+        dismissValue: false,
+        buttons: [
+          { label: "Annuler", value: false },
+          { label: "Vider le journal", value: true, className: "danger" },
+        ],
+      });
+      if (!confirmed) continue;
+
+      try {
+        currentBoard = await clearBoardActivity(currentBoard);
+      } catch (error) {
+        await customAlert("Erreur lors du vidage du journal.");
+      }
+    }
   }
 
   async function refreshTab(tab, options = {}) {

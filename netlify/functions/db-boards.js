@@ -1,5 +1,5 @@
 const { getStore, connectLambda } = require("../lib/blob-store");
-const { listKeysByPrefix, normalizePage } = require("../lib/collab");
+const { listKeysByPrefix, normalizePage, readBody, boardKey } = require("../lib/collab");
 const { summarizeBoardData, normalizeSearchText } = require("../lib/db-summary");
 const {
   jsonResponse,
@@ -32,6 +32,15 @@ function timeValue(value) {
 function cleanText(value, fallback = "") {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text || fallback;
+}
+
+async function loadBoard(store, boardId) {
+  if (!boardId) return null;
+  return store.get(boardKey(boardId), { type: "json" });
+}
+
+async function saveBoard(store, board) {
+  return store.setJSON(boardKey(board.id), board);
 }
 
 function normalizeBoardActivityRows(activity = []) {
@@ -163,11 +172,16 @@ exports.handler = async (event) => {
     return preflightResponse();
   }
 
-  if (event.httpMethod !== "GET") {
+  if (event.httpMethod !== "GET" && event.httpMethod !== "POST") {
     return jsonResponse(405, { ok: false, error: "Method not allowed" });
   }
 
-  const access = await authorizeDbRequest(event);
+  const body = event.httpMethod === "POST" ? readBody(event) : null;
+  if (event.httpMethod === "POST" && !body) {
+    return jsonResponse(400, { ok: false, error: "Invalid JSON body" });
+  }
+
+  const access = await authorizeDbRequest(event, body);
   if (!access.ok) {
     return jsonResponse(access.statusCode || 401, { ok: false, error: access.error || "Unauthorized" });
   }
@@ -180,6 +194,31 @@ exports.handler = async (event) => {
 
   try {
     const store = getStore(STORE_NAME);
+    if (event.httpMethod === "POST") {
+      const action = cleanText(body?.action).toLowerCase();
+      if (action !== "clear_activity") {
+        return jsonResponse(400, { ok: false, error: "Action inconnue" });
+      }
+
+      const boardId = cleanText(body?.boardId);
+      if (!boardId) {
+        return jsonResponse(400, { ok: false, error: "Board introuvable" });
+      }
+
+      const board = await loadBoard(store, boardId);
+      if (!board || typeof board !== "object") {
+        return jsonResponse(404, { ok: false, error: "Board introuvable" });
+      }
+
+      board.activity = [];
+      await saveBoard(store, board);
+
+      return jsonResponse(200, {
+        ok: true,
+        board: buildBoardRow(board, await readBoardLock(store, boardId)),
+      });
+    }
+
     const keys = await listKeysByPrefix(store, "boards/", MAX_BOARD_SCAN);
     const boards = await Promise.all(keys.map((key) => store.get(key, { type: "json" }).catch(() => null)));
     const rows = await Promise.all(

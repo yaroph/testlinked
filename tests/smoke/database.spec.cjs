@@ -117,9 +117,43 @@ async function installDatabaseMocks(page, options = {}) {
         }
 
         if (pathname.endsWith('/db-boards')) {
+            if (request.method() === 'POST') {
+                let body = {};
+                try {
+                    body = JSON.parse(request.postData() || '{}');
+                } catch (error) {
+                    body = {};
+                }
+
+                const action = String(body.action || '');
+                const boardId = String(body.boardId || '');
+                requests.push({ endpoint: 'db-boards', method: 'POST', action, boardId });
+
+                if (action === 'clear_activity') {
+                    const board = store.boards.find((entry) => String(entry?.id || '') === boardId);
+                    if (!board) {
+                        return jsonResponse(route, 404, {
+                            ok: false,
+                            error: 'Board introuvable',
+                        });
+                    }
+                    board.activity = [];
+                    board.activityCount = 0;
+                    return jsonResponse(route, 200, {
+                        ok: true,
+                        board: clone(board),
+                    });
+                }
+
+                return jsonResponse(route, 400, {
+                    ok: false,
+                    error: 'Action inconnue',
+                });
+            }
+
             const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
             const limit = Math.max(0, Number(url.searchParams.get('limit') || 0));
-            requests.push({ endpoint: 'db-boards', offset, limit });
+            requests.push({ endpoint: 'db-boards', method: 'GET', offset, limit });
 
             const failures = listFailuresByTab.boards;
             if (Array.isArray(failures) && failures.length) {
@@ -261,6 +295,47 @@ test('database shows the board activity log in board details', async ({ page }) 
     await expect(page.locator('#custom-modal')).toContainText('eric');
     await expect(page.locator('#custom-modal')).toContainText('a modifie la description de Alicia');
     await expect(page.locator('#custom-modal')).toContainText('a ajoute une relation entre Alicia et Bob');
+});
+
+test('database can clear a board activity log after confirmation', async ({ page }) => {
+    const boardEntries = [
+        createBoardEntry(1, {
+            title: 'Alpha Cloud',
+            ownerName: 'eric',
+            activity: [
+                {
+                    id: 'act-1',
+                    at: new Date(Date.UTC(2026, 2, 1, 14, 35, 0)).toISOString(),
+                    actorId: 'u-eric',
+                    actorName: 'eric',
+                    type: 'field',
+                    text: 'a modifie la description de Alicia',
+                },
+            ],
+        }),
+    ];
+
+    const api = await installDatabaseMocks(page, { boardEntries });
+
+    await page.goto('/database/');
+    await page.click('[data-tab="boards"]');
+    await page.click('#cards-boards [data-board-action="detail"]');
+
+    await expect(page.locator('#custom-modal')).toBeVisible();
+    await page.click('#modal-footer .modal-btn.danger');
+    await expect(page.locator('#custom-modal')).toContainText('Etes-vous sur ?');
+    await page.click('#modal-footer .modal-btn.danger');
+
+    await expect.poll(() =>
+        api.requests.filter((entry) =>
+            entry.endpoint === 'db-boards' &&
+            entry.method === 'POST' &&
+            entry.action === 'clear_activity'
+        ).length
+    ).toBe(1);
+    await expect.poll(() => api.store.boards[0].activity.length).toBe(0);
+    await expect(page.locator('#custom-modal')).toContainText('Aucune activite detaillee pour ce board.');
+    await expect(page.locator('#modal-footer .modal-btn.danger')).toBeDisabled();
 });
 
 test('database exposes retry state when archive service is unavailable', async ({ page }) => {
