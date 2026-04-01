@@ -615,6 +615,110 @@
     `;
   }
 
+  function normalizeActivityType(type) {
+    return cleanText(type, "info")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-") || "info";
+  }
+
+  function getActivityTypeLabel(type) {
+    switch (normalizeActivityType(type)) {
+      case "board":
+        return "Board";
+      case "rename":
+        return "Nom";
+      case "member":
+        return "User";
+      case "node":
+        return "Fiche";
+      case "field":
+        return "Champ";
+      case "layout":
+        return "Position";
+      case "link":
+        return "Lien";
+      case "settings":
+        return "Reglages";
+      case "save":
+        return "Sync";
+      default:
+        return "Activite";
+    }
+  }
+
+  function summarizeBoardActivity(activity = []) {
+    const rows = Array.isArray(activity) ? activity : [];
+    const authors = new Set(
+      rows
+        .map((entry) => cleanText(entry?.actorName))
+        .filter(Boolean)
+    );
+    const latest = rows[0] || null;
+    return {
+      total: rows.length,
+      authorCount: authors.size,
+      latest,
+    };
+  }
+
+  function renderBoardActivityHero(activity = []) {
+    const latest = Array.isArray(activity) ? activity[0] : null;
+    if (!latest || !cleanText(latest.text)) {
+      return `
+        <div class="activity-hero activity-hero-empty">
+          <span class="activity-hero-label">Journal</span>
+          <strong>Aucune activite detaillee</strong>
+          <p>Les prochaines actions visibles sur le board apparaitront ici.</p>
+        </div>
+      `;
+    }
+
+    const typeClass = `activity-type-${escapeHtml(normalizeActivityType(latest.type))}`;
+    return `
+      <div class="activity-hero">
+        <div class="activity-hero-head">
+          <span class="activity-type-pill ${typeClass}">${escapeHtml(getActivityTypeLabel(latest.type))}</span>
+          <span class="activity-hero-time">${escapeHtml(formatDate(latest.at))}</span>
+        </div>
+        <span class="activity-hero-label">Derniere action</span>
+        <strong>${escapeHtml(cleanText(latest.actorName, "systeme"))}</strong>
+        <p>${escapeHtml(cleanText(latest.text))}</p>
+      </div>
+    `;
+  }
+
+  function renderActivityDetailValue(value) {
+    const text = String(value ?? "").replace(/\r\n?/g, "\n").trim();
+    return escapeHtml(text || "Vide");
+  }
+
+  function renderBoardActivityDetails(details) {
+    if (!details || typeof details !== "object") return "";
+    const label = cleanText(details.label, "Modification");
+    const before = String(details.before ?? "").trim();
+    const after = String(details.after ?? "").trim();
+    if (!label && !before && !after) return "";
+
+    return `
+      <details class="activity-row-details">
+        <summary>Voir avant / apres</summary>
+        <div class="activity-diff-card">
+          <div class="activity-diff-head">${escapeHtml(label || "Modification")}</div>
+          <div class="activity-diff-grid">
+            <div class="activity-diff-col">
+              <span class="activity-diff-label">Avant</span>
+              <pre class="activity-diff-value">${renderActivityDetailValue(before)}</pre>
+            </div>
+            <div class="activity-diff-col">
+              <span class="activity-diff-label">Apres</span>
+              <pre class="activity-diff-value">${renderActivityDetailValue(after)}</pre>
+            </div>
+          </div>
+        </div>
+      </details>
+    `;
+  }
+
   function renderBoardActivityRows(activity = []) {
     const rows = Array.isArray(activity) ? activity : [];
     if (!rows.length) {
@@ -622,12 +726,16 @@
     }
 
     return rows.map((entry) => `
-      <article class="activity-row">
+      <article class="activity-row activity-type-${escapeHtml(normalizeActivityType(entry.type))}">
         <div class="activity-row-head">
-          <span class="activity-row-actor">${escapeHtml(cleanText(entry.actorName, "systeme"))}</span>
+          <div class="activity-row-meta">
+            <span class="activity-type-pill activity-type-${escapeHtml(normalizeActivityType(entry.type))}">${escapeHtml(getActivityTypeLabel(entry.type))}</span>
+            <span class="activity-row-actor">${escapeHtml(cleanText(entry.actorName, "systeme"))}</span>
+          </div>
           <span class="activity-row-time">${escapeHtml(formatDate(entry.at))}</span>
         </div>
         <div class="activity-row-text">${escapeHtml(cleanText(entry.text))}</div>
+        ${renderBoardActivityDetails(entry.details)}
       </article>
     `).join("");
   }
@@ -840,6 +948,7 @@
   function buildBoardDetailHtml(board) {
     const members = Array.isArray(board.members) ? board.members : [];
     const activity = Array.isArray(board.activity) ? board.activity : [];
+    const activitySummary = summarizeBoardActivity(activity);
     const memberRows = members.length
       ? members.map((member) => `
           <div class="detail-row">
@@ -875,9 +984,31 @@
           ${memberRows}
         </div>
         <div class="detail-card detail-card-activity">
-          <div class="detail-card-title">Journal</div>
-          <div class="activity-log">
-            ${renderBoardActivityRows(activity)}
+          <div class="detail-card-head">
+            <div>
+              <div class="detail-card-title">Journal</div>
+              <div class="detail-card-kicker">Lecture simple, du plus recent au plus ancien.</div>
+            </div>
+          </div>
+          <div class="activity-summary-strip">
+            <div class="activity-summary-item">
+              <span class="activity-summary-label">Evenements</span>
+              <strong>${activitySummary.total}</strong>
+            </div>
+            <div class="activity-summary-item">
+              <span class="activity-summary-label">Acteurs</span>
+              <strong>${activitySummary.authorCount}</strong>
+            </div>
+            <div class="activity-summary-item">
+              <span class="activity-summary-label">Derniere maj</span>
+              <strong>${escapeHtml(activitySummary.latest ? formatDate(activitySummary.latest.at) : "Aucune")}</strong>
+            </div>
+          </div>
+          ${renderBoardActivityHero(activity)}
+          <div class="activity-log-shell">
+            <div class="activity-log">
+              ${renderBoardActivityRows(activity)}
+            </div>
           </div>
         </div>
       </div>

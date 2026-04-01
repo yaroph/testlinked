@@ -1418,6 +1418,17 @@ function normalizeCloudNode(rawNode) {
     };
 }
 
+function withPreservedPointLayout(node, layoutSource = null) {
+    if (!node || typeof node !== 'object') return node;
+    if (!layoutSource || typeof layoutSource !== 'object') return { ...node };
+    return {
+        ...node,
+        x: Number(layoutSource.x) || 0,
+        y: Number(layoutSource.y) || 0,
+        fixed: Boolean(layoutSource.fixed)
+    };
+}
+
 function normalizeCloudLink(rawLink) {
     if (!rawLink || typeof rawLink !== 'object') return null;
     const id = rawLink.id ?? '';
@@ -1513,6 +1524,20 @@ function canonicalizePointPayloadForCompare(payload) {
         : { date: '' };
     const nodes = (Array.isArray(raw.nodes) ? raw.nodes : [])
         .map((node) => normalizeCloudNode(node))
+        .map((node) => node ? ({
+            id: node.id,
+            name: node.name,
+            type: node.type,
+            color: node.color,
+            manualColor: node.manualColor,
+            personStatus: node.personStatus,
+            num: node.num,
+            accountNumber: node.accountNumber,
+            citizenNumber: node.citizenNumber,
+            linkedMapPointId: node.linkedMapPointId,
+            description: node.description,
+            notes: node.notes
+        }) : null)
         .filter(Boolean)
         .sort((a, b) => String(a.id).localeCompare(String(b.id)));
     const links = (Array.isArray(raw.links) ? raw.links : [])
@@ -1527,6 +1552,22 @@ function canonicalizePointPayloadForCompare(payload) {
             : {},
         nodes,
         links
+    };
+}
+
+function mergeLocalPointLayoutIntoPayload(payload) {
+    const plain = payload && typeof payload === 'object' ? payload : {};
+    const localLayout = new Map(
+        (Array.isArray(state.nodes) ? state.nodes : [])
+            .map((node) => [String(node?.id || ''), node])
+            .filter(([id]) => id)
+    );
+    return {
+        ...plain,
+        nodes: (Array.isArray(plain.nodes) ? plain.nodes : []).map((node) => {
+            const nodeId = String(node?.id || '');
+            return withPreservedPointLayout(node, localLayout.get(nodeId));
+        })
     };
 }
 
@@ -1586,10 +1627,12 @@ function buildCloudBoardPayload(plainData = null) {
     const deletedLinkMap = new Map((shadow.deletedLinks || []).map((entry) => [String(entry.id), entry]));
 
     const nodes = currentNodes.map((node) => {
+        const shadowNode = shadowNodeMap.get(String(node.id));
+        const syncedNode = withPreservedPointLayout(node, shadowNode);
         deletedNodeMap.delete(String(node.id));
         return {
-            ...node,
-            _collab: buildCloudEntityMeta(node, shadowNodeMap.get(String(node.id)), COLLAB_NODE_FIELDS, nowIso, actor)
+            ...syncedNode,
+            _collab: buildCloudEntityMeta(syncedNode, shadowNode, COLLAB_NODE_FIELDS, nowIso, actor)
         };
     });
 
@@ -1947,10 +1990,13 @@ function syncCloudLivePanels() {
 
 function applyCloudBoardData(rawData, options = {}) {
     const quiet = Boolean(options.quiet);
-    const plain = extractPlainPointPayloadFromCloud(rawData);
+    const serverPlain = extractPlainPointPayloadFromCloud(rawData);
+    const plain = collab.shadowData
+        ? mergeLocalPointLayoutIntoPayload(serverPlain)
+        : serverPlain;
     const incomingSummary = getPointPayloadSummary(plain);
     const localSummary = getPointPayloadSummary();
-    const serverFingerprint = fingerprintFromPointPayload(plain);
+    const serverFingerprint = fingerprintFromPointPayload(serverPlain);
     const localFingerprint = hasLocalCloudChanges()
         ? fingerprintFromPointPayload(generateExportData())
         : String(collab.lastSavedFingerprint || '');
@@ -2148,6 +2194,14 @@ function onPointLocalChange() {
     collab.localChangeSeq += 1;
     if (!isCloudBoardActive()) {
         rememberCurrentLocalWorkspace();
+        queueCloudAutosave();
+        return;
+    }
+    const localFingerprint = fingerprintFromPointPayload(generateExportData());
+    if (localFingerprint === String(collab.lastSavedFingerprint || '')) {
+        captureCloudSavedState(collab.localChangeSeq, localFingerprint);
+        setCloudSyncState('session', canEditCloudBoard() ? 'Sauvegarde cloud a jour' : (getCloudReadOnlyMessage() || 'Lecture seule sur ce board'));
+        return;
     }
     queueCloudAutosave();
 }
@@ -2651,9 +2705,10 @@ async function saveActiveCloudBoard(options = {}) {
         const title = (state.projectName || collab.activeBoardTitle || 'Tableau cloud').trim();
         const plainData = generateExportData();
         const localFingerprint = fingerprintFromPointPayload(plainData);
-        if (!force && !manual && localFingerprint === String(collab.lastSavedFingerprint || '')) {
+        if (!force && localFingerprint === String(collab.lastSavedFingerprint || '')) {
             captureCloudSavedState(collab.localChangeSeq, localFingerprint);
             setCloudSyncState('session', canEditCloudBoard() ? 'Sauvegarde cloud a jour' : (getCloudReadOnlyMessage() || 'Lecture seule sur ce board'));
+            if (manual && !quiet) showCustomAlert("☁️ Aucune modification cloud a enregistrer.");
             return true;
         }
 

@@ -777,9 +777,6 @@ function canonicalizePointBoardPayloadForCompare(data, options = {}) {
       citizenNumber: node.citizenNumber,
       description: node.description,
       notes: node.notes,
-      x: node.x,
-      y: node.y,
-      fixed: node.fixed,
       linkedMapPointId: node.linkedMapPointId,
     })),
     links: normalized.links.map((link) => ({
@@ -825,6 +822,7 @@ function normalizeBoardActivity(board) {
       actorName: String(item?.actorName || ""),
       type: String(item?.type || "info"),
       text: String(item?.text || "").trim(),
+      details: normalizeBoardActivityDetails(item?.details),
     }))
     .filter((item) => item.id && item.text)
     .sort((a, b) => timeValue(b.at) - timeValue(a.at))
@@ -835,11 +833,43 @@ function sanitizeBoardActivityText(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 180);
 }
 
-function appendBoardActivity(board, user, type, text) {
+function sanitizeBoardActivityDetailValue(value) {
+  return String(value ?? "")
+    .replace(/\r\n?/g, "\n")
+    .trim()
+    .slice(0, 1600);
+}
+
+function normalizeBoardActivityDetails(details) {
+  if (!details || typeof details !== "object") return null;
+  const label = sanitizeActivityLabel(details.label || "");
+  const before = sanitizeBoardActivityDetailValue(details.before);
+  const after = sanitizeBoardActivityDetailValue(details.after);
+  if (!label && !before && !after) return null;
+  return {
+    ...(label ? { label } : {}),
+    before,
+    after,
+  };
+}
+
+function buildActivityDiffDetails(label, beforeValue, afterValue) {
+  const before = sanitizeBoardActivityDetailValue(beforeValue);
+  const after = sanitizeBoardActivityDetailValue(afterValue);
+  if (before === after) return null;
+  return normalizeBoardActivityDetails({
+    label,
+    before,
+    after,
+  });
+}
+
+function appendBoardActivity(board, user, type, text, details = null) {
   const cleanText = sanitizeBoardActivityText(text);
   if (!board || !cleanText) return false;
   const existing = normalizeBoardActivity(board);
   const latest = existing[0];
+  const cleanDetails = normalizeBoardActivityDetails(details);
   if (
     latest &&
     String(type || "info") === "save" &&
@@ -849,6 +879,7 @@ function appendBoardActivity(board, user, type, text) {
   ) {
     latest.at = nowIso();
     latest.text = cleanText;
+    latest.details = cleanDetails;
     board.activity = [latest, ...existing.slice(1)].slice(0, BOARD_ACTIVITY_MAX);
     return true;
   }
@@ -860,6 +891,7 @@ function appendBoardActivity(board, user, type, text) {
     actorName: String(user?.username || ""),
     type: String(type || "info"),
     text: cleanText,
+    details: cleanDetails,
   };
   board.activity = [entry, ...existing].slice(0, BOARD_ACTIVITY_MAX);
   return true;
@@ -881,11 +913,13 @@ function appendBoardActivities(board, user, items = []) {
       return {
         type: String(item.type || "info"),
         text: item.text,
+        details: item.details,
       };
     })
     .map((item) => {
       if (!item) return null;
       const cleanText = sanitizeBoardActivityText(item.text);
+      const cleanDetails = normalizeBoardActivityDetails(item.details);
       if (!cleanText) return null;
       return {
         id: newId("act"),
@@ -894,6 +928,7 @@ function appendBoardActivities(board, user, items = []) {
         actorName: String(user?.username || ""),
         type: String(item.type || "info"),
         text: cleanText,
+        details: cleanDetails,
       };
     })
     .filter(Boolean);
@@ -983,9 +1018,16 @@ function formatPointLinkKindLabel(kind) {
   return label === "relation" ? "" : `${label} `;
 }
 
+function buildPointIdentitySnapshot(node) {
+  return [
+    `Numero: ${sanitizeBoardActivityDetailValue(node?.num || "")}`,
+    `Compte: ${sanitizeBoardActivityDetailValue(node?.accountNumber || "")}`,
+    `Citoyen: ${sanitizeBoardActivityDetailValue(node?.citizenNumber || "")}`,
+  ].join("\n");
+}
+
 function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
   const entries = [];
-  const movedNodeLabels = [];
   const previousNodes = Array.isArray(previousData?.nodes) ? previousData.nodes : [];
   const nextNodes = Array.isArray(nextData?.nodes) ? nextData.nodes : [];
   const previousNodeMap = new Map(previousNodes.map((node) => [String(node?.id || ""), node]));
@@ -1026,6 +1068,7 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "node",
           text: `a modifie le nom de ${previousLabel} en ${nextLabel}`,
+          details: buildActivityDiffDetails("Nom", previousNode?.name || "", nextNode?.name || ""),
         });
       }
 
@@ -1036,6 +1079,7 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "field",
           text: `a modifie la description de ${nextLabel}`,
+          details: buildActivityDiffDetails("Description", previousNode?.description || "", nextNode?.description || ""),
         });
       }
 
@@ -1046,6 +1090,7 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "field",
           text: `a modifie les notes de ${nextLabel}`,
+          details: buildActivityDiffDetails("Notes", previousNode?.notes || "", nextNode?.notes || ""),
         });
       }
 
@@ -1056,6 +1101,11 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "field",
           text: `a change le type de ${nextLabel} (${humanizeActivityToken(previousNode?.type, "inconnu")} -> ${humanizeActivityToken(nextNode?.type, "inconnu")})`,
+          details: buildActivityDiffDetails(
+            "Type",
+            humanizeActivityToken(previousNode?.type, "inconnu"),
+            humanizeActivityToken(nextNode?.type, "inconnu")
+          ),
         });
       }
 
@@ -1066,6 +1116,11 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "field",
           text: `a change le statut de ${nextLabel} (${humanizeActivityToken(previousNode?.personStatus, "inconnu")} -> ${humanizeActivityToken(nextNode?.personStatus, "inconnu")})`,
+          details: buildActivityDiffDetails(
+            "Statut",
+            humanizeActivityToken(previousNode?.personStatus, "inconnu"),
+            humanizeActivityToken(nextNode?.personStatus, "inconnu")
+          ),
         });
       }
 
@@ -1083,6 +1138,11 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "field",
           text: `a modifie les identifiants de ${nextLabel}`,
+          details: buildActivityDiffDetails(
+            "Identifiants",
+            buildPointIdentitySnapshot(previousNode),
+            buildPointIdentitySnapshot(nextNode)
+          ),
         });
       }
 
@@ -1093,6 +1153,7 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "field",
           text: `a modifie la liaison carte de ${nextLabel}`,
+          details: buildActivityDiffDetails("Liaison carte", previousNode?.linkedMapPointId || "", nextNode?.linkedMapPointId || ""),
         });
       }
 
@@ -1102,24 +1163,10 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "field",
           text: `a modifie la couleur de ${nextLabel}`,
+          details: buildActivityDiffDetails("Couleur", previousNode?.color || "", nextNode?.color || ""),
         });
       }
-
-      if (
-        !sameRoundedCoord(previousNode?.x, nextNode?.x)
-        || !sameRoundedCoord(previousNode?.y, nextNode?.y)
-        || Boolean(previousNode?.fixed) !== Boolean(nextNode?.fixed)
-      ) {
-        movedNodeLabels.push(nextLabel);
-      }
     });
-
-  if (movedNodeLabels.length) {
-    entries.push({
-      type: "layout",
-      text: `a repositionne ${summarizeActivityLabelList(movedNodeLabels, "fiche", "fiches")}`,
-    });
-  }
 
   const previousLinks = buildPointLinkPairMap(previousData?.links);
   const nextLinks = buildPointLinkPairMap(nextData?.links);
@@ -1155,6 +1202,11 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
         entries.push({
           type: "link",
           text: `a modifie la relation entre ${buildPointRelationLabel(nextLink, relationNodeMap)} (${humanizeActivityToken(previousLink.kind, "relation")} -> ${humanizeActivityToken(nextLink.kind, "relation")})`,
+          details: buildActivityDiffDetails(
+            "Relation",
+            humanizeActivityToken(previousLink.kind, "relation"),
+            humanizeActivityToken(nextLink.kind, "relation")
+          ),
         });
       }
     });

@@ -346,13 +346,25 @@ test('buildBoardSaveActivityEntriesByPage detaille les changements metier sur un
 
   const entries = __test.buildBoardSaveActivityEntriesByPage('point', previous, next);
   const texts = entries.map((entry) => entry.text);
+  const renameEntry = entries.find((entry) => entry.text === 'a modifie le nom de Alice en Alicia');
+  const descriptionEntry = entries.find((entry) => entry.text === 'a modifie la description de Alicia');
 
   assert.ok(texts.includes('a ajoute la fiche Charlie'));
   assert.ok(texts.includes('a modifie le nom de Alice en Alicia'));
   assert.ok(texts.includes('a modifie la description de Alicia'));
   assert.ok(texts.includes('a modifie la relation entre Alicia et Bob (relation -> ami)'));
   assert.ok(texts.includes('a ajoute une relation entre Bob et Charlie'));
-  assert.ok(texts.includes('a repositionne Bob'));
+  assert.equal(texts.some((text) => text.includes('a repositionne')), false);
+  assert.deepEqual(renameEntry?.details, {
+    label: 'Nom',
+    before: 'Alice',
+    after: 'Alicia',
+  });
+  assert.deepEqual(descriptionEntry?.details, {
+    label: 'Description',
+    before: 'Ancienne description',
+    after: 'Nouvelle description',
+  });
 });
 
 test('buildBoardSaveActivityEntriesByPage ignore les recolorations auto des personnes', () => {
@@ -448,9 +460,72 @@ test('buildBoardSaveActivityEntriesByPage ignore les recolorations auto des pers
 
   const entries = __test.buildBoardSaveActivityEntriesByPage('point', previous, next);
   const texts = entries.map((entry) => entry.text);
+  const descriptionEntry = entries.find((entry) => entry.text === 'a modifie la description de Dutch Coleman');
 
   assert.ok(texts.includes('a modifie la description de Dutch Coleman'));
   assert.equal(texts.some((text) => text.includes('a modifie la couleur')), false);
+  assert.deepEqual(descriptionEntry?.details, {
+    label: 'Description',
+    before: 'Dutch',
+    after: 'Dutch Coleman',
+  });
+});
+
+test('canonicalizeBoardPayloadByPage ignore les positions pour un board point', () => {
+  const left = {
+    meta: {},
+    physicsSettings: {},
+    nodes: [
+      {
+        id: 'n1',
+        name: 'Alice',
+        type: 'person',
+        description: '',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 10,
+        y: 20,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+    ],
+    links: [],
+    deletedNodes: [],
+    deletedLinks: [],
+  };
+
+  const right = {
+    meta: {},
+    physicsSettings: {},
+    nodes: [
+      {
+        id: 'n1',
+        name: 'Alice',
+        type: 'person',
+        description: '',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 999,
+        y: -400,
+        fixed: true,
+        linkedMapPointId: '',
+      },
+    ],
+    links: [],
+    deletedNodes: [],
+    deletedLinks: [],
+  };
+
+  assert.deepEqual(
+    __test.canonicalizeBoardPayloadByPage('point', left),
+    __test.canonicalizeBoardPayloadByPage('point', right)
+  );
 });
 
 test('acquireBoardEditLock reserve l edition au premier utilisateur et bloque le second', async () => {

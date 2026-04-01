@@ -34,6 +34,13 @@ function cleanText(value, fallback = "") {
   return text || fallback;
 }
 
+function cleanDetailValue(value) {
+  return String(value ?? "")
+    .replace(/\r\n?/g, "\n")
+    .trim()
+    .slice(0, 1600);
+}
+
 async function loadBoard(store, boardId) {
   if (!boardId) return null;
   return store.get(boardKey(boardId), { type: "json" });
@@ -45,14 +52,24 @@ async function saveBoard(store, board) {
 
 function normalizeBoardActivityRows(activity = []) {
   return (Array.isArray(activity) ? activity : [])
-    .map((item) => ({
-      id: cleanText(item?.id),
-      at: cleanText(item?.at),
-      actorId: cleanText(item?.actorId),
-      actorName: cleanText(item?.actorName, "systeme"),
-      type: cleanText(item?.type, "info"),
-      text: cleanText(item?.text),
-    }))
+    .map((item) => {
+      const details = item?.details && typeof item.details === "object"
+        ? {
+            label: cleanText(item.details.label),
+            before: cleanDetailValue(item.details.before),
+            after: cleanDetailValue(item.details.after),
+          }
+        : null;
+      return {
+        id: cleanText(item?.id),
+        at: cleanText(item?.at),
+        actorId: cleanText(item?.actorId),
+        actorName: cleanText(item?.actorName, "systeme"),
+        type: cleanText(item?.type, "info"),
+        text: cleanText(item?.text),
+        details: details && (details.label || details.before || details.after) ? details : null,
+      };
+    })
     .filter((item) => item.id && item.text)
     .sort((left, right) => timeValue(right.at) - timeValue(left.at))
     .slice(0, 40);

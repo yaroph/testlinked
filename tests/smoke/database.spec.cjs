@@ -269,6 +269,11 @@ test('database shows the board activity log in board details', async ({ page }) 
                     actorName: 'eric',
                     type: 'field',
                     text: 'a modifie la description de Alicia',
+                    details: {
+                        label: 'Description',
+                        before: 'Ancienne description',
+                        after: 'Nouvelle description',
+                    },
                 },
                 {
                     id: 'act-2',
@@ -295,6 +300,13 @@ test('database shows the board activity log in board details', async ({ page }) 
     await expect(page.locator('#custom-modal')).toContainText('eric');
     await expect(page.locator('#custom-modal')).toContainText('a modifie la description de Alicia');
     await expect(page.locator('#custom-modal')).toContainText('a ajoute une relation entre Alicia et Bob');
+    const detailToggle = page.locator('#custom-modal .activity-row-details summary').first();
+    await expect(detailToggle).toContainText('Voir avant / apres');
+    await detailToggle.click();
+    const openedDetails = page.locator('#custom-modal .activity-row-details[open]').first();
+    await expect(openedDetails).toBeVisible();
+    await expect(openedDetails).toContainText('Ancienne description');
+    await expect(openedDetails).toContainText('Nouvelle description');
 });
 
 test('database can clear a board activity log after confirmation', async ({ page }) => {
