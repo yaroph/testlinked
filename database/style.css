@@ -567,17 +567,23 @@ body {
   gap: 14px;
 }
 
-.board-detail-grid {
-  grid-template-columns: minmax(300px, 0.82fr) minmax(460px, 1.18fr);
+.board-detail-layout {
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
   align-items: start;
+}
+
+.board-detail-sidebar {
+  display: grid;
+  gap: 14px;
+  align-content: start;
 }
 
 .detail-card {
   border: 1px solid rgba(255,255,255,0.06);
   background: rgba(255,255,255,0.02);
-  padding: 14px;
+  padding: 16px;
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .detail-card-title {
@@ -601,27 +607,13 @@ body {
 }
 
 .detail-card-activity {
-  gap: 10px;
-}
-
-.detail-card-board {
-  grid-column: 1;
-}
-
-.detail-card-content {
-  grid-column: 1;
-}
-
-.detail-card-users {
-  grid-column: 1;
+  gap: 12px;
 }
 
 .detail-card-activity {
-  grid-column: 2;
-  grid-row: 1 / span 3;
   min-height: 0;
   background:
-    linear-gradient(180deg, rgba(115, 251, 247, 0.05), rgba(255, 255, 255, 0.02)),
+    linear-gradient(180deg, rgba(115, 251, 247, 0.04), rgba(255, 255, 255, 0.02)),
     rgba(255,255,255,0.02);
   border-color: rgba(115, 251, 247, 0.16);
 }
@@ -640,10 +632,38 @@ body {
   text-align: right;
 }
 
+.detail-inline-empty {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  padding: 10px 12px;
+  border: 1px dashed rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+}
+
+.detail-metric-list {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-metric-line {
+  padding: 10px 12px;
+  border: 1px solid rgba(115, 251, 247, 0.12);
+  background: rgba(6, 10, 22, 0.48);
+  color: var(--text-light);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.detail-member-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .activity-summary-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .activity-summary-item {
@@ -667,77 +687,10 @@ body {
   line-height: 1.25;
 }
 
-.activity-hero {
-  display: grid;
-  gap: 8px;
-  padding: 14px;
-  border: 1px solid rgba(115, 251, 247, 0.18);
-  background:
-    radial-gradient(circle at top right, rgba(115, 251, 247, 0.12), transparent 38%),
-    rgba(5, 8, 18, 0.68);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
-}
-
-.activity-hero-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.activity-hero-label {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-
-.activity-hero strong {
-  color: var(--text-light);
-  font-size: 1.02rem;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-.activity-hero p {
-  margin: 0;
-  color: #f3f7ff;
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
-.activity-hero-time {
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-
-.activity-hero-empty {
-  border-style: dashed;
-  background: rgba(255,255,255,0.02);
-}
-
-.activity-log-shell {
-  position: relative;
-  min-height: 0;
-  padding-left: 18px;
-}
-
-.activity-log-shell::before {
-  content: "";
-  position: absolute;
-  left: 6px;
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  background: linear-gradient(180deg, rgba(115, 251, 247, 0.3), rgba(115, 251, 247, 0.06));
-}
-
 .activity-log {
   display: grid;
-  gap: 10px;
-  max-height: 64vh;
+  gap: 8px;
+  max-height: 66vh;
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-color: rgba(115, 251, 247, 0.42) rgba(255,255,255,0.05);
@@ -745,27 +698,13 @@ body {
 
 .activity-row {
   display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  margin-left: 8px;
-  border: 1px solid rgba(115, 251, 247, 0.14);
-  border-left: 3px solid rgba(115, 251, 247, 0.32);
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(115, 251, 247, 0.12);
+  border-left: 2px solid rgba(115, 251, 247, 0.32);
   background:
-    linear-gradient(180deg, rgba(115, 251, 247, 0.05), rgba(255, 255, 255, 0.02)),
+    linear-gradient(180deg, rgba(115, 251, 247, 0.03), rgba(255, 255, 255, 0.02)),
     rgba(255, 255, 255, 0.03);
-  position: relative;
-}
-
-.activity-row::before {
-  content: "";
-  position: absolute;
-  left: -16px;
-  top: 18px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent-cyan);
-  box-shadow: 0 0 12px rgba(115, 251, 247, 0.45);
 }
 
 .activity-row-head {
@@ -779,33 +718,33 @@ body {
 .activity-row-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .activity-type-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
+  min-height: 20px;
   padding: 0 8px;
   border: 1px solid rgba(115, 251, 247, 0.2);
   background: rgba(115, 251, 247, 0.08);
   color: var(--accent-cyan);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.9px;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
 }
 
 .activity-row-actor {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
+  min-height: 20px;
   padding: 0 8px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.04);
   color: #e8f4ff;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -819,22 +758,25 @@ body {
 
 .activity-row-text {
   color: var(--text-light);
-  font-size: 0.96rem;
-  line-height: 1.5;
+  font-size: 0.94rem;
+  line-height: 1.48;
 }
 
 .activity-row-details {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   border-top: 1px solid rgba(255,255,255,0.06);
   padding-top: 10px;
 }
 
 .activity-row-details summary {
   list-style: none;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
   cursor: pointer;
   color: var(--accent-cyan);
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 700;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -847,7 +789,8 @@ body {
 .activity-row-details summary::before {
   content: "+";
   display: inline-block;
-  margin-right: 8px;
+  width: 12px;
+  margin-right: 6px;
 }
 
 .activity-row-details[open] summary::before {
@@ -856,15 +799,15 @@ body {
 
 .activity-diff-card {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   padding: 12px;
   border: 1px solid rgba(115, 251, 247, 0.12);
-  background: rgba(4, 8, 18, 0.62);
+  background: rgba(4, 8, 18, 0.56);
 }
 
 .activity-diff-head {
   color: var(--text-light);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 700;
   letter-spacing: 0.8px;
   text-transform: uppercase;
@@ -890,7 +833,7 @@ body {
 
 .activity-diff-value {
   margin: 0;
-  min-height: 66px;
+  min-height: 56px;
   padding: 10px;
   border: 1px solid rgba(255,255,255,0.06);
   background: rgba(255,255,255,0.03);
@@ -917,48 +860,21 @@ body {
   border-left-color: rgba(255, 209, 102, 0.55);
 }
 
-.activity-type-board::before,
-.activity-type-rename::before {
-  background: #ffd166;
-  box-shadow: 0 0 12px rgba(255, 209, 102, 0.45);
-}
-
 .activity-type-member {
   border-left-color: rgba(255, 107, 129, 0.55);
-}
-
-.activity-type-member::before {
-  background: var(--accent-pink);
-  box-shadow: 0 0 12px rgba(255, 107, 129, 0.45);
 }
 
 .activity-type-link {
   border-left-color: rgba(140, 233, 154, 0.55);
 }
 
-.activity-type-link::before {
-  background: #8ce99a;
-  box-shadow: 0 0 12px rgba(140, 233, 154, 0.45);
-}
-
 .activity-type-layout {
   border-left-color: rgba(248, 194, 145, 0.55);
-}
-
-.activity-type-layout::before {
-  background: #f8c291;
-  box-shadow: 0 0 12px rgba(248, 194, 145, 0.45);
 }
 
 .activity-type-settings,
 .activity-type-save {
   border-left-color: rgba(199, 154, 247, 0.55);
-}
-
-.activity-type-settings::before,
-.activity-type-save::before {
-  background: #c79af7;
-  box-shadow: 0 0 12px rgba(199, 154, 247, 0.45);
 }
 
 .activity-type-board.activity-type-pill,
@@ -999,16 +915,8 @@ body {
     max-width: min(calc(100vw - 20px), 760px);
   }
 
-  .board-detail-grid {
+  .board-detail-layout {
     grid-template-columns: 1fr;
-  }
-
-  .detail-card-board,
-  .detail-card-content,
-  .detail-card-users,
-  .detail-card-activity {
-    grid-column: auto;
-    grid-row: auto;
   }
 
   .activity-log {
@@ -1021,22 +929,6 @@ body {
 
   .activity-diff-grid {
     grid-template-columns: 1fr;
-  }
-
-  .activity-log-shell {
-    padding-left: 14px;
-  }
-
-  .activity-log-shell::before {
-    left: 4px;
-  }
-
-  .activity-row {
-    margin-left: 6px;
-  }
-
-  .activity-row::before {
-    left: -13px;
   }
 }
 

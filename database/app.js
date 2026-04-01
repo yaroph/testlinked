@@ -661,32 +661,6 @@
     };
   }
 
-  function renderBoardActivityHero(activity = []) {
-    const latest = Array.isArray(activity) ? activity[0] : null;
-    if (!latest || !cleanText(latest.text)) {
-      return `
-        <div class="activity-hero activity-hero-empty">
-          <span class="activity-hero-label">Journal</span>
-          <strong>Aucune activite detaillee</strong>
-          <p>Les prochaines actions visibles sur le board apparaitront ici.</p>
-        </div>
-      `;
-    }
-
-    const typeClass = `activity-type-${escapeHtml(normalizeActivityType(latest.type))}`;
-    return `
-      <div class="activity-hero">
-        <div class="activity-hero-head">
-          <span class="activity-type-pill ${typeClass}">${escapeHtml(getActivityTypeLabel(latest.type))}</span>
-          <span class="activity-hero-time">${escapeHtml(formatDate(latest.at))}</span>
-        </div>
-        <span class="activity-hero-label">Derniere action</span>
-        <strong>${escapeHtml(cleanText(latest.actorName, "systeme"))}</strong>
-        <p>${escapeHtml(cleanText(latest.text))}</p>
-      </div>
-    `;
-  }
-
   function renderActivityDetailValue(value) {
     const text = String(value ?? "").replace(/\r\n?/g, "\n").trim();
     return escapeHtml(text || "Vide");
@@ -949,45 +923,53 @@
     const members = Array.isArray(board.members) ? board.members : [];
     const activity = Array.isArray(board.activity) ? board.activity : [];
     const activitySummary = summarizeBoardActivity(activity);
+    const statLines = Array.isArray(board?.content?.statLines) ? board.content.statLines : [];
     const memberRows = members.length
-      ? members.map((member) => `
-          <div class="detail-row">
-            <span>${escapeHtml(cleanText(member.role, "editor").toUpperCase())}</span>
-            <strong>${escapeHtml(cleanText(member.username, "user"))}</strong>
+      ? `
+          <div class="detail-member-list">
+            ${members.map((member) => `
+              <span class="member-pill ${escapeHtml(cleanText(member.role, "editor"))}">
+                ${escapeHtml(cleanText(member.role, "editor").toUpperCase())} · ${escapeHtml(cleanText(member.username, "user"))}
+              </span>
+            `).join("")}
           </div>
-        `).join("")
-      : '<div class="detail-row"><span>Users</span><strong>Aucun</strong></div>';
+        `
+      : '<div class="detail-inline-empty">Aucun user.</div>';
 
     const lockRow = board.editLock
       ? `<div class="detail-row"><span>Lock</span><strong>${escapeHtml(cleanText(board.editLock.username, "operateur"))} jusqu'a ${escapeHtml(formatDate(board.editLock.expiresAt))}</strong></div>`
       : '<div class="detail-row"><span>Lock</span><strong>Libre</strong></div>';
 
     return `
-      <div class="detail-grid board-detail-grid">
-        <div class="detail-card detail-card-board">
-          <div class="detail-card-title">Board</div>
-          <div class="detail-row"><span>Nom</span><strong>${escapeHtml(cleanText(board.title, "Board sans nom"))}</strong></div>
-          <div class="detail-row"><span>Page</span><strong>${escapeHtml(cleanText(board.page, "point").toUpperCase())}</strong></div>
-          <div class="detail-row"><span>Owner</span><strong>${escapeHtml(cleanText(board.ownerName, "Lead"))}</strong></div>
-          <div class="detail-row"><span>Maj</span><strong>${escapeHtml(formatDate(board.updatedAt || board.createdAt))}</strong></div>
-          ${lockRow}
-        </div>
-        <div class="detail-card detail-card-content">
-          <div class="detail-card-title">Contenu</div>
-          ${(Array.isArray(board?.content?.statLines) ? board.content.statLines : [])
-            .map((line) => `<div class="detail-row"><span>Stats</span><strong>${escapeHtml(line)}</strong></div>`)
-            .join("")}
-          <div class="detail-row"><span>Activite</span><strong>${Number(board.activityCount || 0)} evenements</strong></div>
-        </div>
-        <div class="detail-card detail-card-users">
-          <div class="detail-card-title">Users</div>
-          ${memberRows}
-        </div>
-        <div class="detail-card detail-card-activity">
+      <div class="detail-grid board-detail-layout">
+        <aside class="board-detail-sidebar">
+          <div class="detail-card detail-card-board">
+            <div class="detail-card-title">Board</div>
+            <div class="detail-row"><span>Nom</span><strong>${escapeHtml(cleanText(board.title, "Board sans nom"))}</strong></div>
+            <div class="detail-row"><span>Page</span><strong>${escapeHtml(cleanText(board.page, "point").toUpperCase())}</strong></div>
+            <div class="detail-row"><span>Owner</span><strong>${escapeHtml(cleanText(board.ownerName, "Lead"))}</strong></div>
+            <div class="detail-row"><span>Maj</span><strong>${escapeHtml(formatDate(board.updatedAt || board.createdAt))}</strong></div>
+            ${lockRow}
+          </div>
+          <div class="detail-card detail-card-content">
+            <div class="detail-card-title">Contenu</div>
+            <div class="detail-metric-list">
+              ${statLines.length
+                ? statLines.map((line) => `<div class="detail-metric-line">${escapeHtml(line)}</div>`).join("")
+                : '<div class="detail-inline-empty">Aucune statistique.</div>'}
+            </div>
+            <div class="detail-row"><span>Activite</span><strong>${Number(board.activityCount || 0)} evenements</strong></div>
+          </div>
+          <div class="detail-card detail-card-users">
+            <div class="detail-card-title">Users</div>
+            ${memberRows}
+          </div>
+        </aside>
+        <section class="detail-card detail-card-activity">
           <div class="detail-card-head">
             <div>
               <div class="detail-card-title">Journal</div>
-              <div class="detail-card-kicker">Lecture simple, du plus recent au plus ancien.</div>
+              <div class="detail-card-kicker">Simple, lisible, du plus recent au plus ancien.</div>
             </div>
           </div>
           <div class="activity-summary-strip">
@@ -1004,13 +986,10 @@
               <strong>${escapeHtml(activitySummary.latest ? formatDate(activitySummary.latest.at) : "Aucune")}</strong>
             </div>
           </div>
-          ${renderBoardActivityHero(activity)}
-          <div class="activity-log-shell">
-            <div class="activity-log">
-              ${renderBoardActivityRows(activity)}
-            </div>
+          <div class="activity-log">
+            ${renderBoardActivityRows(activity)}
           </div>
-        </div>
+        </section>
       </div>
     `;
   }
