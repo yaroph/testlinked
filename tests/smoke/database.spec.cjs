@@ -276,6 +276,19 @@ test('database shows the board activity log in board details', async ({ page }) 
                     },
                 },
                 {
+                    id: 'act-1b',
+                    at: new Date(Date.UTC(2026, 2, 1, 14, 35, 0)).toISOString(),
+                    actorId: 'u-eric',
+                    actorName: 'eric',
+                    type: 'field',
+                    text: 'a modifie les notes de Alicia',
+                    details: {
+                        label: 'Notes',
+                        before: 'Anciennes notes',
+                        after: 'Nouvelles notes',
+                    },
+                },
+                {
                     id: 'act-2',
                     at: new Date(Date.UTC(2026, 2, 1, 14, 34, 0)).toISOString(),
                     actorId: 'u-eric',
@@ -298,15 +311,19 @@ test('database shows the board activity log in board details', async ({ page }) 
     expect(modalWidth).toBeGreaterThan(900);
     await expect(page.locator('#custom-modal')).toContainText('Journal');
     await expect(page.locator('#custom-modal')).toContainText('eric');
-    await expect(page.locator('#custom-modal')).toContainText('a modifie la description de Alicia');
+    await expect(page.locator('#custom-modal')).toContainText('a modifie Alicia');
+    await expect(page.locator('#custom-modal')).toContainText('Description · Notes');
     await expect(page.locator('#custom-modal')).toContainText('a ajoute une relation entre Alicia et Bob');
-    const detailToggle = page.locator('#custom-modal .activity-row-details summary').first();
-    await expect(detailToggle).toContainText('Voir avant / apres');
-    await detailToggle.click();
-    const openedDetails = page.locator('#custom-modal .activity-row-details[open]').first();
-    await expect(openedDetails).toBeVisible();
-    await expect(openedDetails).toContainText('Ancienne description');
-    await expect(openedDetails).toContainText('Nouvelle description');
+    const detailButton = page.locator('#custom-modal [data-activity-detail]').first();
+    await expect(detailButton).toContainText('Details');
+    await detailButton.click();
+    await expect(page.locator('#custom-modal')).toContainText('Alpha Cloud · Details');
+    await expect(page.locator('#custom-modal')).toContainText('Ancienne description');
+    await expect(page.locator('#custom-modal')).toContainText('Nouvelle description');
+    await expect(page.locator('#custom-modal')).toContainText('Anciennes notes');
+    await expect(page.locator('#custom-modal')).toContainText('Nouvelles notes');
+    await page.click('#modal-footer .modal-btn.confirm');
+    await expect(page.locator('#custom-modal')).toContainText('a modifie Alicia');
 });
 
 test('database can clear a board activity log after confirmation', async ({ page }) => {

@@ -35,6 +35,7 @@
 
   let activeModalResolve = null;
   let activeModalDismissValue = null;
+  let activeModalCleanup = null;
 
   function createListState() {
     return {
@@ -101,6 +102,12 @@
   function finishModal(value) {
     modal.classList.remove("visible");
     modal.setAttribute("aria-hidden", "true");
+    if (typeof activeModalCleanup === "function") {
+      try {
+        activeModalCleanup();
+      } catch (error) {}
+    }
+    activeModalCleanup = null;
     if (modalBox) {
       modalBox.className = "modal-box";
     }
@@ -138,6 +145,18 @@
 
       modal.classList.add("visible");
       modal.setAttribute("aria-hidden", "false");
+
+      if (typeof options.onRender === "function") {
+        const cleanup = options.onRender({
+          modal,
+          modalBox,
+          modalTitle,
+          modalText,
+          modalFooter,
+          finishModal,
+        });
+        activeModalCleanup = typeof cleanup === "function" ? cleanup : null;
+      }
     });
   }
 
@@ -626,28 +645,196 @@
       case "board":
         return "Board";
       case "rename":
-        return "Nom";
+        return "Edition";
       case "member":
-        return "User";
+        return "Membre";
       case "node":
         return "Fiche";
       case "field":
-        return "Champ";
+        return "Edition";
       case "layout":
         return "Position";
       case "link":
-        return "Lien";
+        return "Relation";
       case "settings":
-        return "Reglages";
+        return "Systeme";
       case "save":
-        return "Sync";
+        return "Systeme";
       default:
         return "Activite";
     }
   }
 
-  function summarizeBoardActivity(activity = []) {
+  function normalizeActivityBucket(type) {
+    const normalized = normalizeActivityType(type);
+    if (normalized === "link") return "relations";
+    if (normalized === "field" || normalized === "node" || normalized === "rename") return "editions";
+    if (normalized === "member") return "membres";
+    if (normalized === "board" || normalized === "save" || normalized === "settings") return "systeme";
+    return "autres";
+  }
+
+  function extractActivityGroupMeta(entry) {
+    const text = cleanText(entry?.text);
+    let match = text.match(/^a modifie le nom de (.+?) en (.+)$/i);
+    if (match) {
+      return {
+        subject: cleanText(match[2] || match[1]),
+        facet: cleanText(entry?.details?.label, "Nom"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    match = text.match(/^a modifie la description de (.+)$/i);
+    if (match) {
+      return {
+        subject: cleanText(match[1]),
+        facet: cleanText(entry?.details?.label, "Description"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    match = text.match(/^a modifie les notes de (.+)$/i);
+    if (match) {
+      return {
+        subject: cleanText(match[1]),
+        facet: cleanText(entry?.details?.label, "Notes"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    match = text.match(/^a change le type de (.+?) \(/i);
+    if (match) {
+      return {
+        subject: cleanText(match[1]),
+        facet: cleanText(entry?.details?.label, "Type"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    match = text.match(/^a change le statut de (.+?) \(/i);
+    if (match) {
+      return {
+        subject: cleanText(match[1]),
+        facet: cleanText(entry?.details?.label, "Statut"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    match = text.match(/^a modifie les identifiants de (.+)$/i);
+    if (match) {
+      return {
+        subject: cleanText(match[1]),
+        facet: cleanText(entry?.details?.label, "Identifiants"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    match = text.match(/^a modifie la liaison carte de (.+)$/i);
+    if (match) {
+      return {
+        subject: cleanText(match[1]),
+        facet: cleanText(entry?.details?.label, "Liaison carte"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    match = text.match(/^a modifie la couleur de (.+)$/i);
+    if (match) {
+      return {
+        subject: cleanText(match[1]),
+        facet: cleanText(entry?.details?.label, "Couleur"),
+        bucket: "editions",
+        groupable: true,
+      };
+    }
+
+    return {
+      subject: "",
+      facet: cleanText(entry?.details?.label),
+      bucket: normalizeActivityBucket(entry?.type),
+      groupable: false,
+    };
+  }
+
+  function buildBoardActivityGroups(activity = []) {
     const rows = Array.isArray(activity) ? activity : [];
+    const groups = [];
+    const groupMap = new Map();
+
+    rows.forEach((entry, index) => {
+      const meta = extractActivityGroupMeta(entry);
+      const actorName = cleanText(entry?.actorName, "systeme");
+      const subjectKey = normalizeSearchText(meta.subject);
+      const groupId = meta.groupable && subjectKey
+        ? [
+            normalizeSearchText(actorName),
+            cleanText(entry?.at),
+            meta.bucket,
+            subjectKey,
+          ].join("::")
+        : `activity-${cleanText(entry?.id, index)}`;
+
+      if (groupMap.has(groupId)) {
+        const group = groupMap.get(groupId);
+        group.items.push(entry);
+        return;
+      }
+
+      const group = {
+        id: groupId,
+        actorName,
+        at: cleanText(entry?.at),
+        bucket: meta.bucket,
+        subject: meta.subject,
+        items: [entry],
+        type: normalizeActivityType(entry?.type),
+      };
+      groupMap.set(groupId, group);
+      groups.push(group);
+    });
+
+    return groups.map((group) => {
+      const labels = [...new Set(
+        group.items
+          .map((entry) => cleanText(entry?.details?.label || extractActivityGroupMeta(entry).facet))
+          .filter(Boolean)
+      )];
+      const hasDetails = group.items.some((entry) => entry?.details && (
+        cleanText(entry.details.label) || cleanText(entry.details.before) || cleanText(entry.details.after)
+      ));
+      const summaryText = group.subject && group.items.length > 1
+        ? `a modifie ${group.subject}`
+        : cleanText(group.items[0]?.text);
+      const detailHint = group.items.length > 1
+        ? labels.join(" · ") || `${group.items.length} modifications`
+        : labels[0] || "";
+
+      return {
+        ...group,
+        labels,
+        hasDetails,
+        summaryText,
+        detailHint,
+      };
+    });
+  }
+
+  function filterBoardActivityGroups(groups = [], filter = "all") {
+    const list = Array.isArray(groups) ? groups : [];
+    if (!filter || filter === "all") return list;
+    return list.filter((group) => group.bucket === filter);
+  }
+
+  function summarizeBoardActivity(groups = []) {
+    const rows = Array.isArray(groups) ? groups : [];
     const authors = new Set(
       rows
         .map((entry) => cleanText(entry?.actorName))
@@ -666,52 +853,110 @@
     return escapeHtml(text || "Vide");
   }
 
-  function renderBoardActivityDetails(details) {
-    if (!details || typeof details !== "object") return "";
-    const label = cleanText(details.label, "Modification");
-    const before = String(details.before ?? "").trim();
-    const after = String(details.after ?? "").trim();
-    if (!label && !before && !after) return "";
+  function renderBoardActivityFilters(groups = [], currentFilter = "all") {
+    const counts = {
+      all: groups.length,
+      editions: groups.filter((group) => group.bucket === "editions").length,
+      relations: groups.filter((group) => group.bucket === "relations").length,
+      systeme: groups.filter((group) => group.bucket === "systeme").length,
+    };
+    const options = [
+      { id: "all", label: "Tout" },
+      { id: "editions", label: "Editions" },
+      { id: "relations", label: "Relations" },
+      { id: "systeme", label: "Systeme" },
+    ].filter((option) => option.id === "all" || counts[option.id] > 0);
 
     return `
-      <details class="activity-row-details">
-        <summary>Voir avant / apres</summary>
-        <div class="activity-diff-card">
-          <div class="activity-diff-head">${escapeHtml(label || "Modification")}</div>
-          <div class="activity-diff-grid">
-            <div class="activity-diff-col">
-              <span class="activity-diff-label">Avant</span>
-              <pre class="activity-diff-value">${renderActivityDetailValue(before)}</pre>
-            </div>
-            <div class="activity-diff-col">
-              <span class="activity-diff-label">Apres</span>
-              <pre class="activity-diff-value">${renderActivityDetailValue(after)}</pre>
-            </div>
-          </div>
-        </div>
-      </details>
+      <div class="activity-filter-bar">
+        ${options.map((option) => `
+          <button
+            type="button"
+            class="activity-filter-btn ${option.id === currentFilter ? "is-active" : ""}"
+            data-activity-filter="${escapeHtml(option.id)}"
+          >
+            <span>${escapeHtml(option.label)}</span>
+            <strong>${Number(counts[option.id] || 0)}</strong>
+          </button>
+        `).join("")}
+      </div>
     `;
   }
 
-  function renderBoardActivityRows(activity = []) {
-    const rows = Array.isArray(activity) ? activity : [];
+  function renderBoardActivityRows(groups = []) {
+    const rows = Array.isArray(groups) ? groups : [];
     if (!rows.length) {
       return '<div class="activity-row-empty">Aucune activite detaillee pour ce board.</div>';
     }
 
-    return rows.map((entry) => `
-      <article class="activity-row activity-type-${escapeHtml(normalizeActivityType(entry.type))}">
+    return rows.map((group) => `
+      <article class="activity-row activity-type-${escapeHtml(group.type)} activity-bucket-${escapeHtml(group.bucket)}">
         <div class="activity-row-head">
           <div class="activity-row-meta">
-            <span class="activity-type-pill activity-type-${escapeHtml(normalizeActivityType(entry.type))}">${escapeHtml(getActivityTypeLabel(entry.type))}</span>
-            <span class="activity-row-actor">${escapeHtml(cleanText(entry.actorName, "systeme"))}</span>
+            <span class="activity-type-pill activity-type-${escapeHtml(group.type)}">${escapeHtml(getActivityTypeLabel(group.items[0]?.type || group.type))}</span>
+            <span class="activity-row-actor">${escapeHtml(cleanText(group.actorName, "systeme"))}</span>
           </div>
-          <span class="activity-row-time">${escapeHtml(formatDate(entry.at))}</span>
+          <span class="activity-row-time">${escapeHtml(formatDate(group.at))}</span>
         </div>
-        <div class="activity-row-text">${escapeHtml(cleanText(entry.text))}</div>
-        ${renderBoardActivityDetails(entry.details)}
+        <div class="activity-row-text">${escapeHtml(cleanText(group.summaryText))}</div>
+        ${group.detailHint ? `<div class="activity-row-sub">${escapeHtml(group.detailHint)}</div>` : ""}
+        ${group.hasDetails ? `
+          <div class="activity-row-actions">
+            <button
+              type="button"
+              class="btn-cyber btn-activity-detail"
+              data-activity-detail="${escapeHtml(group.id)}"
+            >
+              Details
+            </button>
+          </div>
+        ` : ""}
       </article>
     `).join("");
+  }
+
+  function buildBoardActivityDetailHtml(group) {
+    const items = Array.isArray(group?.items) ? group.items : [];
+    const detailedItems = items.filter((entry) => entry?.details && (
+      cleanText(entry.details.label) || cleanText(entry.details.before) || cleanText(entry.details.after)
+    ));
+
+    return `
+      <div class="detail-grid activity-detail-layout">
+        <div class="detail-card activity-detail-summary">
+          <div class="detail-card-title">Action</div>
+          <div class="detail-row"><span>Acteur</span><strong>${escapeHtml(cleanText(group?.actorName, "systeme"))}</strong></div>
+          <div class="detail-row"><span>Heure</span><strong>${escapeHtml(formatDate(group?.at))}</strong></div>
+          <div class="detail-row"><span>Resume</span><strong>${escapeHtml(cleanText(group?.summaryText))}</strong></div>
+          ${group?.detailHint ? `<div class="detail-row"><span>Champs</span><strong>${escapeHtml(cleanText(group.detailHint))}</strong></div>` : ""}
+        </div>
+        <div class="detail-card activity-detail-list-card">
+          <div class="detail-card-title">Details</div>
+          <div class="activity-detail-list">
+            ${detailedItems.map((entry) => `
+              <article class="activity-detail-item">
+                <div class="activity-detail-item-head">
+                  <span class="activity-type-pill activity-type-${escapeHtml(normalizeActivityType(entry.type))}">
+                    ${escapeHtml(cleanText(entry?.details?.label || getActivityTypeLabel(entry.type), "Modification"))}
+                  </span>
+                  <span class="activity-detail-item-text">${escapeHtml(cleanText(entry.text))}</span>
+                </div>
+                <div class="activity-diff-grid">
+                  <div class="activity-diff-col">
+                    <span class="activity-diff-label">Avant</span>
+                    <pre class="activity-diff-value">${renderActivityDetailValue(entry?.details?.before)}</pre>
+                  </div>
+                  <div class="activity-diff-col">
+                    <span class="activity-diff-label">Apres</span>
+                    <pre class="activity-diff-value">${renderActivityDetailValue(entry?.details?.after)}</pre>
+                  </div>
+                </div>
+              </article>
+            `).join("")}
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function renderBoardCard(board) {
@@ -919,10 +1164,11 @@
     }
   }
 
-  function buildBoardDetailHtml(board) {
+  function buildBoardDetailHtml(board, options = {}) {
     const members = Array.isArray(board.members) ? board.members : [];
-    const activity = Array.isArray(board.activity) ? board.activity : [];
-    const activitySummary = summarizeBoardActivity(activity);
+    const activityGroups = Array.isArray(options.activityGroups) ? options.activityGroups : [];
+    const allActivityGroups = Array.isArray(options.allActivityGroups) ? options.allActivityGroups : activityGroups;
+    const activitySummary = summarizeBoardActivity(allActivityGroups);
     const statLines = Array.isArray(board?.content?.statLines) ? board.content.statLines : [];
     const memberRows = members.length
       ? `
@@ -969,12 +1215,12 @@
           <div class="detail-card-head">
             <div>
               <div class="detail-card-title">Journal</div>
-              <div class="detail-card-kicker">Simple, lisible, du plus recent au plus ancien.</div>
+              <div class="detail-card-kicker">Liste compacte, groupes utiles, details a part.</div>
             </div>
           </div>
           <div class="activity-summary-strip">
             <div class="activity-summary-item">
-              <span class="activity-summary-label">Evenements</span>
+              <span class="activity-summary-label">Actions</span>
               <strong>${activitySummary.total}</strong>
             </div>
             <div class="activity-summary-item">
@@ -986,8 +1232,9 @@
               <strong>${escapeHtml(activitySummary.latest ? formatDate(activitySummary.latest.at) : "Aucune")}</strong>
             </div>
           </div>
+          ${renderBoardActivityFilters(allActivityGroups, cleanText(options.activityFilter, "all"))}
           <div class="activity-log">
-            ${renderBoardActivityRows(activity)}
+            ${renderBoardActivityRows(activityGroups)}
           </div>
         </section>
       </div>
@@ -1012,20 +1259,73 @@
     return nextBoard;
   }
 
+  async function showBoardActivityDetailModal(group, board) {
+    if (!group || !Array.isArray(group.items) || !group.items.length) return;
+    await showModal({
+      title: `${cleanText(board?.title, "Board sans nom")} · Details`,
+      html: buildBoardActivityDetailHtml(group),
+      dialogClass: "modal-box-wide modal-box-activity-detail",
+      dismissValue: "close",
+      buttons: [
+        { label: "Retour", value: "close", className: "confirm" },
+      ],
+    });
+  }
+
   async function showBoardDetails(board) {
     let currentBoard = board;
+    let activityFilter = "all";
     while (currentBoard) {
-      const hasActivity = Array.isArray(currentBoard.activity) && currentBoard.activity.length > 0;
+      const allActivityGroups = buildBoardActivityGroups(currentBoard.activity);
+      const visibleActivityGroups = filterBoardActivityGroups(allActivityGroups, activityFilter);
+      const hasActivity = allActivityGroups.length > 0;
       const action = await showModal({
         title: cleanText(currentBoard.title, "Board sans nom"),
-        html: buildBoardDetailHtml(currentBoard),
+        html: buildBoardDetailHtml(currentBoard, {
+          activityGroups: visibleActivityGroups,
+          allActivityGroups,
+          activityFilter,
+        }),
         dialogClass: "modal-box-wide",
         dismissValue: "close",
         buttons: [
           { label: "Vider le journal", value: "clear-activity", className: "danger", disabled: !hasActivity },
           { label: "Fermer", value: "close", className: "confirm" },
         ],
+        onRender: ({ modalText: body, finishModal: resolveModal }) => {
+          const disposers = [];
+          body.querySelectorAll("[data-activity-filter]").forEach((button) => {
+            const handler = () => {
+              const nextFilter = cleanText(button.getAttribute("data-activity-filter"), "all");
+              resolveModal({ type: "filter", filter: nextFilter });
+            };
+            button.addEventListener("click", handler);
+            disposers.push(() => button.removeEventListener("click", handler));
+          });
+          body.querySelectorAll("[data-activity-detail]").forEach((button) => {
+            const handler = () => {
+              const groupId = cleanText(button.getAttribute("data-activity-detail"));
+              resolveModal({ type: "detail", groupId });
+            };
+            button.addEventListener("click", handler);
+            disposers.push(() => button.removeEventListener("click", handler));
+          });
+          return () => disposers.forEach((dispose) => dispose());
+        },
       });
+
+      if (action && typeof action === "object" && action.type === "filter") {
+        activityFilter = cleanText(action.filter, "all");
+        continue;
+      }
+
+      if (action && typeof action === "object" && action.type === "detail") {
+        const targetGroup = allActivityGroups.find((group) => group.id === cleanText(action.groupId));
+        if (targetGroup) {
+          await showBoardActivityDetailModal(targetGroup, currentBoard);
+        }
+        continue;
+      }
 
       if (action !== "clear-activity") return;
 
