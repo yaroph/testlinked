@@ -30,6 +30,7 @@ function createBoardEntry(index, options = {}) {
     const page = String(options.page || 'point');
     const ownerName = String(options.ownerName || `owner-${index}`);
     const updatedAt = new Date(Date.UTC(2026, 2, index, 14, 30, 0)).toISOString();
+    const activity = Array.isArray(options.activity) ? clone(options.activity) : [];
     const members = Array.isArray(options.members)
         ? clone(options.members)
         : [
@@ -60,7 +61,8 @@ function createBoardEntry(index, options = {}) {
             }
             : null,
         searchText: `${title} ${ownerName} ${members.map((member) => member.username).join(' ')}`,
-        activityCount: Number(options.activityCount || 0),
+        activityCount: activity.length || Number(options.activityCount || 0),
+        activity,
     };
 }
 
@@ -218,6 +220,45 @@ test('database loads point archives by default, paginates, switches tabs, and lo
     expect(api.requests.filter((entry) => entry.endpoint === 'db-list' && entry.page === 'point')).toHaveLength(2);
     expect(api.requests.filter((entry) => entry.endpoint === 'db-list' && entry.page === 'map')).toHaveLength(1);
     expect(api.requests.filter((entry) => entry.endpoint === 'db-boards')).toHaveLength(1);
+});
+
+test('database shows the board activity log in board details', async ({ page }) => {
+    const boardEntries = [
+        createBoardEntry(1, {
+            title: 'Alpha Cloud',
+            ownerName: 'eric',
+            activity: [
+                {
+                    id: 'act-1',
+                    at: new Date(Date.UTC(2026, 2, 1, 14, 35, 0)).toISOString(),
+                    actorId: 'u-eric',
+                    actorName: 'eric',
+                    type: 'field',
+                    text: 'a modifie la description de Alicia',
+                },
+                {
+                    id: 'act-2',
+                    at: new Date(Date.UTC(2026, 2, 1, 14, 34, 0)).toISOString(),
+                    actorId: 'u-eric',
+                    actorName: 'eric',
+                    type: 'link',
+                    text: 'a ajoute une relation entre Alicia et Bob',
+                },
+            ],
+        }),
+    ];
+
+    await installDatabaseMocks(page, { boardEntries });
+
+    await page.goto('/database/');
+    await page.click('[data-tab="boards"]');
+    await page.click('#cards-boards [data-board-action="detail"]');
+
+    await expect(page.locator('#custom-modal')).toBeVisible();
+    await expect(page.locator('#custom-modal')).toContainText('Journal');
+    await expect(page.locator('#custom-modal')).toContainText('eric');
+    await expect(page.locator('#custom-modal')).toContainText('a modifie la description de Alicia');
+    await expect(page.locator('#custom-modal')).toContainText('a ajoute une relation entre Alicia et Bob');
 });
 
 test('database exposes retry state when archive service is unavailable', async ({ page }) => {

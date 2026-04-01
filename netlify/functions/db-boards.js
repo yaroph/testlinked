@@ -34,6 +34,21 @@ function cleanText(value, fallback = "") {
   return text || fallback;
 }
 
+function normalizeBoardActivityRows(activity = []) {
+  return (Array.isArray(activity) ? activity : [])
+    .map((item) => ({
+      id: cleanText(item?.id),
+      at: cleanText(item?.at),
+      actorId: cleanText(item?.actorId),
+      actorName: cleanText(item?.actorName, "systeme"),
+      type: cleanText(item?.type, "info"),
+      text: cleanText(item?.text),
+    }))
+    .filter((item) => item.id && item.text)
+    .sort((left, right) => timeValue(right.at) - timeValue(left.at))
+    .slice(0, 40);
+}
+
 function uniqueMembers(board = {}) {
   const buckets = new Map();
   const ownerId = cleanText(board.ownerId);
@@ -105,12 +120,14 @@ function buildBoardRow(board, editLock = null) {
   const members = uniqueMembers(board);
   const content = summarizeBoardData(page, board?.data || {});
   const title = cleanText(board?.title, "Board sans nom");
+  const activity = normalizeBoardActivityRows(board?.activity);
   const searchText = normalizeSearchText([
     title,
     page,
     board?.ownerName,
     ...(members.map((member) => member.username)),
     ...(content.statLines || []),
+    ...(activity.map((entry) => `${entry.actorName} ${entry.text}`)),
   ]);
 
   return {
@@ -131,7 +148,8 @@ function buildBoardRow(board, editLock = null) {
     memberCount: members.length,
     memberNames: members.map((member) => member.username),
     members,
-    activityCount: Array.isArray(board?.activity) ? board.activity.length : 0,
+    activityCount: activity.length,
+    activity,
     content,
     editLock,
     searchText,

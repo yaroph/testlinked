@@ -62,6 +62,7 @@ const PRESENCE_MAX_ITEMS = 96;
 const SESSION_ACTIVE_MS = 35000;
 const SESSION_SCAN_MAX = 400;
 const BOARD_ACTIVITY_MAX = 40;
+const BOARD_ACTIVITY_DETAIL_MAX = 12;
 const BOARD_EDIT_LOCK_TTL_MS = Math.max(
   60000,
   Number(
@@ -862,6 +863,263 @@ function appendBoardActivity(board, user, type, text) {
   };
   board.activity = [entry, ...existing].slice(0, BOARD_ACTIVITY_MAX);
   return true;
+}
+
+function appendBoardActivities(board, user, items = []) {
+  if (!board) return false;
+  const existing = normalizeBoardActivity(board);
+  const at = nowIso();
+  const entries = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      if (typeof item === "string") {
+        return {
+          type: "info",
+          text: item,
+        };
+      }
+      if (!item || typeof item !== "object") return null;
+      return {
+        type: String(item.type || "info"),
+        text: item.text,
+      };
+    })
+    .map((item) => {
+      if (!item) return null;
+      const cleanText = sanitizeBoardActivityText(item.text);
+      if (!cleanText) return null;
+      return {
+        id: newId("act"),
+        at,
+        actorId: String(user?.id || ""),
+        actorName: String(user?.username || ""),
+        type: String(item.type || "info"),
+        text: cleanText,
+      };
+    })
+    .filter(Boolean);
+
+  if (!entries.length) return false;
+  board.activity = [...entries, ...existing].slice(0, BOARD_ACTIVITY_MAX);
+  return true;
+}
+
+function normalizeComparableActivityText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sanitizeActivityLabel(value, fallback = "") {
+  const text = normalizeComparableActivityText(value).slice(0, 72);
+  return text || String(fallback || "");
+}
+
+function humanizeActivityToken(value, fallback = "element") {
+  const text = sanitizeActivityLabel(value, fallback)
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  return text || fallback;
+}
+
+function formatPointNodeLabel(node, fallbackId = "") {
+  const name = sanitizeActivityLabel(node?.name || "");
+  if (name) return name;
+
+  const type = humanizeActivityToken(node?.type, "fiche");
+  const id = sanitizeActivityLabel(node?.id || fallbackId);
+  if (id) return `${type} ${id}`;
+  return "fiche sans nom";
+}
+
+function buildPointLinkPairMap(links = []) {
+  const pairs = new Map();
+  (Array.isArray(links) ? links : []).forEach((link) => {
+    const source = String(link?.source || "");
+    const target = String(link?.target || "");
+    if (!source || !target || source === target) return;
+    const pairKey = mapPairKey(source, target);
+    if (!pairs.has(pairKey)) {
+      pairs.set(pairKey, link);
+    }
+  });
+  return pairs;
+}
+
+function buildPointRelationLabel(link, nodeMap = new Map()) {
+  const sourceId = String(link?.source || "");
+  const targetId = String(link?.target || "");
+  const sourceLabel = formatPointNodeLabel(nodeMap.get(sourceId), sourceId);
+  const targetLabel = formatPointNodeLabel(nodeMap.get(targetId), targetId);
+  return `${sourceLabel} et ${targetLabel}`;
+}
+
+function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
+  const entries = [];
+  const previousNodes = Array.isArray(previousData?.nodes) ? previousData.nodes : [];
+  const nextNodes = Array.isArray(nextData?.nodes) ? nextData.nodes : [];
+  const previousNodeMap = new Map(previousNodes.map((node) => [String(node?.id || ""), node]));
+  const nextNodeMap = new Map(nextNodes.map((node) => [String(node?.id || ""), node]));
+
+  [...nextNodeMap.keys()]
+    .filter((id) => id && !previousNodeMap.has(id))
+    .sort((a, b) => a.localeCompare(b))
+    .forEach((id) => {
+      entries.push({
+        type: "node",
+        text: `a ajoute la fiche ${formatPointNodeLabel(nextNodeMap.get(id), id)}`,
+      });
+    });
+
+  [...previousNodeMap.keys()]
+    .filter((id) => id && !nextNodeMap.has(id))
+    .sort((a, b) => a.localeCompare(b))
+    .forEach((id) => {
+      entries.push({
+        type: "node",
+        text: `a supprime la fiche ${formatPointNodeLabel(previousNodeMap.get(id), id)}`,
+      });
+    });
+
+  [...nextNodeMap.keys()]
+    .filter((id) => id && previousNodeMap.has(id))
+    .sort((a, b) => a.localeCompare(b))
+    .forEach((id) => {
+      const previousNode = previousNodeMap.get(id);
+      const nextNode = nextNodeMap.get(id);
+      const previousName = normalizeComparableActivityText(previousNode?.name || "");
+      const nextName = normalizeComparableActivityText(nextNode?.name || "");
+      const nextLabel = formatPointNodeLabel(nextNode, id);
+      const previousLabel = formatPointNodeLabel(previousNode, id);
+
+      if (previousName !== nextName) {
+        entries.push({
+          type: "node",
+          text: `a modifie le nom de ${previousLabel} en ${nextLabel}`,
+        });
+      }
+
+      if (
+        normalizeComparableActivityText(previousNode?.description || "")
+        !== normalizeComparableActivityText(nextNode?.description || "")
+      ) {
+        entries.push({
+          type: "field",
+          text: `a modifie la description de ${nextLabel}`,
+        });
+      }
+
+      if (
+        normalizeComparableActivityText(previousNode?.notes || "")
+        !== normalizeComparableActivityText(nextNode?.notes || "")
+      ) {
+        entries.push({
+          type: "field",
+          text: `a modifie les notes de ${nextLabel}`,
+        });
+      }
+
+      if (
+        String(previousNode?.type || "")
+        !== String(nextNode?.type || "")
+      ) {
+        entries.push({
+          type: "field",
+          text: `a change le type de ${nextLabel} (${humanizeActivityToken(previousNode?.type, "inconnu")} -> ${humanizeActivityToken(nextNode?.type, "inconnu")})`,
+        });
+      }
+
+      if (
+        String(previousNode?.personStatus || "")
+        !== String(nextNode?.personStatus || "")
+      ) {
+        entries.push({
+          type: "field",
+          text: `a change le statut de ${nextLabel} (${humanizeActivityToken(previousNode?.personStatus, "inconnu")} -> ${humanizeActivityToken(nextNode?.personStatus, "inconnu")})`,
+        });
+      }
+
+      const previousIdentity = [
+        previousNode?.num,
+        previousNode?.accountNumber,
+        previousNode?.citizenNumber,
+      ].map((value) => normalizeComparableActivityText(value)).join("|");
+      const nextIdentity = [
+        nextNode?.num,
+        nextNode?.accountNumber,
+        nextNode?.citizenNumber,
+      ].map((value) => normalizeComparableActivityText(value)).join("|");
+      if (previousIdentity !== nextIdentity) {
+        entries.push({
+          type: "field",
+          text: `a modifie les identifiants de ${nextLabel}`,
+        });
+      }
+    });
+
+  const previousLinks = buildPointLinkPairMap(previousData?.links);
+  const nextLinks = buildPointLinkPairMap(nextData?.links);
+  const relationNodeMap = new Map([...previousNodeMap.entries(), ...nextNodeMap.entries()]);
+
+  [...new Set([...previousLinks.keys(), ...nextLinks.keys()])]
+    .sort((a, b) => a.localeCompare(b))
+    .forEach((pairKey) => {
+      const previousLink = previousLinks.get(pairKey) || null;
+      const nextLink = nextLinks.get(pairKey) || null;
+
+      if (!previousLink && nextLink) {
+        entries.push({
+          type: "link",
+          text: `a ajoute une relation entre ${buildPointRelationLabel(nextLink, relationNodeMap)}`,
+        });
+        return;
+      }
+
+      if (previousLink && !nextLink) {
+        entries.push({
+          type: "link",
+          text: `a supprime la relation entre ${buildPointRelationLabel(previousLink, relationNodeMap)}`,
+        });
+        return;
+      }
+
+      if (
+        previousLink
+        && nextLink
+        && String(previousLink.kind || "") !== String(nextLink.kind || "")
+      ) {
+        entries.push({
+          type: "link",
+          text: `a modifie la relation entre ${buildPointRelationLabel(nextLink, relationNodeMap)} (${humanizeActivityToken(previousLink.kind, "relation")} -> ${humanizeActivityToken(nextLink.kind, "relation")})`,
+        });
+      }
+    });
+
+  if (options.mergedConflict) {
+    entries.unshift({
+      type: "save",
+      text: "a fusionne automatiquement les changements distants",
+    });
+  }
+
+  if (entries.length > BOARD_ACTIVITY_DETAIL_MAX) {
+    const hiddenCount = entries.length - BOARD_ACTIVITY_DETAIL_MAX;
+    return [
+      ...entries.slice(0, BOARD_ACTIVITY_DETAIL_MAX),
+      {
+        type: "save",
+        text: `a realise ${hiddenCount} autre${hiddenCount > 1 ? "s" : ""} modification${hiddenCount > 1 ? "s" : ""}`,
+      },
+    ];
+  }
+
+  return entries;
+}
+
+function buildBoardSaveActivityEntriesByPage(page, previousData, nextData, options = {}) {
+  if (normalizePage(page) === "point") {
+    return buildPointBoardActivityEntries(previousData, nextData, options);
+  }
+  return options.mergedConflict
+    ? [{ type: "save", text: "a fusionne automatiquement les changements distants" }]
+    : [];
 }
 
 function summarizeBoardDelta(previousData, nextData, options = {}) {
@@ -1801,6 +2059,9 @@ exports.handler = async (event) => {
 
     const now = nowIso();
     const deltaSummary = summarizeBoardDeltaByPage(page, normalizedCurrent, mergedData, { mergedConflict: hadVersionDrift });
+    const detailedActivity = buildBoardSaveActivityEntriesByPage(page, normalizedCurrent, mergedData, {
+      mergedConflict: hadVersionDrift,
+    });
     board.data = mergedData;
     board.title = nextTitle;
     board.updatedAt = now;
@@ -1809,7 +2070,16 @@ exports.handler = async (event) => {
       username: user.username,
       at: now,
     };
-    appendBoardActivity(board, user, "save", `a modifie le board (${deltaSummary})`);
+    let loggedChange = false;
+    if (!sameTitle) {
+      loggedChange = appendBoardActivity(board, user, "rename", `a renomme le board en "${nextTitle}"`) || loggedChange;
+    }
+    if (detailedActivity.length) {
+      loggedChange = appendBoardActivities(board, user, detailedActivity) || loggedChange;
+    }
+    if (!loggedChange) {
+      appendBoardActivity(board, user, "save", `a modifie le board (${deltaSummary})`);
+    }
 
     await saveBoard(store, board);
     return jsonResponse(200, {
@@ -2050,6 +2320,8 @@ exports.__test = {
   mergeBoardPayload,
   normalizeBoardActivity,
   appendBoardActivity,
+  appendBoardActivities,
+  buildBoardSaveActivityEntriesByPage,
   summarizeBoardDeltaByPage,
   sanitizeShareRole,
   getUnsupportedShareRoleMessage,

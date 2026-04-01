@@ -241,6 +241,119 @@ test('getUnsupportedShareRoleMessage force le transfert pour un nouveau lead', (
   );
 });
 
+test('buildBoardSaveActivityEntriesByPage detaille les changements metier sur un board point', () => {
+  const previous = {
+    meta: {},
+    physicsSettings: {},
+    nodes: [
+      {
+        id: 'n1',
+        name: 'Alice',
+        type: 'person',
+        description: 'Ancienne description',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+      {
+        id: 'n2',
+        name: 'Bob',
+        type: 'person',
+        description: '',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+    ],
+    links: [
+      { id: 'l1', source: 'n1', target: 'n2', kind: 'relation' },
+    ],
+    deletedNodes: [],
+    deletedLinks: [],
+    _collab: { updatedAt: '2026-03-28T10:00:00.000Z', updatedBy: 'eric' },
+  };
+
+  const next = {
+    meta: {},
+    physicsSettings: {},
+    nodes: [
+      {
+        id: 'n1',
+        name: 'Alicia',
+        type: 'person',
+        description: 'Nouvelle description',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+      {
+        id: 'n2',
+        name: 'Bob',
+        type: 'person',
+        description: '',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+      {
+        id: 'n3',
+        name: 'Charlie',
+        type: 'person',
+        description: '',
+        notes: '',
+        personStatus: 'active',
+        num: '',
+        accountNumber: '',
+        citizenNumber: '',
+        x: 0,
+        y: 0,
+        fixed: false,
+        linkedMapPointId: '',
+      },
+    ],
+    links: [
+      { id: 'l1', source: 'n1', target: 'n2', kind: 'ami' },
+      { id: 'l2', source: 'n2', target: 'n3', kind: 'relation' },
+    ],
+    deletedNodes: [],
+    deletedLinks: [],
+    _collab: { updatedAt: '2026-03-28T10:05:00.000Z', updatedBy: 'eric' },
+  };
+
+  const entries = __test.buildBoardSaveActivityEntriesByPage('point', previous, next);
+  const texts = entries.map((entry) => entry.text);
+
+  assert.ok(texts.includes('a ajoute la fiche Charlie'));
+  assert.ok(texts.includes('a modifie le nom de Alice en Alicia'));
+  assert.ok(texts.includes('a modifie la description de Alicia'));
+  assert.ok(texts.includes('a modifie la relation entre Alicia et Bob (relation -> ami)'));
+  assert.ok(texts.includes('a ajoute une relation entre Bob et Charlie'));
+});
+
 test('acquireBoardEditLock reserve l edition au premier utilisateur et bloque le second', async () => {
   const store = createMockLockStore();
   const board = { id: 'brd_alpha' };

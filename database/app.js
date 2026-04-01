@@ -570,6 +570,45 @@
     `).join("");
   }
 
+  function renderBoardActivityPreview(board) {
+    const latest = Array.isArray(board?.activity) ? board.activity[0] : null;
+    if (!latest || !cleanText(latest.text)) {
+      return `
+        <div class="board-activity-preview is-empty">
+          <span class="board-activity-preview-label">Journal</span>
+          <span class="board-activity-preview-text">Aucune activite detaillee.</span>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="board-activity-preview">
+        <span class="board-activity-preview-label">Derniere action</span>
+        <span class="board-activity-preview-text">
+          <strong>${escapeHtml(cleanText(latest.actorName, "systeme"))}</strong>
+          ${escapeHtml(cleanText(latest.text))}
+        </span>
+      </div>
+    `;
+  }
+
+  function renderBoardActivityRows(activity = []) {
+    const rows = Array.isArray(activity) ? activity : [];
+    if (!rows.length) {
+      return '<div class="activity-row-empty">Aucune activite detaillee pour ce board.</div>';
+    }
+
+    return rows.map((entry) => `
+      <article class="activity-row">
+        <div class="activity-row-head">
+          <span class="activity-row-actor">${escapeHtml(cleanText(entry.actorName, "systeme"))}</span>
+          <span class="activity-row-time">${escapeHtml(formatDate(entry.at))}</span>
+        </div>
+        <div class="activity-row-text">${escapeHtml(cleanText(entry.text))}</div>
+      </article>
+    `).join("");
+  }
+
   function renderBoardCard(board) {
     const pageBadge = cleanText(board?.page, "point").toUpperCase();
     const lockBadge = board?.editLock
@@ -592,6 +631,7 @@
           ${statLines.map((line) => `<span class="stat-pill">${escapeHtml(line)}</span>`).join("")}
         </div>
         <div class="member-list">${renderMemberChips(Array.isArray(board.members) ? board.members : [])}</div>
+        ${renderBoardActivityPreview(board)}
         <div class="card-actions">
           <button class="btn-cyber btn-detail" type="button" data-board-action="detail">DETAILS</button>
         </div>
@@ -768,6 +808,7 @@
 
   function buildBoardDetailHtml(board) {
     const members = Array.isArray(board.members) ? board.members : [];
+    const activity = Array.isArray(board.activity) ? board.activity : [];
     const memberRows = members.length
       ? members.map((member) => `
           <div class="detail-row">
@@ -801,6 +842,12 @@
         <div class="detail-card">
           <div class="detail-card-title">Users</div>
           ${memberRows}
+        </div>
+        <div class="detail-card detail-card-activity">
+          <div class="detail-card-title">Journal</div>
+          <div class="activity-log">
+            ${renderBoardActivityRows(activity)}
+          </div>
         </div>
       </div>
     `;
