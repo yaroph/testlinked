@@ -271,7 +271,7 @@ test('buildBoardSaveActivityEntriesByPage detaille les changements metier sur un
         num: '',
         accountNumber: '',
         citizenNumber: '',
-        x: 0,
+        x: 8,
         y: 0,
         fixed: false,
         linkedMapPointId: '',
@@ -352,6 +352,7 @@ test('buildBoardSaveActivityEntriesByPage detaille les changements metier sur un
   assert.ok(texts.includes('a modifie la description de Alicia'));
   assert.ok(texts.includes('a modifie la relation entre Alicia et Bob (relation -> ami)'));
   assert.ok(texts.includes('a ajoute une relation entre Bob et Charlie'));
+  assert.ok(texts.includes('a repositionne Bob'));
 });
 
 test('acquireBoardEditLock reserve l edition au premier utilisateur et bloque le second', async () => {

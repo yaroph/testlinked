@@ -16,6 +16,7 @@
   const toolbarMeta = document.getElementById("toolbar-meta");
 
   const modal = document.getElementById("custom-modal");
+  const modalBox = modal?.querySelector(".modal-box");
   const modalTitle = document.getElementById("modal-title");
   const modalText = document.getElementById("modal-text");
   const modalFooter = document.getElementById("modal-footer");
@@ -100,6 +101,9 @@
   function finishModal(value) {
     modal.classList.remove("visible");
     modal.setAttribute("aria-hidden", "true");
+    if (modalBox) {
+      modalBox.className = "modal-box";
+    }
     const resolver = activeModalResolve;
     activeModalResolve = null;
     activeModalDismissValue = null;
@@ -117,6 +121,10 @@
       modalTitle.textContent = cleanText(options.title, "Information");
       modalText.innerHTML = options.html || `<p>${escapeHtml(cleanText(options.text))}</p>`;
       modalFooter.innerHTML = "";
+      if (modalBox) {
+        const dialogClass = cleanText(options.dialogClass);
+        modalBox.className = dialogClass ? `modal-box ${dialogClass}` : "modal-box";
+      }
 
       buttons.forEach((button) => {
         const btn = document.createElement("button");
@@ -823,8 +831,8 @@
       : '<div class="detail-row"><span>Lock</span><strong>Libre</strong></div>';
 
     return `
-      <div class="detail-grid">
-        <div class="detail-card">
+      <div class="detail-grid board-detail-grid">
+        <div class="detail-card detail-card-board">
           <div class="detail-card-title">Board</div>
           <div class="detail-row"><span>Nom</span><strong>${escapeHtml(cleanText(board.title, "Board sans nom"))}</strong></div>
           <div class="detail-row"><span>Page</span><strong>${escapeHtml(cleanText(board.page, "point").toUpperCase())}</strong></div>
@@ -832,14 +840,14 @@
           <div class="detail-row"><span>Maj</span><strong>${escapeHtml(formatDate(board.updatedAt || board.createdAt))}</strong></div>
           ${lockRow}
         </div>
-        <div class="detail-card">
+        <div class="detail-card detail-card-content">
           <div class="detail-card-title">Contenu</div>
           ${(Array.isArray(board?.content?.statLines) ? board.content.statLines : [])
             .map((line) => `<div class="detail-row"><span>Stats</span><strong>${escapeHtml(line)}</strong></div>`)
             .join("")}
           <div class="detail-row"><span>Activite</span><strong>${Number(board.activityCount || 0)} evenements</strong></div>
         </div>
-        <div class="detail-card">
+        <div class="detail-card detail-card-users">
           <div class="detail-card-title">Users</div>
           ${memberRows}
         </div>
@@ -857,6 +865,7 @@
     await showModal({
       title: cleanText(board.title, "Board sans nom"),
       html: buildBoardDetailHtml(board),
+      dialogClass: "modal-box-wide",
       buttons: [{ label: "Fermer", value: true, className: "confirm" }],
     });
   }

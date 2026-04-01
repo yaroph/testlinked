@@ -255,6 +255,8 @@ test('database shows the board activity log in board details', async ({ page }) 
     await page.click('#cards-boards [data-board-action="detail"]');
 
     await expect(page.locator('#custom-modal')).toBeVisible();
+    const modalWidth = await page.locator('#custom-modal .modal-box').evaluate((element) => element.getBoundingClientRect().width);
+    expect(modalWidth).toBeGreaterThan(900);
     await expect(page.locator('#custom-modal')).toContainText('Journal');
     await expect(page.locator('#custom-modal')).toContainText('eric');
     await expect(page.locator('#custom-modal')).toContainText('a modifie la description de Alicia');

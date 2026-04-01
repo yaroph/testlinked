@@ -912,11 +912,28 @@ function sanitizeActivityLabel(value, fallback = "") {
   return text || String(fallback || "");
 }
 
+function sameRoundedCoord(left, right) {
+  const a = Number(left);
+  const b = Number(right);
+  if (!Number.isFinite(a) && !Number.isFinite(b)) return true;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(a - b) < 0.01;
+}
+
 function humanizeActivityToken(value, fallback = "element") {
   const text = sanitizeActivityLabel(value, fallback)
     .toLowerCase()
     .replace(/[_-]+/g, " ");
   return text || fallback;
+}
+
+function summarizeActivityLabelList(labels = [], singular = "element", plural = `${singular}s`) {
+  const cleanLabels = [...new Set((Array.isArray(labels) ? labels : []).map((label) => sanitizeActivityLabel(label)).filter(Boolean))];
+  if (!cleanLabels.length) return plural;
+  if (cleanLabels.length === 1) return cleanLabels[0];
+  if (cleanLabels.length === 2) return `${cleanLabels[0]} et ${cleanLabels[1]}`;
+  if (cleanLabels.length === 3) return `${cleanLabels[0]}, ${cleanLabels[1]} et ${cleanLabels[2]}`;
+  return `${cleanLabels[0]}, ${cleanLabels[1]} et ${cleanLabels.length - 2} autre${cleanLabels.length - 2 > 1 ? "s" : ""} ${cleanLabels.length > 3 ? plural : singular}`;
 }
 
 function formatPointNodeLabel(node, fallbackId = "") {
@@ -951,8 +968,14 @@ function buildPointRelationLabel(link, nodeMap = new Map()) {
   return `${sourceLabel} et ${targetLabel}`;
 }
 
+function formatPointLinkKindLabel(kind) {
+  const label = humanizeActivityToken(kind, "relation");
+  return label === "relation" ? "" : `${label} `;
+}
+
 function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
   const entries = [];
+  const movedNodeLabels = [];
   const previousNodes = Array.isArray(previousData?.nodes) ? previousData.nodes : [];
   const nextNodes = Array.isArray(nextData?.nodes) ? nextData.nodes : [];
   const previousNodeMap = new Map(previousNodes.map((node) => [String(node?.id || ""), node]));
@@ -1052,7 +1075,43 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
           text: `a modifie les identifiants de ${nextLabel}`,
         });
       }
+
+      if (
+        String(previousNode?.linkedMapPointId || "")
+        !== String(nextNode?.linkedMapPointId || "")
+      ) {
+        entries.push({
+          type: "field",
+          text: `a modifie la liaison carte de ${nextLabel}`,
+        });
+      }
+
+      if (
+        String(previousNode?.color || "")
+        !== String(nextNode?.color || "")
+        || Boolean(previousNode?.manualColor) !== Boolean(nextNode?.manualColor)
+      ) {
+        entries.push({
+          type: "field",
+          text: `a modifie la couleur de ${nextLabel}`,
+        });
+      }
+
+      if (
+        !sameRoundedCoord(previousNode?.x, nextNode?.x)
+        || !sameRoundedCoord(previousNode?.y, nextNode?.y)
+        || Boolean(previousNode?.fixed) !== Boolean(nextNode?.fixed)
+      ) {
+        movedNodeLabels.push(nextLabel);
+      }
     });
+
+  if (movedNodeLabels.length) {
+    entries.push({
+      type: "layout",
+      text: `a repositionne ${summarizeActivityLabelList(movedNodeLabels, "fiche", "fiches")}`,
+    });
+  }
 
   const previousLinks = buildPointLinkPairMap(previousData?.links);
   const nextLinks = buildPointLinkPairMap(nextData?.links);
@@ -1067,7 +1126,7 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
       if (!previousLink && nextLink) {
         entries.push({
           type: "link",
-          text: `a ajoute une relation entre ${buildPointRelationLabel(nextLink, relationNodeMap)}`,
+          text: `a ajoute une relation ${formatPointLinkKindLabel(nextLink.kind)}entre ${buildPointRelationLabel(nextLink, relationNodeMap)}`,
         });
         return;
       }
@@ -1075,7 +1134,7 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
       if (previousLink && !nextLink) {
         entries.push({
           type: "link",
-          text: `a supprime la relation entre ${buildPointRelationLabel(previousLink, relationNodeMap)}`,
+          text: `a supprime la relation ${formatPointLinkKindLabel(previousLink.kind)}entre ${buildPointRelationLabel(previousLink, relationNodeMap)}`,
         });
         return;
       }
@@ -1115,7 +1174,15 @@ function buildPointBoardActivityEntries(previousData, nextData, options = {}) {
 
 function buildBoardSaveActivityEntriesByPage(page, previousData, nextData, options = {}) {
   if (normalizePage(page) === "point") {
-    return buildPointBoardActivityEntries(previousData, nextData, options);
+    const pointEntries = buildPointBoardActivityEntries(previousData, nextData, options);
+    if (pointEntries.length) return pointEntries;
+    const physicsChanged = JSON.stringify(previousData?.physicsSettings || {}) !== JSON.stringify(nextData?.physicsSettings || {});
+    if (physicsChanged) {
+      return [{ type: "settings", text: "a modifie les reglages physiques du board" }];
+    }
+    return options.mergedConflict
+      ? [{ type: "save", text: "a fusionne automatiquement les changements distants" }]
+      : [];
   }
   return options.mergedConflict
     ? [{ type: "save", text: "a fusionne automatiquement les changements distants" }]
