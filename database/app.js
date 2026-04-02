@@ -289,6 +289,35 @@
     return out;
   }
 
+  async function apiGetBoardDetails(boardId) {
+    const res = await fetch("/.netlify/functions/db-boards", {
+      method: "POST",
+      headers: withViewerAuth({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        action: "get_board_details",
+        boardId,
+      }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || !out.ok) throw new Error(out.error || "Erreur details board");
+    return out;
+  }
+
+  async function apiRestoreBoardSnapshot(boardId, snapshotDate) {
+    const res = await fetch("/.netlify/functions/db-boards", {
+      method: "POST",
+      headers: withViewerAuth({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        action: "restore_snapshot",
+        boardId,
+        snapshotDate,
+      }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || !out.ok) throw new Error(out.error || "Erreur restauration snapshot");
+    return out;
+  }
+
   function buildArchiveFallbackSummary(entry) {
     const page = cleanText(entry?.page, "point");
     const action = cleanText(entry?.action, "export-standard");
@@ -665,6 +694,20 @@
     }
   }
 
+  function getSnapshotReasonLabel(reason) {
+    switch (cleanText(reason).toLowerCase()) {
+      case "create":
+        return "Creation";
+      case "rename":
+        return "Renommage";
+      case "restore":
+        return "Restauration";
+      case "save":
+      default:
+        return "Snapshot";
+    }
+  }
+
   function normalizeActivityBucket(type) {
     const normalized = normalizeActivityType(type);
     if (normalized === "link") return "relations";
@@ -959,6 +1002,352 @@
     `;
   }
 
+  function renderBoardSnapshotRows(board) {
+    const snapshots = Array.isArray(board?.snapshots) ? board.snapshots : [];
+    if (!snapshots.length) {
+      return '<div class="activity-row-empty">Aucun snapshot disponible pour ce board.</div>';
+    }
+
+    return snapshots.map((snapshot) => {
+      const stats = Array.isArray(snapshot?.content?.statLines) ? snapshot.content.statLines : [];
+      const diffEntries = Array.isArray(snapshot?.diffEntries) ? snapshot.diffEntries.slice(0, 6) : [];
+      return `
+        <article class="version-card ${snapshot?.isLatest ? "is-latest" : ""}">
+          <div class="version-card-head">
+            <div class="version-card-title-wrap">
+              <div class="version-card-date">${escapeHtml(formatDate(snapshot?.capturedAt || snapshot?.snapshotDate))}</div>
+              <div class="version-card-name">${escapeHtml(cleanText(snapshot?.title, board?.title || "Board sans nom"))}</div>
+              <div class="version-card-meta">
+                <span>${escapeHtml(cleanText(snapshot?.actorName, "systeme"))}</span>
+                <span>${escapeHtml(getSnapshotReasonLabel(snapshot?.reason))}</span>
+                <span>${escapeHtml(cleanText(snapshot?.snapshotDate))}</span>
+              </div>
+            </div>
+            <div class="version-card-actions">
+              ${snapshot?.isLatest ? '<span class="version-state-pill">Actuel</span>' : ""}
+              <button
+                type="button"
+                class="btn-cyber btn-version-restore"
+                data-snapshot-restore="${escapeHtml(cleanText(snapshot?.snapshotDate))}"
+                ${snapshot?.isLatest ? "disabled" : ""}
+              >
+                Restaurer
+              </button>
+            </div>
+          </div>
+          <div class="version-card-summary">${escapeHtml(cleanText(snapshot?.diffSummary, "Snapshot journalier"))}</div>
+          ${stats.length ? `
+            <div class="card-stats version-card-stats">
+              ${stats.map((line) => `<span class="stat-pill">${escapeHtml(line)}</span>`).join("")}
+            </div>
+          ` : ""}
+          ${diffEntries.length ? `
+            <div class="version-card-diff-list">
+              ${diffEntries.map((entry) => `<div class="version-card-diff-item">${escapeHtml(cleanText(entry))}</div>`).join("")}
+            </div>
+          ` : ""}
+        </article>
+      `;
+    }).join("");
+  }
+
+  function buildBoardVersionsHtml(board) {
+    const snapshots = Array.isArray(board?.snapshots) ? board.snapshots : [];
+    return `
+      <div class="detail-grid board-version-layout">
+        <aside class="detail-card version-sidebar-card">
+          <div class="detail-card-title">Versioning</div>
+          <div class="detail-row"><span>Board</span><strong>${escapeHtml(cleanText(board?.title, "Board sans nom"))}</strong></div>
+          <div class="detail-row"><span>Snapshots</span><strong>${Number(board?.snapshotCount || snapshots.length || 0)}</strong></div>
+          <div class="detail-row"><span>Frequence</span><strong>1 / jour si modifie</strong></div>
+          <div class="detail-row"><span>Derniere maj</span><strong>${escapeHtml(formatDate(board?.updatedAt || board?.createdAt))}</strong></div>
+        </aside>
+        <section class="detail-card version-list-card">
+          <div class="detail-card-head">
+            <div>
+              <div class="detail-card-title">Snapshots dates</div>
+              <div class="detail-card-kicker">Diff lisible par jour et restauration en un clic.</div>
+            </div>
+          </div>
+          <div class="version-list">
+            ${renderBoardSnapshotRows(board)}
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderBriefingKeyTargets(items = []) {
+    if (!items.length) return '<div class="report-empty">Aucune cible clee.</div>';
+    return items.map((item, index) => `
+      <article class="report-rank-row">
+        <span class="report-rank-index">${index + 1}</span>
+        <div class="report-rank-copy">
+          <strong>${escapeHtml(cleanText(item?.name, "Cible"))}</strong>
+          <span>${escapeHtml([
+            cleanText(item?.type),
+            cleanText(item?.status),
+            Number.isFinite(Number(item?.degree)) ? `${Number(item.degree)} liens` : "",
+          ].filter(Boolean).join(" • ") || "Profil")}</span>
+        </div>
+        <span class="report-rank-score">${escapeHtml(Number(item?.score || 0).toFixed(2))}</span>
+      </article>
+    `).join("");
+  }
+
+  function renderBriefingRelations(items = []) {
+    if (!items.length) return '<div class="report-empty">Aucune relation dominante.</div>';
+    return items.map((item, index) => `
+      <article class="report-rank-row">
+        <span class="report-rank-index">${index + 1}</span>
+        <div class="report-rank-copy">
+          <strong>${escapeHtml(cleanText(item?.label, "Relation"))}</strong>
+          <span>${escapeHtml(cleanText(item?.kind, "relation"))}</span>
+        </div>
+        <span class="report-rank-score">${escapeHtml(Number(item?.score || 0).toFixed(2))}</span>
+      </article>
+    `).join("");
+  }
+
+  function renderBriefingChanges(items = []) {
+    if (!items.length) return '<div class="report-empty">Aucun changement recent.</div>';
+    return items.map((item) => `
+      <article class="report-change-row">
+        <div class="report-change-head">
+          <strong>${escapeHtml(cleanText(item?.actorName, "systeme"))}</strong>
+          <span>${escapeHtml(formatDate(item?.at))}</span>
+        </div>
+        <div class="report-change-text">${escapeHtml(cleanText(item?.text, "Modification"))}</div>
+      </article>
+    `).join("");
+  }
+
+  function buildBoardBriefingPrintHtml(board) {
+    const report = board?.report && typeof board.report === "object" ? board.report : {};
+    const statLines = Array.isArray(report?.statLines) ? report.statLines : [];
+    const keyTargets = Array.isArray(report?.keyTargets) ? report.keyTargets : [];
+    const topRelations = Array.isArray(report?.topRelations) ? report.topRelations : [];
+    const latestChanges = Array.isArray(report?.latestChanges) ? report.latestChanges : [];
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8" />
+        <title>${escapeHtml(cleanText(report?.title || board?.title, "Board briefing"))}</title>
+        <style>
+          :root {
+            color-scheme: dark;
+            --bg: #071019;
+            --panel: #0d1824;
+            --panel-2: #101f2d;
+            --line: rgba(102, 255, 249, 0.18);
+            --text: #e6f8ff;
+            --muted: #92a7b8;
+            --accent: #73fbf7;
+          }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            padding: 32px;
+            font-family: Rajdhani, Arial, sans-serif;
+            background:
+              radial-gradient(circle at top right, rgba(115, 251, 247, 0.08), transparent 32%),
+              var(--bg);
+            color: var(--text);
+          }
+          .report-shell {
+            max-width: 1100px;
+            margin: 0 auto;
+            display: grid;
+            gap: 18px;
+          }
+          .report-hero,
+          .report-card {
+            border: 1px solid var(--line);
+            background: linear-gradient(180deg, rgba(115, 251, 247, 0.04), rgba(255, 255, 255, 0.02)), var(--panel);
+            padding: 20px;
+          }
+          .report-brand {
+            color: var(--accent);
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+          }
+          .report-title {
+            margin: 8px 0 6px;
+            font-size: 34px;
+            line-height: 1.05;
+            text-transform: uppercase;
+          }
+          .report-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            color: var(--muted);
+            font-size: 15px;
+          }
+          .report-stats {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+          }
+          .report-stat {
+            border: 1px solid var(--line);
+            background: var(--panel-2);
+            padding: 14px;
+          }
+          .report-stat span {
+            display: block;
+            color: var(--muted);
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+          }
+          .report-stat strong {
+            display: block;
+            margin-top: 8px;
+            font-size: 21px;
+          }
+          .report-grid {
+            display: grid;
+            grid-template-columns: 1.1fr 1fr;
+            gap: 18px;
+          }
+          .report-card h2 {
+            margin: 0 0 14px;
+            color: var(--accent);
+            font-size: 18px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+          }
+          .report-pill-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+          .report-pill {
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.03);
+            padding: 8px 10px;
+            font-size: 14px;
+          }
+          .report-rank-list,
+          .report-change-list {
+            display: grid;
+            gap: 10px;
+          }
+          .report-rank-row,
+          .report-change-row {
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.03);
+            padding: 12px 14px;
+          }
+          .report-rank-row {
+            display: grid;
+            grid-template-columns: 34px minmax(0, 1fr) auto;
+            gap: 12px;
+            align-items: center;
+          }
+          .report-rank-index {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            border: 1px solid var(--line);
+            color: var(--accent);
+            font-weight: 700;
+          }
+          .report-rank-copy {
+            display: grid;
+            gap: 4px;
+          }
+          .report-rank-copy strong {
+            font-size: 18px;
+          }
+          .report-rank-copy span,
+          .report-change-head span {
+            color: var(--muted);
+            font-size: 14px;
+          }
+          .report-rank-score {
+            font-size: 17px;
+            font-weight: 700;
+          }
+          .report-change-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 6px;
+          }
+          .report-change-text {
+            font-size: 16px;
+            line-height: 1.45;
+          }
+          .report-empty {
+            color: var(--muted);
+            font-size: 15px;
+          }
+          @media print {
+            body { padding: 0; background: #071019; }
+            .report-shell { max-width: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="report-shell">
+          <section class="report-hero">
+            <div class="report-brand">BNI LINKED · BRIEFING BOARD</div>
+            <h1 class="report-title">${escapeHtml(cleanText(report?.title || board?.title, "Board briefing"))}</h1>
+            <div class="report-meta">
+              <span>${escapeHtml(cleanText(report?.page, cleanText(board?.page, "point")).toUpperCase())}</span>
+              <span>Owner ${escapeHtml(cleanText(report?.ownerName || board?.ownerName, "Lead"))}</span>
+              <span>Maj ${escapeHtml(formatDate(report?.updatedAt || board?.updatedAt || board?.createdAt))}</span>
+              <span>${Number(report?.snapshotCount || board?.snapshotCount || 0)} snapshots</span>
+            </div>
+          </section>
+          <section class="report-stats">
+            <div class="report-stat"><span>Board</span><strong>${escapeHtml(cleanText(board?.title, "Board sans nom"))}</strong></div>
+            <div class="report-stat"><span>Activite</span><strong>${Number(board?.activityCount || latestChanges.length || 0)} evenements</strong></div>
+            <div class="report-stat"><span>Versions</span><strong>${Number(report?.snapshotCount || board?.snapshotCount || 0)}</strong></div>
+            <div class="report-stat"><span>Page</span><strong>${escapeHtml(cleanText(report?.page, cleanText(board?.page, "point")).toUpperCase())}</strong></div>
+          </section>
+          <section class="report-card">
+            <h2>Resume board</h2>
+            <div class="report-pill-list">
+              ${statLines.length
+                ? statLines.map((line) => `<span class="report-pill">${escapeHtml(cleanText(line))}</span>`).join("")
+                : '<span class="report-pill">Aucune statistique</span>'}
+            </div>
+          </section>
+          <section class="report-grid">
+            <article class="report-card">
+              <h2>Cibles cles</h2>
+              <div class="report-rank-list">${renderBriefingKeyTargets(keyTargets)}</div>
+            </article>
+            <article class="report-card">
+              <h2>Top relations</h2>
+              <div class="report-rank-list">${renderBriefingRelations(topRelations)}</div>
+            </article>
+          </section>
+          <section class="report-card">
+            <h2>Derniers changements</h2>
+            <div class="report-change-list">${renderBriefingChanges(latestChanges)}</div>
+          </section>
+        </main>
+        <script>
+          window.addEventListener('load', function () {
+            setTimeout(function () {
+              window.print();
+            }, 120);
+          });
+        </script>
+      </body>
+      </html>
+    `;
+  }
+
   function renderBoardCard(board) {
     const pageBadge = cleanText(board?.page, "point").toUpperCase();
     const lockBadge = board?.editLock
@@ -1198,18 +1587,19 @@
             ${lockRow}
           </div>
           <div class="detail-card detail-card-content">
-            <div class="detail-card-title">Contenu</div>
-            <div class="detail-metric-list">
-              ${statLines.length
+          <div class="detail-card-title">Contenu</div>
+          <div class="detail-metric-list">
+            ${statLines.length
                 ? statLines.map((line) => `<div class="detail-metric-line">${escapeHtml(line)}</div>`).join("")
                 : '<div class="detail-inline-empty">Aucune statistique.</div>'}
-            </div>
-            <div class="detail-row"><span>Activite</span><strong>${Number(board.activityCount || 0)} evenements</strong></div>
           </div>
-          <div class="detail-card detail-card-users">
-            <div class="detail-card-title">Users</div>
-            ${memberRows}
-          </div>
+          <div class="detail-row"><span>Activite</span><strong>${Number(board.activityCount || 0)} evenements</strong></div>
+          <div class="detail-row"><span>Versions</span><strong>${Number(board.snapshotCount || 0)} snapshots</strong></div>
+        </div>
+        <div class="detail-card detail-card-users">
+          <div class="detail-card-title">Users</div>
+          ${memberRows}
+        </div>
         </aside>
         <section class="detail-card detail-card-activity">
           <div class="detail-card-head">
@@ -1259,6 +1649,88 @@
     return nextBoard;
   }
 
+  async function loadBoardDetails(board) {
+    const boardId = cleanText(board?.id);
+    if (!boardId) throw new Error("Board introuvable");
+    const out = await apiGetBoardDetails(boardId);
+    const nextBoard = out?.board && typeof out.board === "object" ? out.board : board;
+    replaceBoardEntry(nextBoard);
+    if (appState.activeTab === "boards") {
+      renderBoardsPanel();
+    }
+    return nextBoard;
+  }
+
+  function openBoardBriefingPdf(board) {
+    const popup = window.open("", "_blank");
+    if (!popup) {
+      throw new Error("Popup bloquee");
+    }
+    popup.document.open();
+    popup.document.write(buildBoardBriefingPrintHtml(board));
+    popup.document.close();
+  }
+
+  async function showBoardVersionsModal(board) {
+    let currentBoard = board;
+    while (currentBoard) {
+      const snapshots = Array.isArray(currentBoard?.snapshots) ? currentBoard.snapshots : [];
+      const action = await showModal({
+        title: `${cleanText(currentBoard?.title, "Board sans nom")} · Versions`,
+        html: buildBoardVersionsHtml(currentBoard),
+        dialogClass: "modal-box-wide modal-box-versions",
+        dismissValue: "close",
+        buttons: [
+          { label: "Retour", value: "close", className: "confirm" },
+        ],
+        onRender: ({ modalText: body, finishModal: resolveModal }) => {
+          const disposers = [];
+          body.querySelectorAll("[data-snapshot-restore]").forEach((button) => {
+            const handler = () => {
+              const snapshotDate = cleanText(button.getAttribute("data-snapshot-restore"));
+              if (!snapshotDate) return;
+              resolveModal({ type: "restore", snapshotDate });
+            };
+            button.addEventListener("click", handler);
+            disposers.push(() => button.removeEventListener("click", handler));
+          });
+          return () => disposers.forEach((dispose) => dispose());
+        },
+      });
+
+      if (!action || action === "close") {
+        return currentBoard;
+      }
+
+      if (action && typeof action === "object" && action.type === "restore") {
+        const snapshotDate = cleanText(action.snapshotDate);
+        const snapshot = snapshots.find((entry) => cleanText(entry?.snapshotDate) === snapshotDate);
+        const confirmed = await showModal({
+          title: "Restaurer ce snapshot ?",
+          text: `Le board "${cleanText(currentBoard?.title, "Board sans nom")}" sera restaure sur l'etat du ${formatDate(snapshot?.capturedAt || snapshotDate)}.`,
+          dismissValue: false,
+          buttons: [
+            { label: "Annuler", value: false },
+            { label: "Restaurer", value: true, className: "danger" },
+          ],
+        });
+        if (!confirmed) continue;
+
+        try {
+          const out = await apiRestoreBoardSnapshot(cleanText(currentBoard?.id), snapshotDate);
+          currentBoard = out?.board && typeof out.board === "object" ? out.board : currentBoard;
+          replaceBoardEntry(currentBoard);
+          if (appState.activeTab === "boards") {
+            renderBoardsPanel();
+          }
+        } catch (error) {
+          await customAlert("Erreur lors de la restauration du snapshot.");
+        }
+      }
+    }
+    return currentBoard;
+  }
+
   async function showBoardActivityDetailModal(group, board) {
     if (!group || !Array.isArray(group.items) || !group.items.length) return;
     await showModal({
@@ -1274,6 +1746,12 @@
 
   async function showBoardDetails(board) {
     let currentBoard = board;
+    try {
+      currentBoard = await loadBoardDetails(board);
+    } catch (error) {
+      await customAlert("Erreur lors du chargement des details du board.");
+      return;
+    }
     let activityFilter = "all";
     while (currentBoard) {
       const allActivityGroups = buildBoardActivityGroups(currentBoard.activity);
@@ -1289,6 +1767,8 @@
         dialogClass: "modal-box-wide",
         dismissValue: "close",
         buttons: [
+          { label: "Versions", value: "versions" },
+          { label: "Export PDF", value: "export-report" },
           { label: "Vider le journal", value: "clear-activity", className: "danger", disabled: !hasActivity },
           { label: "Fermer", value: "close", className: "confirm" },
         ],
@@ -1323,6 +1803,20 @@
         const targetGroup = allActivityGroups.find((group) => group.id === cleanText(action.groupId));
         if (targetGroup) {
           await showBoardActivityDetailModal(targetGroup, currentBoard);
+        }
+        continue;
+      }
+
+      if (action === "versions") {
+        currentBoard = await showBoardVersionsModal(currentBoard);
+        continue;
+      }
+
+      if (action === "export-report") {
+        try {
+          openBoardBriefingPdf(currentBoard);
+        } catch (error) {
+          await customAlert("Impossible d'ouvrir la fenetre d'export PDF.");
         }
         continue;
       }

@@ -950,6 +950,132 @@ body {
   line-height: 1.45;
 }
 
+.board-version-layout {
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.version-sidebar-card,
+.version-list-card {
+  align-content: start;
+}
+
+.version-list {
+  display: grid;
+  gap: 10px;
+  max-height: 68vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.version-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(115, 251, 247, 0.12);
+  background:
+    linear-gradient(180deg, rgba(115, 251, 247, 0.03), rgba(255, 255, 255, 0.02)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.version-card.is-latest {
+  border-color: rgba(115, 251, 247, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(115, 251, 247, 0.08);
+}
+
+.version-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.version-card-title-wrap {
+  display: grid;
+  gap: 6px;
+}
+
+.version-card-date {
+  color: var(--text-light);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+}
+
+.version-card-name {
+  color: var(--text-light);
+  font-size: 0.88rem;
+  letter-spacing: 0.4px;
+}
+
+.version-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.version-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.version-state-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(115, 251, 247, 0.24);
+  background: rgba(115, 251, 247, 0.08);
+  color: var(--accent-cyan);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.btn-version-restore {
+  min-width: 132px;
+  border-color: rgba(115, 251, 247, 0.3);
+  color: var(--accent-cyan);
+}
+
+.btn-version-restore:hover {
+  border-color: var(--accent-cyan);
+  background: rgba(115, 251, 247, 0.12);
+  color: #ffffff;
+}
+
+.version-card-summary {
+  color: var(--text-light);
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+
+.version-card-stats {
+  margin-top: -2px;
+}
+
+.version-card-diff-list {
+  display: grid;
+  gap: 6px;
+}
+
+.version-card-diff-item {
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(6, 10, 22, 0.48);
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
 .activity-row-empty {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -1043,6 +1169,14 @@ body {
 
   .activity-detail-layout {
     grid-template-columns: 1fr;
+  }
+
+  .board-version-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .version-list {
+    max-height: 44vh;
   }
 }
 

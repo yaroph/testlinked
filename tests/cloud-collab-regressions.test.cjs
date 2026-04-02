@@ -37,6 +37,19 @@ function createMockLockStore() {
       etags.delete(key);
       return true;
     },
+    async list(options = {}) {
+      const prefix = String(options.prefix || '');
+      const cursor = Number(options.cursor || 0);
+      const keys = [...values.keys()]
+        .filter((key) => key.startsWith(prefix))
+        .sort((left, right) => left.localeCompare(right));
+      const slice = keys.slice(cursor, cursor + 100);
+      const nextCursor = cursor + slice.length;
+      return {
+        blobs: slice.map((key) => ({ key })),
+        cursor: nextCursor < keys.length ? String(nextCursor) : undefined,
+      };
+    },
   };
 }
 
@@ -526,6 +539,71 @@ test('canonicalizeBoardPayloadByPage ignore les positions pour un board point', 
     __test.canonicalizeBoardPayloadByPage('point', left),
     __test.canonicalizeBoardPayloadByPage('point', right)
   );
+});
+
+test('saveBoardDailySnapshot garde un seul snapshot par jour et liste les versions du plus recent au plus ancien', async () => {
+  const store = createMockLockStore();
+  const board = {
+    id: 'brd_snapshot',
+    title: 'Alpha',
+    page: 'point',
+    updatedAt: '2026-04-02T08:00:00.000Z',
+    ownerName: 'eric',
+    data: {
+      meta: {},
+      physicsSettings: {},
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Alice',
+          type: 'person',
+          description: 'Alpha',
+          notes: '',
+          personStatus: 'active',
+          num: '',
+          accountNumber: '',
+          citizenNumber: '',
+          x: 0,
+          y: 0,
+          fixed: false,
+          linkedMapPointId: '',
+        },
+      ],
+      links: [],
+      deletedNodes: [],
+      deletedLinks: [],
+    },
+  };
+
+  await __test.saveBoardDailySnapshot(store, board, {
+    capturedAt: '2026-04-01T08:00:00.000Z',
+    actor: { id: 'u_eric', username: 'eric' },
+    reason: 'save',
+  });
+
+  board.title = 'Alpha Prime';
+  board.updatedAt = '2026-04-02T12:00:00.000Z';
+  board.data.nodes[0].description = 'Bravo';
+
+  await __test.saveBoardDailySnapshot(store, board, {
+    capturedAt: '2026-04-02T09:00:00.000Z',
+    actor: { id: 'u_eric', username: 'eric' },
+    reason: 'save',
+  });
+  await __test.saveBoardDailySnapshot(store, board, {
+    capturedAt: '2026-04-02T18:30:00.000Z',
+    actor: { id: 'u_mia', username: 'mia' },
+    reason: 'restore',
+  });
+
+  const snapshots = await __test.listBoardSnapshots(store, board.id);
+
+  assert.equal(snapshots.length, 2);
+  assert.equal(snapshots[0].snapshotDate, '2026-04-02');
+  assert.equal(snapshots[0].actorName, 'mia');
+  assert.equal(snapshots[0].reason, 'restore');
+  assert.equal(snapshots[0].title, 'Alpha Prime');
+  assert.equal(snapshots[1].snapshotDate, '2026-04-01');
 });
 
 test('acquireBoardEditLock reserve l edition au premier utilisateur et bloque le second', async () => {

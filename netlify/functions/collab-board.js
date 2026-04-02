@@ -63,6 +63,8 @@ const SESSION_ACTIVE_MS = 35000;
 const SESSION_SCAN_MAX = 400;
 const BOARD_ACTIVITY_MAX = 40;
 const BOARD_ACTIVITY_DETAIL_MAX = 12;
+const BOARD_SNAPSHOT_PREFIX = "board-snapshots/";
+const BOARD_SNAPSHOT_SCAN_MAX = 400;
 const BOARD_EDIT_LOCK_TTL_MS = Math.max(
   60000,
   Number(
@@ -641,6 +643,86 @@ function summarizeBoardDeltaByPage(page, previousData, nextData, options = {}) {
   return normalizePage(page) === "map"
     ? summarizeMapBoardDelta(previousData, nextData, options)
     : summarizeBoardDelta(previousData, nextData, options);
+}
+
+function normalizeBoardSnapshotDateKey(value, fallback = "") {
+  const raw = String(value || fallback || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) {
+    return new Date(parsed).toISOString().slice(0, 10);
+  }
+  return "";
+}
+
+function boardSnapshotKey(boardId, snapshotDate) {
+  const cleanBoardId = String(boardId || "").trim();
+  const cleanDate = normalizeBoardSnapshotDateKey(snapshotDate);
+  if (!cleanBoardId || !cleanDate) return "";
+  return `${BOARD_SNAPSHOT_PREFIX}${cleanBoardId}/${cleanDate}.json`;
+}
+
+function normalizeBoardSnapshot(record = {}) {
+  if (!record || typeof record !== "object") return null;
+  const boardId = String(record.boardId || "").trim();
+  const snapshotDate = normalizeBoardSnapshotDateKey(record.snapshotDate || record.dateKey || record.capturedAt || "");
+  if (!boardId || !snapshotDate) return null;
+  return {
+    id: String(record.id || `${boardId}:${snapshotDate}`),
+    boardId,
+    snapshotDate,
+    capturedAt: String(record.capturedAt || "").trim(),
+    updatedAt: String(record.updatedAt || "").trim(),
+    page: normalizePage(record.page || "point"),
+    title: String(record.title || "").trim(),
+    actorId: String(record.actorId || "").trim(),
+    actorName: String(record.actorName || "").trim(),
+    reason: String(record.reason || "save").trim(),
+    data: cloneJson(record.data, null),
+  };
+}
+
+function buildBoardSnapshotRecord(board, options = {}) {
+  if (!board || typeof board !== "object") return null;
+  const page = normalizePage(board.page || "point");
+  const capturedAt = String(options.capturedAt || board.updatedAt || nowIso()).trim();
+  const snapshotDate = normalizeBoardSnapshotDateKey(capturedAt, nowIso());
+  if (!snapshotDate) return null;
+  return normalizeBoardSnapshot({
+    id: `${String(board.id || "").trim()}:${snapshotDate}`,
+    boardId: String(board.id || "").trim(),
+    snapshotDate,
+    capturedAt,
+    updatedAt: String(board.updatedAt || capturedAt).trim(),
+    page,
+    title: String(board.title || "").trim(),
+    actorId: String(options.actor?.id || options.actorId || "").trim(),
+    actorName: String(options.actor?.username || options.actorName || "").trim(),
+    reason: String(options.reason || "save").trim(),
+    data: normalizeBoardDataByPage(page, board.data, {
+      fallbackUpdatedAt: board.updatedAt || capturedAt,
+      fallbackUser: options.actor?.username || board.lastEditedBy?.username || board.ownerName || "",
+    }),
+  });
+}
+
+async function saveBoardDailySnapshot(store, board, options = {}) {
+  const snapshot = buildBoardSnapshotRecord(board, options);
+  const key = boardSnapshotKey(snapshot?.boardId, snapshot?.snapshotDate);
+  if (!snapshot || !key) return null;
+  await store.setJSON(key, snapshot);
+  return snapshot;
+}
+
+async function listBoardSnapshots(store, boardId, maxItems = BOARD_SNAPSHOT_SCAN_MAX) {
+  const cleanBoardId = String(boardId || "").trim();
+  if (!cleanBoardId) return [];
+  const keys = await listKeysByPrefix(store, `${BOARD_SNAPSHOT_PREFIX}${cleanBoardId}/`, maxItems);
+  const rows = await Promise.all(keys.map((key) => store.get(key, { type: "json" }).catch(() => null)));
+  return rows
+    .map((row) => normalizeBoardSnapshot(row))
+    .filter(Boolean)
+    .sort((left, right) => timeValue(right.capturedAt || right.snapshotDate) - timeValue(left.capturedAt || left.snapshotDate));
 }
 
 function normalizeNode(node) {
@@ -1922,6 +2004,13 @@ exports.handler = async (event) => {
     appendBoardActivity(board, user, "board", "a cree le board");
 
     await saveBoard(store, board);
+    await saveBoardDailySnapshot(store, board, {
+      capturedAt: now,
+      actor: user,
+      reason: "create",
+    }).catch((error) => {
+      console.error("Failed to write board snapshot on create", error);
+    });
     await addUserBoardRef(store, user.id, boardId);
     const editLockResult = await acquireBoardEditLock(store, board, user, ROLE_OWNER).catch(() => ({ ok: false, lock: null }));
     return jsonResponse(200, {
@@ -2209,6 +2298,13 @@ exports.handler = async (event) => {
     }
 
     await saveBoard(store, board);
+    await saveBoardDailySnapshot(store, board, {
+      capturedAt: now,
+      actor: user,
+      reason: "save",
+    }).catch((error) => {
+      console.error("Failed to write board snapshot on save", error);
+    });
     return jsonResponse(200, {
       ok: true,
       board: {
@@ -2250,6 +2346,13 @@ exports.handler = async (event) => {
     appendBoardActivity(board, user, "rename", `a renomme le board en "${nextTitle}"`);
 
     await saveBoard(store, board);
+    await saveBoardDailySnapshot(store, board, {
+      capturedAt: now,
+      actor: user,
+      reason: "rename",
+    }).catch((error) => {
+      console.error("Failed to write board snapshot on rename", error);
+    });
     return jsonResponse(200, {
       ok: true,
       board: {
@@ -2450,6 +2553,12 @@ exports.__test = {
   appendBoardActivities,
   buildBoardSaveActivityEntriesByPage,
   summarizeBoardDeltaByPage,
+  normalizeBoardSnapshotDateKey,
+  boardSnapshotKey,
+  normalizeBoardSnapshot,
+  buildBoardSnapshotRecord,
+  saveBoardDailySnapshot,
+  listBoardSnapshots,
   sanitizeShareRole,
   getUnsupportedShareRoleMessage,
   listBoardPresence,

@@ -37,6 +37,28 @@ function createBoardEntry(index, options = {}) {
             { userId: `u-${index}-owner`, username: ownerName, role: 'owner' },
             { userId: `u-${index}-editor`, username: `editor-${index}`, role: 'editor' },
         ];
+    const data = options.data ? clone(options.data) : (
+        page === 'map'
+            ? { groups: [], tacticalLinks: [] }
+            : { meta: {}, physicsSettings: {}, nodes: [], links: [], deletedNodes: [], deletedLinks: [] }
+    );
+    const content = options.content ? clone(options.content) : (
+        page === 'map'
+            ? { page, statLines: ['3 groupes', '8 points', '2 zones', '1 liaisons'] }
+            : { page, statLines: ['12 fiches', '9 liens'] }
+    );
+    const snapshots = Array.isArray(options.snapshots) ? clone(options.snapshots) : [];
+    const report = options.report ? clone(options.report) : {
+        page,
+        title,
+        ownerName,
+        updatedAt,
+        snapshotCount: snapshots.length,
+        statLines: clone(content.statLines || []),
+        keyTargets: [],
+        topRelations: [],
+        latestChanges: clone(activity.slice(0, 8)),
+    };
 
     return {
         id,
@@ -49,9 +71,7 @@ function createBoardEntry(index, options = {}) {
         memberCount: members.length,
         memberNames: members.map((member) => member.username),
         members,
-        content: page === 'map'
-            ? { page, statLines: ['3 groupes', '8 points', '2 zones', '1 liaisons'] }
-            : { page, statLines: ['12 fiches', '9 liens'] },
+        content,
         editLock: options.lockedBy
             ? {
                 boardId: id,
@@ -63,6 +83,10 @@ function createBoardEntry(index, options = {}) {
         searchText: `${title} ${ownerName} ${members.map((member) => member.username).join(' ')}`,
         activityCount: activity.length || Number(options.activityCount || 0),
         activity,
+        data,
+        snapshots,
+        snapshotCount: snapshots.length,
+        report,
     };
 }
 
@@ -128,9 +152,9 @@ async function installDatabaseMocks(page, options = {}) {
                 const action = String(body.action || '');
                 const boardId = String(body.boardId || '');
                 requests.push({ endpoint: 'db-boards', method: 'POST', action, boardId });
+                const board = store.boards.find((entry) => String(entry?.id || '') === boardId);
 
                 if (action === 'clear_activity') {
-                    const board = store.boards.find((entry) => String(entry?.id || '') === boardId);
                     if (!board) {
                         return jsonResponse(route, 404, {
                             ok: false,
@@ -139,6 +163,69 @@ async function installDatabaseMocks(page, options = {}) {
                     }
                     board.activity = [];
                     board.activityCount = 0;
+                    return jsonResponse(route, 200, {
+                        ok: true,
+                        board: clone(board),
+                    });
+                }
+
+                if (action === 'get_board_details') {
+                    if (!board) {
+                        return jsonResponse(route, 404, {
+                            ok: false,
+                            error: 'Board introuvable',
+                        });
+                    }
+                    return jsonResponse(route, 200, {
+                        ok: true,
+                        board: clone(board),
+                    });
+                }
+
+                if (action === 'restore_snapshot') {
+                    const snapshotDate = String(body.snapshotDate || '');
+                    if (!board) {
+                        return jsonResponse(route, 404, {
+                            ok: false,
+                            error: 'Board introuvable',
+                        });
+                    }
+                    const snapshot = Array.isArray(board.snapshots)
+                        ? board.snapshots.find((entry) => String(entry?.snapshotDate || '') === snapshotDate)
+                        : null;
+                    if (!snapshot) {
+                        return jsonResponse(route, 404, {
+                            ok: false,
+                            error: 'Snapshot introuvable',
+                        });
+                    }
+
+                    board.title = String(snapshot.title || board.title || '');
+                    board.updatedAt = String(snapshot.capturedAt || board.updatedAt || '');
+                    board.data = clone(snapshot.data || board.data || {});
+                    if (snapshot.content) {
+                        board.content = clone(snapshot.content);
+                    }
+                    board.activity = [
+                        {
+                            id: `restore-${snapshotDate}`,
+                            at: String(snapshot.capturedAt || new Date(Date.UTC(2026, 3, 2, 0, 0, 0)).toISOString()),
+                            actorId: 'database',
+                            actorName: 'database',
+                            type: 'save',
+                            text: `a restaure le snapshot du ${snapshotDate}`,
+                        },
+                        ...(Array.isArray(board.activity) ? board.activity : []),
+                    ].slice(0, 40);
+                    board.activityCount = board.activity.length;
+                    board.report = {
+                        ...(board.report || {}),
+                        title: board.title,
+                        updatedAt: board.updatedAt,
+                        snapshotCount: Array.isArray(board.snapshots) ? board.snapshots.length : 0,
+                        latestChanges: clone(board.activity.slice(0, 8)),
+                    };
+
                     return jsonResponse(route, 200, {
                         ok: true,
                         board: clone(board),
@@ -365,6 +452,157 @@ test('database can clear a board activity log after confirmation', async ({ page
     await expect.poll(() => api.store.boards[0].activity.length).toBe(0);
     await expect(page.locator('#custom-modal')).toContainText('Aucune activite detaillee pour ce board.');
     await expect(page.locator('#modal-footer .modal-btn.danger')).toBeDisabled();
+});
+
+test('database can browse snapshots and restore a dated board version', async ({ page }) => {
+    const boardEntries = [
+        createBoardEntry(1, {
+            title: 'Alpha Cloud',
+            ownerName: 'eric',
+            content: { page: 'point', statLines: ['307 fiches', '460 liens'] },
+            snapshots: [
+                {
+                    snapshotDate: '2026-04-02',
+                    capturedAt: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
+                    title: 'Alpha Cloud',
+                    actorName: 'eric',
+                    reason: 'save',
+                    content: { page: 'point', statLines: ['307 fiches', '460 liens'] },
+                    diffSummary: 'a modifie Alicia',
+                    diffEntries: ['a modifie la description de Alicia'],
+                    isLatest: true,
+                    data: { meta: {}, physicsSettings: {}, nodes: [{ id: 'n1', name: 'Alicia' }], links: [] },
+                },
+                {
+                    snapshotDate: '2026-04-01',
+                    capturedAt: new Date(Date.UTC(2026, 3, 1, 8, 30, 0)).toISOString(),
+                    title: 'Alpha Legacy',
+                    actorName: 'mia',
+                    reason: 'save',
+                    content: { page: 'point', statLines: ['305 fiches', '452 liens'] },
+                    diffSummary: 'snapshot initial',
+                    diffEntries: ['a cree le board'],
+                    isLatest: false,
+                    data: { meta: {}, physicsSettings: {}, nodes: [{ id: 'n1', name: 'Alice' }], links: [] },
+                },
+            ],
+            report: {
+                page: 'point',
+                title: 'Alpha Cloud',
+                ownerName: 'eric',
+                updatedAt: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
+                snapshotCount: 2,
+                statLines: ['307 fiches', '460 liens'],
+                keyTargets: [],
+                topRelations: [],
+                latestChanges: [],
+            },
+        }),
+    ];
+
+    const api = await installDatabaseMocks(page, { boardEntries });
+
+    await page.goto('/database/');
+    await page.click('[data-tab="boards"]');
+    await page.click('#cards-boards [data-board-action="detail"]');
+    await page.click('#modal-footer .modal-btn:has-text("Versions")');
+
+    await expect(page.locator('#custom-modal')).toContainText('Snapshots dates');
+    await expect(page.locator('#custom-modal')).toContainText('Alpha Legacy');
+    await expect(page.locator('[data-snapshot-restore="2026-04-01"]')).toBeVisible();
+
+    await page.click('[data-snapshot-restore="2026-04-01"]');
+    await expect(page.locator('#custom-modal')).toContainText('Restaurer ce snapshot ?');
+    await page.click('#modal-footer .modal-btn.danger');
+
+    await expect.poll(() =>
+        api.requests.filter((entry) =>
+            entry.endpoint === 'db-boards' &&
+            entry.method === 'POST' &&
+            entry.action === 'restore_snapshot'
+        ).length
+    ).toBe(1);
+
+    await expect(page.locator('#custom-modal')).toContainText('Alpha Legacy');
+    await page.click('#modal-footer .modal-btn.confirm');
+    await expect(page.locator('#custom-modal')).toContainText('Versions');
+    await expect(page.locator('#custom-modal')).toContainText('Alpha Legacy');
+});
+
+test('database can open a printable board briefing export', async ({ page }) => {
+    await page.addInitScript(() => {
+        window.__reportWindows = [];
+        window.open = () => {
+            const state = { html: '' };
+            window.__reportWindows.push(state);
+            return {
+                document: {
+                    open() {},
+                    write(chunk) {
+                        state.html += String(chunk || '');
+                    },
+                    close() {},
+                },
+            };
+        };
+    });
+
+    const boardEntries = [
+        createBoardEntry(1, {
+            title: 'Alpha Cloud',
+            ownerName: 'eric',
+            snapshots: [
+                {
+                    snapshotDate: '2026-04-02',
+                    capturedAt: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
+                    title: 'Alpha Cloud',
+                    actorName: 'eric',
+                    reason: 'save',
+                    content: { page: 'point', statLines: ['307 fiches', '460 liens'] },
+                    diffSummary: 'a modifie Dutch Coleman',
+                    diffEntries: ['a modifie la description de Dutch Coleman'],
+                    isLatest: true,
+                },
+            ],
+            report: {
+                page: 'point',
+                title: 'Alpha Cloud',
+                ownerName: 'eric',
+                updatedAt: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
+                snapshotCount: 1,
+                statLines: ['307 fiches', '460 liens'],
+                keyTargets: [
+                    { name: 'Dutch Coleman', type: 'person', status: 'active', degree: 8, score: 14.5 },
+                ],
+                topRelations: [
+                    { label: 'Dutch Coleman ↔ Mia Dale', kind: 'partenaire', score: 12.2 },
+                ],
+                latestChanges: [
+                    {
+                        actorName: 'eric',
+                        at: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
+                        text: 'a modifie la description de Dutch Coleman',
+                    },
+                ],
+            },
+        }),
+    ];
+
+    await installDatabaseMocks(page, { boardEntries });
+
+    await page.goto('/database/');
+    await page.click('[data-tab="boards"]');
+    await page.click('#cards-boards [data-board-action="detail"]');
+    await page.click('#modal-footer .modal-btn:has-text("Export PDF")');
+
+    await expect.poll(async () => page.evaluate(() => window.__reportWindows.length)).toBe(1);
+
+    const html = await page.evaluate(() => window.__reportWindows[0]?.html || '');
+    expect(html).toContain('BNI LINKED');
+    expect(html).toContain('Cibles cles');
+    expect(html).toContain('Top relations');
+    expect(html).toContain('Derniers changements');
+    expect(html).toContain('Dutch Coleman');
 });
 
 test('database exposes retry state when archive service is unavailable', async ({ page }) => {
