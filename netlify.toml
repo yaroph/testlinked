@@ -2,3 +2,8 @@
   publish = "."
   functions = "netlify/functions"
   command = "node -e \"process.exit(0)\""
+
+[[redirects]]
+  from = "/api/webhook-detection"
+  to = "/.netlify/functions/webhook-detection"
+  status = 200

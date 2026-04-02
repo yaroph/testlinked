@@ -1,0 +1,360 @@
+body.webhook-shell {
+    --webhook-detection: #73fbf7;
+    --webhook-prediction: #ffd166;
+    --webhook-staff: #ff8cf3;
+}
+
+body.webhook-shell #viewport {
+    overflow: hidden;
+}
+
+body.webhook-shell #mapViewport {
+    position: absolute;
+    inset: 0;
+}
+
+body.webhook-shell #map-world,
+body.webhook-shell .webhook-markers-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+body.webhook-shell .map-image-shell {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+body.webhook-shell #map-image {
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+}
+
+body.webhook-shell .webhook-intro-copy {
+    color: #90a7c2;
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+body.webhook-shell .webhook-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.webhook-shell .webhook-stats-grid-single {
+    grid-template-columns: 1fr;
+}
+
+body.webhook-shell .webhook-action-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+
+body.webhook-shell .webhook-filter-select {
+    min-height: 44px;
+    padding: 0 12px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+}
+
+body.webhook-shell .webhook-legend-list {
+    display: grid;
+    gap: 10px;
+}
+
+body.webhook-shell .webhook-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #9db2cd;
+    font-size: 0.86rem;
+    letter-spacing: 0.4px;
+}
+
+body.webhook-shell .webhook-legend-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 999px;
+    flex: 0 0 auto;
+}
+
+body.webhook-shell .webhook-legend-dot.is-detection {
+    background: var(--webhook-detection);
+    box-shadow: 0 0 14px rgba(115, 251, 247, 0.55);
+}
+
+body.webhook-shell .webhook-legend-dot.is-prediction {
+    background: var(--webhook-prediction);
+    box-shadow: 0 0 14px rgba(255, 209, 102, 0.45);
+}
+
+body.webhook-shell .webhook-legend-dot.is-staff_prediction {
+    background: var(--webhook-staff);
+    box-shadow: 0 0 14px rgba(255, 140, 243, 0.42);
+}
+
+body.webhook-shell .webhook-head-meta {
+    color: #7e95b3;
+    font-size: 0.68rem;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+}
+
+body.webhook-shell .webhook-feed {
+    padding: 0 2px 4px;
+    overflow: auto;
+}
+
+body.webhook-shell .detection-row {
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 12px 12px 12px 16px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    border-left: none;
+    background: linear-gradient(180deg, rgba(6, 14, 29, 0.9), rgba(4, 10, 22, 0.8));
+    color: #dcebfb;
+    text-align: left;
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+    box-shadow: inset 0 0 0 1px rgba(102, 243, 255, 0.03);
+}
+
+body.webhook-shell .detection-row:hover,
+body.webhook-shell .detection-row.is-active {
+    border-color: rgba(102, 243, 255, 0.28);
+    background: linear-gradient(180deg, rgba(11, 30, 46, 0.92), rgba(6, 16, 28, 0.84));
+    color: #f4fbff;
+    transform: translateX(4px);
+}
+
+body.webhook-shell .detection-row-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+}
+
+body.webhook-shell .detection-row-title {
+    color: #edf6ff;
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
+
+body.webhook-shell .detection-row-sub,
+body.webhook-shell .details-copy,
+body.webhook-shell .details-item span {
+    color: #7f96b2;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    letter-spacing: 0.8px;
+}
+
+body.webhook-shell .type-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid currentColor;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 1.3px;
+    text-transform: uppercase;
+    background: rgba(2, 8, 18, 0.82);
+}
+
+body.webhook-shell .type-pill.is-detection {
+    color: var(--webhook-detection);
+}
+
+body.webhook-shell .type-pill.is-prediction {
+    color: var(--webhook-prediction);
+}
+
+body.webhook-shell .type-pill.is-staff_prediction,
+body.webhook-shell .type-pill.is-staff-prediction {
+    color: var(--webhook-staff);
+}
+
+body.webhook-shell .webhook-map-overlay {
+    position: absolute;
+    top: 18px;
+    left: 18px;
+    z-index: 12;
+    pointer-events: none;
+}
+
+body.webhook-shell .webhook-overlay-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 220px;
+    padding: 12px 14px;
+    border: 1px solid rgba(102, 243, 255, 0.18);
+    background: rgba(5, 12, 27, 0.88);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+}
+
+body.webhook-shell .webhook-overlay-kicker {
+    color: #90a7c2;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+}
+
+body.webhook-shell .webhook-overlay-card strong {
+    color: #e8f6ff;
+    font-size: 0.98rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+body.webhook-shell .webhook-overlay-card span:last-child {
+    color: #7f96b2;
+    font-size: 0.74rem;
+    line-height: 1.35;
+}
+
+body.webhook-shell .webhook-markers-layer {
+    pointer-events: none;
+    z-index: 8;
+    transform-origin: 0 0;
+}
+
+body.webhook-shell .map-marker {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    margin-left: -9px;
+    margin-top: -9px;
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    border-radius: 999px;
+    pointer-events: auto;
+    cursor: pointer;
+    box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.05);
+}
+
+body.webhook-shell .map-marker::before,
+body.webhook-shell .map-marker::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+}
+
+body.webhook-shell .map-marker::before {
+    inset: 3px;
+    background: currentColor;
+}
+
+body.webhook-shell .map-marker::after {
+    inset: -8px;
+    border: 1px solid color-mix(in srgb, currentColor 44%, transparent);
+    opacity: 0.6;
+}
+
+body.webhook-shell .map-marker:hover,
+body.webhook-shell .map-marker.is-active {
+    transform: scale(1.18);
+}
+
+body.webhook-shell .map-marker.is-detection {
+    color: var(--webhook-detection);
+    box-shadow: 0 0 0 6px rgba(115, 251, 247, 0.08), 0 0 24px rgba(115, 251, 247, 0.48);
+}
+
+body.webhook-shell .map-marker.is-prediction {
+    color: var(--webhook-prediction);
+    box-shadow: 0 0 0 6px rgba(255, 209, 102, 0.08), 0 0 24px rgba(255, 209, 102, 0.42);
+}
+
+body.webhook-shell .map-marker.is-staff_prediction,
+body.webhook-shell .map-marker.is-staff-prediction {
+    color: var(--webhook-staff);
+    box-shadow: 0 0 0 6px rgba(255, 140, 243, 0.08), 0 0 24px rgba(255, 140, 243, 0.42);
+}
+
+body.webhook-shell #editor-content {
+    padding: 14px;
+}
+
+body.webhook-shell .details-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 100%;
+    padding: 14px;
+    border: 1px solid rgba(102, 243, 255, 0.12);
+    background: linear-gradient(180deg, rgba(7, 16, 38, 0.82), rgba(4, 10, 22, 0.74));
+    box-shadow: inset 0 0 0 1px rgba(102, 243, 255, 0.035);
+    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+}
+
+body.webhook-shell .details-card.is-empty {
+    justify-content: center;
+}
+
+body.webhook-shell .details-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 10px;
+}
+
+body.webhook-shell .details-title {
+    margin: 2px 0 0;
+    color: #ecf6ff;
+    font-size: 1.3rem;
+    line-height: 0.95;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+}
+
+body.webhook-shell .details-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+body.webhook-shell .details-item {
+    padding: 10px 12px;
+    border: 1px dashed rgba(102, 243, 255, 0.14);
+    background: rgba(2, 8, 18, 0.6);
+}
+
+body.webhook-shell .details-item strong {
+    display: block;
+    margin-top: 6px;
+    color: #dff7ff;
+    font-size: 0.86rem;
+    line-height: 1.35;
+    letter-spacing: 0.4px;
+    word-break: break-word;
+}
+
+body.webhook-shell .webhook-hud-label {
+    min-width: 112px;
+    color: #a3b9d4;
+}
+
+body.webhook-shell .webhook-hud-box {
+    min-width: 132px;
+}
+
+@media (max-width: 920px) {
+    body.webhook-shell .details-grid,
+    body.webhook-shell .detection-row-head,
+    body.webhook-shell .webhook-stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    body.webhook-shell .webhook-overlay-card {
+        min-width: 0;
+        max-width: calc(100vw - 72px);
+    }
+}

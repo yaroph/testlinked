@@ -33,6 +33,9 @@ async function installNetlifyMocks(page, options = {}) {
     const boardsStore = {
         boards: Array.isArray(options.boards) ? clone(options.boards) : [],
     };
+    const webhookStore = {
+        detections: Array.isArray(options.webhookDetections) ? clone(options.webhookDetections) : [],
+    };
     const collabUsers = Array.isArray(options.collabUsers)
         ? clone(options.collabUsers)
         : [
@@ -41,7 +44,7 @@ async function installNetlifyMocks(page, options = {}) {
             { userId: 'u-bravo', username: 'bravo' },
         ];
 
-    await page.route('**/.netlify/functions/**', async (route) => {
+    const routeHandler = async (route) => {
         const request = route.request();
         const url = new URL(request.url());
         const pathname = url.pathname;
@@ -419,16 +422,71 @@ async function installNetlifyMocks(page, options = {}) {
             return jsonResponse(route, 200, { ok: true });
         }
 
+        if (pathname.endsWith('/webhook-detection')) {
+            requests.push({
+                endpoint: 'webhook-detection',
+                action: method === 'POST' ? 'post' : 'get',
+                payload: clone(method === 'POST' ? body : Object.fromEntries(url.searchParams.entries())),
+            });
+
+            if (method === 'GET') {
+                const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') || 100)));
+                const items = [...webhookStore.detections]
+                    .sort((left, right) => Number(right?.receivedAtMs || 0) - Number(left?.receivedAtMs || 0))
+                    .slice(0, limit);
+                return jsonResponse(route, 200, {
+                    ok: true,
+                    count: items.length,
+                    limit,
+                    items,
+                });
+            }
+
+            if (method === 'POST') {
+                const timestamp = Number(body.timestamp || 0);
+                const timestampMs = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+                const receivedAtMs = Date.now();
+                const item = {
+                    id: String(body.id || `wh-${webhookStore.detections.length + 1}`),
+                    player: String(body.player || ''),
+                    x: Number(body.x || 0),
+                    y: Number(body.y || 0),
+                    z: Number(body.z || 0),
+                    type: String(body.type || 'detection'),
+                    timestamp: timestamp < 1e12 ? timestamp : Math.floor(timestampMs / 1000),
+                    timestampMs,
+                    detectedAt: new Date(timestampMs).toISOString(),
+                    receivedAt: new Date(receivedAtMs).toISOString(),
+                    receivedAtMs,
+                };
+                webhookStore.detections.unshift(item);
+                return jsonResponse(route, 201, {
+                    ok: true,
+                    duplicate: false,
+                    item,
+                });
+            }
+
+            return jsonResponse(route, 405, {
+                ok: false,
+                error: 'Method not allowed',
+            });
+        }
+
         return jsonResponse(route, 404, {
             ok: false,
             error: `Unhandled endpoint: ${pathname}`,
         });
-    });
+    };
+
+    await page.route('**/.netlify/functions/**', routeHandler);
+    await page.route('**/api/**', routeHandler);
 
     return {
         requests,
         alertsStore,
         boardsStore,
+        webhookStore,
     };
 }
 

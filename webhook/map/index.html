@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BNI LINKED // WEBHOOK MAP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700;800&family=VT323&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../../map/style.css">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body class="labels-auto map-shell webhook-shell">
+    <div id="top-bar">
+        <div class="logo-area">
+            <button id="btnMobileMenu" class="mobile-only">☰</button>
+            <span class="app-logo">💠</span>
+            <span class="app-title">LINKED <span style="color:var(--accent-pink)">// WEBHOOK</span></span>
+        </div>
+    </div>
+
+    <div id="app-container">
+        <div id="sidebar-left">
+            <div class="panel-section shell-section shell-section-brand">
+                <img src="../../map/logo-bni-linked.png" alt="BNI LINKED" class="shell-logo">
+                <button class="btn-switch shell-mode-btn" type="button" onclick="window.location.href='../../map/index.html';">
+                    Basculer vers map tactique
+                </button>
+            </div>
+
+            <div class="panel-section shell-section">
+                <span class="section-title shell-title">Flux webhook</span>
+                <div class="webhook-intro-copy">
+                    Réception Glife en temps réel, stockage séparé, affichage tactique sans toucher à la carte existante.
+                </div>
+                <div class="data-shell-status webhook-stats-grid">
+                    <div class="data-shell-card">
+                        <span class="data-shell-label">Détections</span>
+                        <strong id="statsCount">0</strong>
+                    </div>
+                    <div class="data-shell-card">
+                        <span class="data-shell-label">Dernière réception</span>
+                        <strong id="statsLatest">Aucune</strong>
+                    </div>
+                </div>
+                <div class="data-shell-status webhook-stats-grid webhook-stats-grid-single">
+                    <div class="data-shell-card">
+                        <span class="data-shell-label">Synchronisation</span>
+                        <strong id="syncStatus">Idle</strong>
+                    </div>
+                </div>
+                <div class="webhook-action-grid">
+                    <button id="refreshButton" class="action-btn shell-primary-btn" type="button">Rafraîchir</button>
+                    <select id="typeFilter" class="gps-input webhook-filter-select" aria-label="Filtrer par type">
+                        <option value="all">Tous les types</option>
+                        <option value="detection">Détection</option>
+                        <option value="prediction">Prédiction</option>
+                        <option value="staff_prediction">Staff prediction</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="panel-section shell-section">
+                <span class="section-title shell-title">Légende</span>
+                <div class="webhook-legend-list">
+                    <div class="webhook-legend-item">
+                        <span class="webhook-legend-dot is-detection"></span>
+                        <span>Détection webhook</span>
+                    </div>
+                    <div class="webhook-legend-item">
+                        <span class="webhook-legend-dot is-prediction"></span>
+                        <span>Prédiction</span>
+                    </div>
+                    <div class="webhook-legend-item">
+                        <span class="webhook-legend-dot is-staff_prediction"></span>
+                        <span>Staff prediction</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-header panel-header-groups">
+                <div class="panel-header-row">
+                    <span>Derniers événements</span>
+                    <span id="mapMeta" class="webhook-head-meta">Top 100</span>
+                </div>
+            </div>
+            <div id="detectionsList" class="scrollable-content webhook-feed"></div>
+        </div>
+
+        <div id="sidebar-overlay"></div>
+
+        <div id="viewport">
+            <div id="mapViewport" class="webhook-map-stage">
+                <div id="map-world">
+                    <picture class="map-image-shell">
+                        <source srcset="../../map/carte.webp" type="image/webp">
+                        <img id="map-image" src="../../map/carte.jpg" alt="Carte GTA webhook" fetchpriority="high" decoding="async">
+                    </picture>
+                </div>
+                <div id="markersLayer" class="webhook-markers-layer" aria-live="polite"></div>
+                <div class="webhook-map-overlay">
+                    <div class="webhook-overlay-card">
+                        <span class="webhook-overlay-kicker">Temps réel</span>
+                        <strong>Visualisation Glife</strong>
+                        <span>Les détections webhook se placent ici en lecture directe.</span>
+                    </div>
+                </div>
+                <div id="mapEmptyState" class="center-empty-state" hidden>
+                    <div class="center-empty-kicker">Endpoint actif</div>
+                    <h2 class="center-empty-title">Aucune détection reçue.</h2>
+                    <p class="center-empty-copy">Le endpoint `/api/webhook-detection` est prêt. Envoie un webhook Glife pour voir apparaître les premiers points sur la carte.</p>
+                </div>
+            </div>
+
+            <div id="hud-bottom">
+                <div id="coords-display" class="desktop-only webhook-hud-label">LIVE FEED</div>
+                <div class="separator desktop-only"></div>
+                <div class="zoom-display webhook-hud-box" aria-live="polite">
+                    <span class="zoom-display-label">Source</span>
+                    <strong>GLIFE</strong>
+                    <span class="zoom-display-bar"><span id="zoom-display-fill" style="width:100%"></span></span>
+                </div>
+                <button id="btnToggleLight" class="hud-btn" title="Mode Lumière / Hologramme" type="button">💡</button>
+                <button id="btnResetView" class="hud-btn" title="Réinitialiser le focus" type="button">🎯</button>
+            </div>
+        </div>
+
+        <div id="sidebar-right" class="active">
+            <div class="panel-header panel-header-editor">DOSSIER WEBHOOK</div>
+            <div id="editor-content">
+                <div id="detailsCard" class="details-card is-empty">
+                    <span class="empty-state-kicker">Aucune cible</span>
+                    <strong>Pas de détection sélectionnée.</strong>
+                    <span>Clique sur un point de la carte ou une entrée de la liste.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
