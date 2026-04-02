@@ -486,17 +486,6 @@ test('database can browse snapshots and restore a dated board version', async ({
                     data: { meta: {}, physicsSettings: {}, nodes: [{ id: 'n1', name: 'Alice' }], links: [] },
                 },
             ],
-            report: {
-                page: 'point',
-                title: 'Alpha Cloud',
-                ownerName: 'eric',
-                updatedAt: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
-                snapshotCount: 2,
-                statLines: ['307 fiches', '460 liens'],
-                keyTargets: [],
-                topRelations: [],
-                latestChanges: [],
-            },
         }),
     ];
 
@@ -527,82 +516,6 @@ test('database can browse snapshots and restore a dated board version', async ({
     await page.click('#modal-footer .modal-btn.confirm');
     await expect(page.locator('#custom-modal')).toContainText('Versions');
     await expect(page.locator('#custom-modal')).toContainText('Alpha Legacy');
-});
-
-test('database can open a printable board briefing export', async ({ page }) => {
-    await page.addInitScript(() => {
-        window.__reportWindows = [];
-        window.open = () => {
-            const state = { html: '' };
-            window.__reportWindows.push(state);
-            return {
-                document: {
-                    open() {},
-                    write(chunk) {
-                        state.html += String(chunk || '');
-                    },
-                    close() {},
-                },
-            };
-        };
-    });
-
-    const boardEntries = [
-        createBoardEntry(1, {
-            title: 'Alpha Cloud',
-            ownerName: 'eric',
-            snapshots: [
-                {
-                    snapshotDate: '2026-04-02',
-                    capturedAt: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
-                    title: 'Alpha Cloud',
-                    actorName: 'eric',
-                    reason: 'save',
-                    content: { page: 'point', statLines: ['307 fiches', '460 liens'] },
-                    diffSummary: 'a modifie Dutch Coleman',
-                    diffEntries: ['a modifie la description de Dutch Coleman'],
-                    isLatest: true,
-                },
-            ],
-            report: {
-                page: 'point',
-                title: 'Alpha Cloud',
-                ownerName: 'eric',
-                updatedAt: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
-                snapshotCount: 1,
-                statLines: ['307 fiches', '460 liens'],
-                keyTargets: [
-                    { name: 'Dutch Coleman', type: 'person', status: 'active', degree: 8, score: 14.5 },
-                ],
-                topRelations: [
-                    { label: 'Dutch Coleman ↔ Mia Dale', kind: 'partenaire', score: 12.2 },
-                ],
-                latestChanges: [
-                    {
-                        actorName: 'eric',
-                        at: new Date(Date.UTC(2026, 3, 2, 9, 0, 0)).toISOString(),
-                        text: 'a modifie la description de Dutch Coleman',
-                    },
-                ],
-            },
-        }),
-    ];
-
-    await installDatabaseMocks(page, { boardEntries });
-
-    await page.goto('/database/');
-    await page.click('[data-tab="boards"]');
-    await page.click('#cards-boards [data-board-action="detail"]');
-    await page.click('#modal-footer .modal-btn:has-text("Export PDF")');
-
-    await expect.poll(async () => page.evaluate(() => window.__reportWindows.length)).toBe(1);
-
-    const html = await page.evaluate(() => window.__reportWindows[0]?.html || '');
-    expect(html).toContain('BNI LINKED');
-    expect(html).toContain('Cibles cles');
-    expect(html).toContain('Top relations');
-    expect(html).toContain('Derniers changements');
-    expect(html).toContain('Dutch Coleman');
 });
 
 test('database exposes retry state when archive service is unavailable', async ({ page }) => {

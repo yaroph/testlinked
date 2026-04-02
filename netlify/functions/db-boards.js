@@ -11,23 +11,6 @@ const {
 const STORE_NAME = "bni-linked-collab";
 const LOCK_STALE_GRACE_MS = 15000;
 const MAX_BOARD_SCAN = 2000;
-const POINT_RELATION_WEIGHTS = {
-  patron: 2.6,
-  haut_grade: 2.2,
-  employe: 1.3,
-  collegue: 1.0,
-  partenaire: 1.7,
-  famille: 1.1,
-  couple: 1.2,
-  amour: 1.1,
-  ami: 0.9,
-  ennemi: 1.8,
-  rival: 1.6,
-  connaissance: 0.6,
-  affiliation: 1.4,
-  membre: 1.0,
-  relation: 0.5,
-};
 
 const {
   normalizeBoardPayload,
@@ -104,21 +87,6 @@ function normalizeBoardDataForDetails(board = {}) {
   });
 }
 
-function formatDateLabel(value) {
-  const text = cleanText(value);
-  if (!text) return "—";
-  const parsed = Date.parse(text);
-  if (!Number.isFinite(parsed)) return text;
-  return new Date(parsed).toLocaleString("fr-FR");
-}
-
-function humanizeToken(value, fallback = "element") {
-  const text = cleanText(value, fallback)
-    .replace(/[-_]+/g, " ")
-    .trim();
-  return text || fallback;
-}
-
 function buildEmptyBoardData(page = "point") {
   return normalizePage(page) === "map"
     ? normalizeMapBoardPayload({ groups: [], tacticalLinks: [] })
@@ -168,125 +136,6 @@ function buildSnapshotRows(board, snapshots = []) {
   });
 }
 
-function normalizePointLinkId(link) {
-  const sourceId = cleanText(link?.source?.id || link?.source);
-  const targetId = cleanText(link?.target?.id || link?.target);
-  if (!sourceId || !targetId) return "";
-  return sourceId < targetId ? `${sourceId}|${targetId}` : `${targetId}|${sourceId}`;
-}
-
-function buildPointBriefing(data = {}, activity = []) {
-  const nodes = Array.isArray(data?.nodes) ? data.nodes : [];
-  const links = Array.isArray(data?.links) ? data.links : [];
-  const nodeById = new Map(nodes.map((node) => [cleanText(node?.id), node]));
-  const degree = new Map();
-  const weighted = new Map();
-
-  nodes.forEach((node) => {
-    const nodeId = cleanText(node?.id);
-    degree.set(nodeId, 0);
-    weighted.set(nodeId, 0);
-  });
-
-  links.forEach((link) => {
-    const sourceId = cleanText(link?.source);
-    const targetId = cleanText(link?.target);
-    const weight = Number(POINT_RELATION_WEIGHTS[cleanText(link?.kind).toLowerCase()] || POINT_RELATION_WEIGHTS.relation);
-    degree.set(sourceId, (degree.get(sourceId) || 0) + 1);
-    degree.set(targetId, (degree.get(targetId) || 0) + 1);
-    weighted.set(sourceId, (weighted.get(sourceId) || 0) + weight);
-    weighted.set(targetId, (weighted.get(targetId) || 0) + weight);
-  });
-
-  const keyTargets = nodes
-    .map((node) => {
-      const nodeId = cleanText(node?.id);
-      const score = Number(weighted.get(nodeId) || 0) + ((degree.get(nodeId) || 0) * 0.35);
-      return {
-        id: nodeId,
-        name: cleanText(node?.name, cleanText(node?.id, "fiche")),
-        type: humanizeToken(node?.type, "fiche"),
-        status: humanizeToken(node?.personStatus, ""),
-        degree: Number(degree.get(nodeId) || 0),
-        score: Number(score.toFixed(2)),
-      };
-    })
-    .sort((left, right) => right.score - left.score || right.degree - left.degree || left.name.localeCompare(right.name))
-    .slice(0, 6);
-
-  const topRelations = links
-    .map((link) => {
-      const source = nodeById.get(cleanText(link?.source));
-      const target = nodeById.get(cleanText(link?.target));
-      const sourceLabel = cleanText(source?.name, cleanText(link?.source, "source"));
-      const targetLabel = cleanText(target?.name, cleanText(link?.target, "cible"));
-      const kind = cleanText(link?.kind, "relation");
-      const relationWeight = Number(POINT_RELATION_WEIGHTS[kind.toLowerCase()] || POINT_RELATION_WEIGHTS.relation);
-      const score = relationWeight + Number(weighted.get(cleanText(link?.source)) || 0) + Number(weighted.get(cleanText(link?.target)) || 0);
-      return {
-        id: normalizePointLinkId(link),
-        label: `${sourceLabel} ↔ ${targetLabel}`,
-        kind: humanizeToken(kind, "relation"),
-        score: Number(score.toFixed(2)),
-      };
-    })
-    .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
-    .slice(0, 8);
-
-  return {
-    keyTargets,
-    topRelations,
-    latestChanges: normalizeBoardActivityRows(activity).slice(0, 8),
-  };
-}
-
-function buildMapBriefing(data = {}, activity = []) {
-  const groups = Array.isArray(data?.groups) ? data.groups : [];
-  const keyTargets = groups
-    .map((group) => ({
-      name: cleanText(group?.name, cleanText(group?.id, "groupe")),
-      type: "groupe",
-      status: "",
-      degree: (Array.isArray(group?.points) ? group.points.length : 0) + (Array.isArray(group?.zones) ? group.zones.length : 0),
-      score: (Array.isArray(group?.points) ? group.points.length : 0) + ((Array.isArray(group?.zones) ? group.zones.length : 0) * 0.5),
-    }))
-    .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
-    .slice(0, 6);
-  const topRelations = (Array.isArray(data?.tacticalLinks) ? data.tacticalLinks : [])
-    .map((link, index) => ({
-      id: cleanText(link?.id, `tactical-${index}`),
-      label: `${cleanText(link?.sourceLabel || link?.from || "source")} ↔ ${cleanText(link?.targetLabel || link?.to || "cible")}`,
-      kind: humanizeToken(link?.type || link?.kind || "liaison", "liaison"),
-      score: 1,
-    }))
-    .slice(0, 8);
-
-  return {
-    keyTargets,
-    topRelations,
-    latestChanges: normalizeBoardActivityRows(activity).slice(0, 8),
-  };
-}
-
-function buildBoardBriefingReport(board, data, snapshots = []) {
-  const page = normalizePage(board?.page) || "point";
-  const content = summarizeBoardData(page, data || {});
-  const pointOrMap = page === "map"
-    ? buildMapBriefing(data, board?.activity)
-    : buildPointBriefing(data, board?.activity);
-  return {
-    page,
-    title: cleanText(board?.title, "Board sans nom"),
-    ownerName: cleanText(board?.ownerName, "Lead"),
-    updatedAt: cleanText(board?.updatedAt),
-    snapshotCount: Array.isArray(snapshots) ? snapshots.length : 0,
-    statLines: Array.isArray(content.statLines) ? content.statLines : [],
-    keyTargets: pointOrMap.keyTargets,
-    topRelations: pointOrMap.topRelations,
-    latestChanges: pointOrMap.latestChanges,
-  };
-}
-
 async function buildBoardDetailsPayload(store, board) {
   const normalizedData = normalizeBoardDataForDetails(board);
   const snapshots = await listBoardSnapshots(store, cleanText(board?.id));
@@ -296,7 +145,6 @@ async function buildBoardDetailsPayload(store, board) {
     data: normalizedData,
     snapshots: buildSnapshotRows(board, snapshots),
     snapshotCount: snapshots.length,
-    report: buildBoardBriefingReport(board, normalizedData, snapshots),
   };
 }
 
