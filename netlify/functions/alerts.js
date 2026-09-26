@@ -1,5 +1,6 @@
 const { getStore, connectLambda } = require("../lib/blob-store");
 const crypto = require("crypto");
+const { hasStaffCode, authorizeDatabaseAdmin } = require("../lib/staff-auth");
 const {
   resolveAuth,
   listKeysByPrefix,
@@ -13,7 +14,6 @@ const ALERTS_KEY = "alerts/all";
 const ALERTS_MAX = 120;
 const API_KEY = process.env.BNI_LINKED_KEY;
 const REQUIRE_AUTH = process.env.BNI_LINKED_REQUIRE_AUTH !== "0";
-const STAFF_ACCESS_CODE = "staff";
 
 function jsonResponse(statusCode, obj) {
   return {
@@ -45,12 +45,6 @@ function isAuthorized(event) {
   if (!API_KEY) return false;
   const key = getHeader(event, "x-api-key");
   return key === API_KEY;
-}
-
-function hasStaffCode(event, body = null) {
-  const headerCode = String(getHeader(event, "x-staff-code") || "").trim();
-  const bodyCode = String(body?.accessCode || "").trim();
-  return headerCode === STAFF_ACCESS_CODE || bodyCode === STAFF_ACCESS_CODE;
 }
 
 function authError() {
@@ -438,9 +432,8 @@ exports.handler = async (event) => {
     return jsonResponse(204, { ok: true });
   }
 
-  const store = getStore(STORE_NAME);
-
   if (event.httpMethod === "GET") {
+    const store = getStore(STORE_NAME);
     const id = String(event.queryStringParameters?.id || "").trim();
     const includeScheduled = String(event.queryStringParameters?.includeScheduled || "").trim() === "1";
     const alerts = await getAlertList(store);
@@ -471,11 +464,19 @@ exports.handler = async (event) => {
     return jsonResponse(400, { ok: false, error: "Invalid JSON body" });
   }
 
+  const action = String(body.action || "").toLowerCase();
+  if (action === "verify-staff") {
+    const valid = body.scope === "database"
+      ? authorizeDatabaseAdmin(event, body).ok
+      : hasStaffCode(event, body) || Boolean(API_KEY && getHeader(event, "x-api-key") === API_KEY);
+    return jsonResponse(valid ? 200 : 401, { ok: valid, ...(valid ? {} : { error: "Code staff incorrect." }) });
+  }
+
   if (!(isAuthorized(event) || hasStaffCode(event, body))) {
     return authError();
   }
 
-  const action = String(body.action || "").toLowerCase();
+  const store = getStore(STORE_NAME);
 
   if (action === "get-admin") {
     const alerts = await getAlertList(store);

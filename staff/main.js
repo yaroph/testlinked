@@ -1,9 +1,9 @@
 import { gpsToPercentage, percentageToGps } from '../map/js/utils.js';
-import { createStaffAlertsApi } from './alerts-api.js';
+import { createStaffAlertsApi } from './alerts-api.js?v=20260926-staff-access';
 import { escapeText, toValidDate, formatAlertDateTime, toLocalDateTimeInputValue } from './date-utils.js';
 import { normalizeAudienceUsername, normalizeAudienceQuery, sanitizeAllowedUsers } from './audience-utils.js';
 
-const STAFF_CODE = 'staff';
+let activeStaffCode = '';
 const ALERTS_ENDPOINT = '/.netlify/functions/alerts';
 const ALERT_REFRESH_EVENT_KEY = 'bniAlertRefresh_v1';
 const ALERT_REFRESH_CHANNEL = 'bni-alert-refresh';
@@ -11,7 +11,7 @@ const DEFAULT_RADIUS = 2.6;
 const DEFAULT_STROKE_WIDTH = 0.06;
 const alertsApi = createStaffAlertsApi({
     endpoint: ALERTS_ENDPOINT,
-    staffCode: STAFF_CODE,
+    getStaffCode: () => activeStaffCode,
     refreshEventKey: ALERT_REFRESH_EVENT_KEY,
     refreshChannel: ALERT_REFRESH_CHANNEL,
 });
@@ -2255,13 +2255,20 @@ function unlockConsole() {
 }
 
 function bindEvents() {
-    dom.accessSubmit?.addEventListener('click', () => {
+    dom.accessSubmit?.addEventListener('click', async () => {
         const code = String(dom.accessInput?.value || '').trim();
-        if (code !== STAFF_CODE) {
-            if (dom.accessError) dom.accessError.textContent = 'Code incorrect.';
-            return;
+        if (!code || dom.accessSubmit.disabled) return;
+        dom.accessSubmit.disabled = true;
+        activeStaffCode = code;
+        try {
+            await alertsApi.requestAdmin('verify-staff');
+            unlockConsole();
+        } catch (error) {
+            activeStaffCode = '';
+            if (dom.accessError) dom.accessError.textContent = 'Accès refusé ou service indisponible. Vérifiez le code et réessayez.';
+        } finally {
+            dom.accessSubmit.disabled = false;
         }
-        unlockConsole();
     });
 
     dom.accessInput?.addEventListener('keydown', (event) => {

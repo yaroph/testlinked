@@ -1,7 +1,10 @@
 [build]
-  publish = "."
+  publish = "dist"
   functions = "netlify/functions"
-  command = "node -e \"process.exit(0)\""
+  command = "npm run build"
+
+[functions]
+  node_bundler = "esbuild"
 
 [[redirects]]
   from = "/api/webhook-detection"

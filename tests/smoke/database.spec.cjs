@@ -297,7 +297,7 @@ async function installDatabaseMocks(page, options = {}) {
     return { requests, store };
 }
 
-test('database loads point archives by default, paginates, switches tabs, and loads boards', async ({ page }) => {
+test('database opens all clouds by default and keeps archive pagination and tabs', async ({ page }) => {
     const pointEntries = Array.from({ length: 55 }, (_, index) =>
         createArchiveEntry('point', index + 1, `export-point-${String(index + 1).padStart(3, '0')}`)
     );
@@ -313,6 +313,9 @@ test('database loads point archives by default, paginates, switches tabs, and lo
 
     await page.goto('/database/');
 
+    await expect(page.locator('#panel-boards')).toHaveClass(/active/);
+    await expect(page.locator('#cards-boards .data-card')).toHaveCount(2);
+    await page.click('[data-tab="point"]');
     await expect(page.locator('#panel-point')).toHaveClass(/active/);
     await expect(page.locator('#cards-point .data-card')).toHaveCount(50);
     await expect(page.locator('#status-point')).toContainText(/50 visibles/i);
@@ -525,6 +528,7 @@ test('database exposes retry state when archive service is unavailable', async (
     });
 
     await page.goto('/database/');
+    await page.click('[data-tab="point"]');
 
     await expect(page.locator('#status-point')).toContainText('SOURCE ARCHIVES RESEAU INDISPONIBLE');
     await expect(page.locator('#cards-point')).toContainText('REESSAYER');
@@ -541,6 +545,7 @@ test('database can delete an archive and refresh the point list', async ({ page 
     const api = await installDatabaseMocks(page, { pointEntries });
 
     await page.goto('/database/');
+    await page.click('[data-tab="point"]');
 
     await expect(page.locator('#cards-point .data-card')).toHaveCount(1);
 
@@ -566,6 +571,7 @@ test('database filters archives and boards from the toolbar', async ({ page }) =
     await installDatabaseMocks(page, { pointEntries, boardEntries });
 
     await page.goto('/database/');
+    await page.click('[data-tab="point"]');
 
     await expect(page.locator('#cards-point .data-card')).toHaveCount(2);
 

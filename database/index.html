@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="style.css?v=20260926-cloud-admin"/>
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -32,9 +32,9 @@
 
     <main class="content-panel">
       <div class="tabs-container">
-        <button class="tab-btn active" data-tab="point">Archives Point</button>
+        <button class="tab-btn active" data-tab="boards">Tous les clouds</button>
+        <button class="tab-btn" data-tab="point">Archives Point</button>
         <button class="tab-btn" data-tab="map">Archives Map</button>
-        <button class="tab-btn" data-tab="boards">Boards</button>
       </div>
 
       <div class="status-bar">
@@ -62,7 +62,7 @@
 
       <div class="toolbar-meta" id="toolbar-meta">Aucun filtre actif.</div>
 
-      <section id="panel-point" class="panel active">
+      <section id="panel-point" class="panel">
         <div class="panel-header-row">
           <h3>ARCHIVES RESEAU</h3>
           <div class="status-text" id="status-point">Chargement...</div>
@@ -84,9 +84,9 @@
         </div>
       </section>
 
-      <section id="panel-boards" class="panel">
+      <section id="panel-boards" class="panel active">
         <div class="panel-header-row">
-          <h3>BOARDS CLOUD</h3>
+          <h3>TOUS LES CLOUDS EXISTANTS</h3>
           <div class="status-text" id="status-boards">Chargement...</div>
         </div>
         <div class="cards-grid" id="cards-boards"></div>
@@ -106,7 +106,7 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260926-cloud-admin"></script>
   <script src="../shared/js/lock-fields.js"></script>
 </body>
 </html>

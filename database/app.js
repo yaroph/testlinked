@@ -2,6 +2,9 @@
   const PAGE_SIZE = 50;
   const API_KEY_STORAGE_KEY = "bniLinkedApiKey";
   const COLLAB_SESSION_STORAGE_KEY = "bniLinkedCollabSession_v1";
+  const STAFF_SESSION_KEY = "bniLinkedDatabaseStaffCode_v1";
+  let staffCode = "";
+  try { staffCode = sessionStorage.getItem(STAFF_SESSION_KEY) || ""; } catch (error) {}
   const tabs = Array.from(document.querySelectorAll(".tab-btn"));
   const panels = {
     point: document.getElementById("panel-point"),
@@ -23,7 +26,7 @@
   const modalCloseX = document.getElementById("modal-close-x");
 
   const appState = {
-    activeTab: "point",
+    activeTab: "boards",
     filters: {
       search: "",
       action: "all",
@@ -219,6 +222,7 @@
 
   function withViewerAuth(headers = {}) {
     const merged = { ...headers };
+    if (staffCode) merged["x-staff-code"] = staffCode;
     const key = getApiKey();
     if (key) merged["x-api-key"] = key;
     const session = readViewerSession();
@@ -435,6 +439,16 @@
     const rawMessage = cleanText(error?.message);
     const normalized = normalizeSearchText(rawMessage);
 
+    if (/401|403|administrateur|staff|session|unauthorized/.test(normalized)) {
+      return {
+        isAuth: true,
+        status: "ACCES ADMINISTRATEUR REQUIS",
+        title: "Tous les clouds",
+        copy: "Saisissez votre code administrateur pour consulter les clouds de tous les utilisateurs.",
+        hint: "Utilisez le code permanent de la console staff ou une clé API administrateur configurée.",
+      };
+    }
+
     if (!rawMessage || normalized === "not_found") {
       return {
         status: `SOURCE ${label.toUpperCase()} INDISPONIBLE`,
@@ -462,6 +476,45 @@
   }
 
   function renderErrorState(container, details, tab) {
+    if (details.isAuth) {
+      container.innerHTML = `
+        <div class="error-state">
+          <div class="error-state-title">${escapeHtml(details.title)}</div>
+          <div class="error-state-copy">${escapeHtml(details.copy)}</div>
+          <form class="db-auth-form">
+            <input class="db-auth-code" type="password" aria-label="Code administrateur" placeholder="Code administrateur" required />
+            <button class="btn-cyber" type="submit">SE CONNECTER</button>
+            <p class="db-auth-error" role="alert" hidden></p>
+          </form>
+          <div class="error-state-hint">${escapeHtml(details.hint)}</div>
+        </div>`;
+      const form = container.querySelector("form");
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = form.querySelector("button");
+        const errorLabel = form.querySelector(".db-auth-error");
+        button.disabled = true;
+        errorLabel.hidden = true;
+        try {
+          const code = form.querySelector("input").value.trim();
+          const response = await fetch("/.netlify/functions/alerts", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "verify-staff", scope: "database", accessCode: code }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.ok) throw new Error(result.error || "Code incorrect.");
+          staffCode = code;
+          try { sessionStorage.setItem(STAFF_SESSION_KEY, code); } catch (error) {}
+          for (const name of ["point", "map", "boards"]) appState[name].loaded = false;
+          await refreshTab(tab, { force: true });
+        } catch (error) {
+          errorLabel.textContent = error.message || "Connexion impossible.";
+          errorLabel.hidden = false;
+          button.disabled = false;
+        }
+      });
+      return;
+    }
     container.innerHTML = `
       <div class="error-state">
         <div class="error-state-title">${escapeHtml(details.title || "Chargement impossible")}</div>
@@ -1102,6 +1155,7 @@
         ${renderBoardActivityPreview(board)}
         <div class="card-actions">
           <button class="btn-cyber btn-detail" type="button" data-board-action="detail">DETAILS</button>
+          <button class="btn-cyber" type="button" data-board-action="download">TELECHARGER</button>
         </div>
       </article>
     `;
@@ -1147,9 +1201,27 @@
       card.querySelector('[data-board-action="detail"]')?.addEventListener("click", () => {
         showBoardDetails(board).catch(() => {});
       });
+      card.querySelector('[data-board-action="download"]')?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          const result = await apiGetBoardDetails(board.id);
+          const blob = new Blob([JSON.stringify(result.board.data, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `${board.page}_${String(board.id).replace(/[^a-zA-Z0-9_-]/g, "_")}.json`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          await customAlert("Impossible de télécharger ce cloud. Réessayez.");
+        } finally { button.disabled = false; }
+      });
     });
 
-    status.textContent = `${filteredBoards.length} visibles sur ${state.entries.length} charges`;
+    status.textContent = `${filteredBoards.length} visibles · ${state.entries.length} chargés sur ${state.totalFound} clouds`;
     updateLoadMoreButton("boards");
     updateToolbar();
   }
@@ -1171,7 +1243,7 @@
     });
 
     globalStatus.textContent = appState.activeTab === "boards"
-      ? "Affichage des boards cloud"
+      ? "Tous les clouds existants · Tous les utilisateurs"
       : `Affichage des archives ${appState.activeTab.toUpperCase()}`;
 
     if (appState.activeTab === "boards") {
@@ -1571,7 +1643,7 @@
         : await apiListArchives(tab, {
             offset: options.append ? state.nextOffset : 0,
             limit: PAGE_SIZE,
-            refresh: Boolean(options.force),
+            refresh: !options.append,
           });
 
       const nextEntries = Array.isArray(data.entries) ? data.entries : [];
@@ -1625,5 +1697,5 @@
     });
   });
 
-  activateTab("point");
+  activateTab("boards");
 })();

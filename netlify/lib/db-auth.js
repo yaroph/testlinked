@@ -1,4 +1,5 @@
 const { resolveAuth } = require("./collab");
+const { hasStaffCode } = require("./staff-auth");
 
 const API_KEY = String(process.env.BNI_LINKED_KEY || "").trim();
 const REQUIRE_AUTH = process.env.BNI_LINKED_REQUIRE_AUTH !== "0";
@@ -10,7 +11,7 @@ function jsonResponse(statusCode, payload) {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-collab-token",
+      "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-collab-token, x-staff-code",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     },
     body: JSON.stringify(payload),
@@ -23,7 +24,7 @@ function preflightResponse() {
     headers: {
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-collab-token",
+      "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-collab-token, x-staff-code",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     },
     body: "",
@@ -40,6 +41,7 @@ function getHeader(event, name) {
 }
 
 async function authorizeDbRequest(event, body = null) {
+  if (hasStaffCode(event, body, { allowLegacy: false })) return { ok: true, mode: "staff", auth: null };
   if (!REQUIRE_AUTH) {
     return { ok: true, mode: "open", auth: null };
   }

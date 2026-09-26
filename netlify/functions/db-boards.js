@@ -2,15 +2,14 @@ const { getStore, connectLambda } = require("../lib/blob-store");
 const { listKeysByPrefix, normalizePage, readBody, boardKey } = require("../lib/collab");
 const { summarizeBoardData, normalizeSearchText } = require("../lib/db-summary");
 const { __test: collabBoardHelpers } = require("./collab-board");
+const { authorizeDatabaseAdmin } = require("../lib/staff-auth");
 const {
   jsonResponse,
   preflightResponse,
-  authorizeDbRequest,
 } = require("../lib/db-auth");
 
 const STORE_NAME = "bni-linked-collab";
 const LOCK_STALE_GRACE_MS = 15000;
-const MAX_BOARD_SCAN = 2000;
 
 const {
   normalizeBoardPayload,
@@ -296,7 +295,7 @@ exports.handler = async (event) => {
     return jsonResponse(400, { ok: false, error: "Invalid JSON body" });
   }
 
-  const access = await authorizeDbRequest(event, body);
+  const access = authorizeDatabaseAdmin(event, body);
   if (!access.ok) {
     return jsonResponse(access.statusCode || 401, { ok: false, error: access.error || "Unauthorized" });
   }
@@ -406,13 +405,19 @@ exports.handler = async (event) => {
       return jsonResponse(400, { ok: false, error: "Action inconnue" });
     }
 
-    const keys = await listKeysByPrefix(store, "boards/", MAX_BOARD_SCAN);
-    const boards = await Promise.all(keys.map((key) => store.get(key, { type: "json" }).catch(() => null)));
-    const rows = await Promise.all(
-      boards
-        .filter((board) => board && typeof board === "object" && cleanText(board.id))
-        .map(async (board) => buildBoardRow(board, await readBoardLock(store, cleanText(board.id))))
-    );
+    // Traverse every storage page, including boards owned by unrelated users.
+    const keys = [...new Set(await listKeysByPrefix(store, "boards/", Infinity))]
+      .filter((key) => /^boards\/[^/]+$/.test(key));
+    const rows = [];
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(12, keys.length) }, async () => {
+      while (next < keys.length) {
+        const board = await store.get(keys[next++], { type: "json" });
+        if (board && typeof board === "object" && cleanText(board.id)) {
+          rows.push(buildBoardRow(board, await readBoardLock(store, cleanText(board.id))));
+        }
+      }
+    }));
 
     const filtered = rows
       .filter((row) => !pageFilter || row.page === pageFilter)

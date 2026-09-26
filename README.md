@@ -60,7 +60,17 @@ Le projet est deploye sur Netlify.
 Deploiement CLI :
 
 ```bash
-npx netlify deploy --prod --dir . --functions netlify/functions
+    npx netlify deploy --prod
+
+Le build `npm run build` copie les ressources publiques dans `dist/`. Les fonctions,
+les tests et les fichiers de configuration ne sont pas servis comme fichiers statiques.
+
+La page `/database/` s'ouvre sur « Tous les clouds » et charge tous les propriétaires,
+sans limite globale de 2 000 tableaux. Elle accepte le code administrateur permanent
+de la console staff, un code `BNI_LINKED_STAFF_CODE` configuré sur le serveur, ou
+la clé `BNI_LINKED_KEY`. Une session utilisateur ordinaire et l'ancien code `staff`
+ne donnent pas accès à cette vue globale. Les archives restent dans leurs onglets.
+Le code permanent est vérifié côté serveur à partir d'une empreinte scrypt.
 ```
 
 ## Variables utiles

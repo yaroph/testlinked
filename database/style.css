@@ -1319,3 +1319,16 @@ body {
     text-align: left;
   }
 }
+.db-auth-form { display: grid; gap: 12px; max-width: 380px; margin: 20px auto; }
+.db-auth-code { width: 100%; padding: 12px; background: #101827; color: #fff; border: 1px solid #55d6ef; border-radius: 6px; font: inherit; }
+.db-auth-error { color: #ff6b81; }
+.card-title, .card-owner, .card-key { overflow-wrap: anywhere; }
+@media (max-width: 768px) {
+  .logo-area { width: 100%; min-width: 0; gap: 12px; flex-wrap: wrap; }
+  .app-logo { width: 150px; max-width: 100%; height: auto; }
+  .titles { min-width: 0; }
+  .main-title { font-size: 1.3rem; }
+  .tabs-container { gap: 4px; flex-wrap: wrap; }
+  .tab-btn { flex: 1; min-width: 0; padding: 10px 4px; font-size: .8rem; letter-spacing: .5px; }
+  .panel-header-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+}

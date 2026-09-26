@@ -1,17 +1,17 @@
 export function createStaffAlertsApi(options = {}) {
     const endpoint = String(options.endpoint || '').trim();
-    const staffCode = String(options.staffCode || '').trim();
     const refreshEventKey = String(options.refreshEventKey || '').trim();
     const refreshChannel = String(options.refreshChannel || '').trim();
 
     async function requestAdmin(action, payload = {}) {
+        const staffCode = String(options.getStaffCode?.() || options.staffCode || '').trim();
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'x-staff-code': staffCode,
             },
-            body: JSON.stringify({ action, accessCode: staffCode, ...payload }),
+            body: JSON.stringify({ ...payload, action, accessCode: staffCode }),
         });
 
         const data = await response.json().catch(() => ({}));

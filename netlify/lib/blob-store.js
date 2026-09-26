@@ -207,14 +207,15 @@ function buildNetlifyStore(storeName) {
   return {
     async get(key) {
       const payload = await store.get(String(key || ""), { type: "json" });
-      return unwrapBlobValue(payload);
+      // Older Netlify deployments wrote plain JSON before the Firebase envelope existed.
+      return isBlobNode(payload) ? unwrapBlobValue(payload) : payload;
     },
 
     async getWithMetadata(key) {
       const entry = await store.getWithMetadata(String(key || ""), { type: "json" });
       if (!entry) return null;
       return {
-        data: unwrapBlobValue(entry.data),
+        data: isBlobNode(entry.data) ? unwrapBlobValue(entry.data) : entry.data,
         etag: String(entry.etag || ""),
         metadata: entry.metadata && typeof entry.metadata === "object" ? entry.metadata : null,
       };
